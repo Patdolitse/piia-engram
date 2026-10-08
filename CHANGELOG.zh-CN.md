@@ -6,6 +6,85 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [4.22.0] - 2026-10-07
+
+### 破坏性变更
+
+- 经 MCP 修改已有条目必须带当前版本号（`version_required` / `version_conflict`），读取结果带 `version`，`supersedes` 的目标必须有效且属于相同作用域和项目。
+  - **迁移：** 先读取，再传入 `expected_version`（合并用 `primary_expected_version` / `secondary_expected_version`，替换用 `supersedes_expected_version`），参考 `version_required` 中的示例，遇到冲突后重新读取。
+- MCP `import_engram` 只能预览（`dry_run=true`）；写入请求返回 `local_only` 且不导入任何内容，该工具标为只读。
+  - **迁移：** 在存放数据的机器上用 `engram import <backup.json> --apply --yes`（或 `engram import --format openclaw ... --apply --yes`）执行导入；`local_only` 回复会给出这条命令。
+- AI 经 MCP 写入或改写的 playbook 在任何模式下都等你审核，已批准版本照常使用，待审手册不能执行（`not_approved`），`add_playbook` 回复 JSON，队列满时拒收新提案（`queue_full`，`ENGRAM_PLAYBOOK_QUEUE_MAX` 默认 10）。
+  - **迁移：** 用 `engram review` 或 `engram review interactive` 批准还要使用的草稿；按 JSON 读取 `add_playbook` 的回复。
+- 任何模式下决定待审提案都只能在本地进行：MCP 批准、提升、拒绝、归档、合并和 onboard 接受返回 `local_review_only`，列出、批量预览和 `review_item` 仍可用，风险分级直接判为 verified 的写入不变。
+  - **迁移：** 用 `engram review` 或 `engram review interactive` 决定待审条目，用 `engram onboard-accept <id>`（或 `--all`）接受 onboard 候选；原先经 MCP 落盘批量审核的 AI 仍可用 `dry_run=true` 预览。
+- AI 经 MCP 新增的决策若与已审核决策问题相同、选择不同，在任何模式下都是带 `pending_supersedes` 的待审提案；本地新增不变，已审核决策在你批准替换前照常使用。
+  - **迁移：** 用 `engram review` 批准你要的替换。
+- Engram 为经 MCP 新增的 playbook 生成新 id，忽略调用方传入的 `id`，本地新增时拒绝已占用的 id（`id_exists`）。
+  - **迁移：** 从回复里读取 id，不要自行指定。
+- 冷启动、接续简报、钩子和召回只提供已审核、当前有效的记忆；`search_knowledge` 把未审核提案放在 `pending`，仅在 `include_superseded=true` 时返回 `superseded`，详见[用户指南](docs/user-guide.zh-CN.md#4-治理与审批ai-提议重要的由你审)。
+  - **迁移：** 读取 `search_knowledge` 的客户端应单独读取 `pending` 分组，不要把它当作已审核内容；`{"tier": "staging"}` 过滤的结果现在在 `pending` 分组里。
+- 启动 MCP server、冷启动和 `wrap_up_session` 不自动导入其它 AI 工具的记忆或规则文件，即使设置 `ENGRAM_MCP_STARTUP_SYNC` 或 `run_reconcile=True`。
+  - **迁移：** 需要时运行 `engram import-memories`；导入内容进入待审区并生成回执。
+- `manage_relation` 不能手工建立或移除内部 `supersedes` 版本关系（`supersedes_is_internal`）。
+  - **迁移：** 使用带版本号的更新或替换提案，不要编辑版本关系。
+
+### 新增
+
+- 默认每天发送一次匿名使用信号，包含随机安装 ID、版本、系统、Python 版本、客户端名称和日期，不含记忆、路径、账号或参数；可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭（CI 和容器自动关闭），详见 [PRIVACY.md](PRIVACY.md)。
+- `engram doctor` 新增只读的“Client Connections”一节，显示各客户端的配置和最近 14 天调用情况（`--days N`、`--json`）。
+- `engram import-memories` 列出在其它 AI 工具里找到的记忆和规则段落，确认后写入待审区并生成回执；`engram setup` 会询问是否现在导入一次（默认否）。
+- `engram import --format openclaw` 在本地导入 OpenClaw 的 `SOUL.md` / `MEMORY.md` / `USER.md`；默认只预览，MEMORY.md 的经验进入待审区。
+- `engram pin <id>` / `engram unpin <id>` / `engram pin --list` 保护已审核条目免于归档、导入或 MCP 修改，在召回中优先展示且修订须经本地审核，详见[钉住必须保留的条目](docs/user-guide.zh-CN.md#钉住必须保留的条目)。
+- `engram review interactive`（`engram review -i`）在终端里逐条审核待审提案；确认汇总之前不写入任何内容。
+- `engram review apply` 的 marks 支持 `supersede:<id>`、`skip`、拒绝时可选的 `reason` 和 `expected_version`，按固定顺序执行（同一次运行里可同时批准条目和取代它的提案），edit-type 也能修改决策的类型标签；`engram review export` 会生成 `marks-template.json`。
+- 新条目记录自己从哪里来（`provenance.origin`；经 MCP 写入的还记录客户端自报的名称和版本），审核时显示；`provenance` 与 `source_tool` 写入后不能再通过更新修改（`provenance_immutable`）。
+- MCP 工具声明标准的只读、破坏性、幂等和开放世界标注，作为客户端提示而非权限控制。
+
+### 变更
+
+- 近重复条目（相似度不低于 95% 但文字不同）进入待审区并带 `duplicate_candidate`，不再被拒绝；只有规范化后文字完全相同的才按重复拒绝。
+- 审核卡和 `engram preview` 显示重复候选对应的旧条目、相似度和逐句差异。
+- token 预算裁掉内容时，`get_resume_brief`、`get_recall` 和 `engram preview` 返回 `omitted`（条数、id、段名），文本形态的上下文末尾加一行说明。
+- 按 id 读取（`get_knowledge_history`、`explore_knowledge`）会注明条目状态（`eligibility`），被取代的条目注明 `superseded_by`。
+- MCP 说明和 setup 段落写明长期事实、明确日期和 `supersedes` 修订；setup 与 `doctor --fix` 刷新旧版默认段落并保留你的修改。
+- `extract_session_insights` 和 `wrap_up_session` 在保存计数旁列出被跳过的候选及原因（`skipped_by_reason`）。
+- `engram reconcile apply --commit --yes` 和 OpenClaw `MEMORY.md` 的经验都经过待审区并生成回执；旧版记忆迁移也受“读取其它 AI 工具文件”的关闭开关约束。
+
+### 移除
+
+- 移除未使用的内部函数 `ingest_extraction`。
+- MCP `review_staging` 不再批准、拒绝或应用审查结果（见破坏性变更）。
+
+### 修复
+
+- **Claude Code 用户请重新运行 `engram setup`**，通过 `claude mcp add --scope user` 注册 Engram，不再使用未被读取的 `~/.claude/.mcp.json`，并可选择移除旧条目，详见 [Claude Code 配置](docs/integrations/claude-code.md)。
+- 其它名称下的 Engram 条目（`piia-engram`，或任何启动 Engram 的命令）能被 doctor、status 和 dock 识别；setup 会把 `piia-engram` 条目迁移为 `engram`，不再另加一个服务器。
+- setup 改写的客户端配置文件以原子方式写入；符号链接形式的配置保持为符号链接，在 macOS 和 Linux 上保留文件原有权限。
+- Windows：其它进程短暂占用同一文件时写入不再失败，Engram 会在最多一秒内重试。
+- JSON 备份（`export_engram`、`engram dock-export`）包含你的拒绝记录（只有哈希和元数据），`engram import` 会恢复它们；格式不对的记录会被跳过并计数。
+- 字段类型不对（例如是列表）的拒绝记录会被跳过并计数，不再中断导出、导入或写入；本地文件里的这类记录也一样。
+- Playbook 操作、执行计划和导入只接受普通文件 id，新增不覆盖已有手册，`get_daily_log` 只接受 `YYYY-MM-DD` 日期（`invalid_date`）。
+- Playbook 导入使用加锁的独占插入，Windows 下 id 比较不区分大小写，只保留 `_index` 等实际内部文件名；导入失败只移除本次新增的正文。`_custom` 等安全旧 id 仍可读取、列出、审核，并包含在导出和备份中。
+- 会话、每日日志和执行计划的路径保持在各自目录内，嵌套目录为链接时也一样。
+- 会话保存、列表与摘要读取使用同一套文件名规则，兼容 `-session` 等安全的旧会话名。
+- 原生导入在预览或执行任何变更前拒绝无效项目 id（`invalid_project_id`）。
+- 涉及待审提案的 MCP 合并返回 `local_review_only`，不改动提案或已审核条目。
+- MCP 来源的合并只修改经过版本校验的两个操作数，所有第三条目都不变，包括 `related_ids`。它们与被合并掉条目的链接保留，仍能按 id 读取。本地本人合并仍重映射未钉住条目的链接；两种来源都不改动钉住的第三条目。
+- 合并、删除手册和恢复手册在提交锁内比对预期版本。
+- 操作手册索引更新失败时恢复已有正文，不再移除它；原子字节写入会补齐短写，零进度时拒绝替换文件。
+- `engram review` 在写入决定的同一把锁内比对你审核时的版本（`expected_version`），期间被改动的条目返回 `version_conflict`，不会被批准、拒绝或写入拒绝记录。
+- 手册替换在审核锁内先持久记录目标与双方版本，再停用旧手册，包括旧库中两个版本都已批准且有效的情况。中断后只有记录的目标与版本仍一致，重放 `approve` 或同目标的 `supersede:<id>` 才会补完替换；无对应记录的其它已停用目标被拒绝。恢复先完成已停用正文的索引同步，再清除进行中记录。预览和预期版本检查仍然生效。
+- 手册批准重试在审核锁内以正文为准协调索引的状态和层级，包括已经决定的条目，以及同目标 supersede 标记返回 `already_applied` 前的检查。`engram doctor` 只报告不一致而不改存储；`engram doctor --fix` 修复索引并解除已停用正文的固定。协调始终以正文为准，不删除任何正文。
+- 读取信任边界不再写 `identity/trust_boundaries.json`；缺少的默认值只在内存中补齐。
+- 读取知识（`get_lessons`、`get_decisions`、`get_playbooks` 等）只累加访问次数，不再刷新 `last_reviewed`，`get_stale_knowledge` 仍会列出你还没复习的条目；`last_reviewed` 只由你的确认和复习操作更新。
+- doctor 的连接报告把服务启动描述为“不导入任何内容、不改动知识和身份内容”，不再称为“零写入”（读取仍会更新访问计数）。
+- 所有项目的待审提案都会出现在 `engram review`、`engram review export`、`engram management` 和交互审核中，并显示 `project:<名称>` 作用域。
+- 严格模式下 `manage_playbook(action="update")` 的回复是待审提案，不再回显整份提议的手册。
+- `python -m piia_engram.setup_wizard` 不再因循环导入而失败。
+- MCP server 记录连接客户端的日志行会去掉客户端名称里的控制字符并限制长度。
+- setup 中关于预置最佳实践的中文提示改为与英文一致：审核确认后才会变为 verified。
+
 ## [4.21.2] - 2026-09-26
 
 ### 修复

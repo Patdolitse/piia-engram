@@ -66,8 +66,11 @@ Privacy, ownership, and storage boundaries are in
   for review**, not silently promoted to verified/trusted memory; everything
   written lands in the user's local store where it can be inspected.
 - Storage is **local JSON the user owns**. There is no cloud account and no
-  vendor lock-in. Telemetry is **off by default**; if enabled it writes a local
-  log only, and any remote sending is a separate explicit opt-in.
+  vendor lock-in. Engram sends one anonymous usage ping a day (random install
+  ID, version, OS, Python version, AI client name, date); turn it off with
+  `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`. Detailed
+  usage statistics stay off unless the user turns them on; if enabled they write
+  a local log only, and any remote sending is a separate explicit opt-in.
 - Knowledge moves through a **staging → verified** path so unreviewed entries do
   not silently become trusted facts.
 - Do **not** claim capabilities Engram does not have. Use only the tool names in

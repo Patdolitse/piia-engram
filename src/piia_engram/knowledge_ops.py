@@ -9,8 +9,15 @@ from typing import Any
 
 from . import capacity as _capacity
 from . import freshness_anchors as _freshness_anchors
+from . import pinning as _pinning
 from . import provenance as _provenance
+from . import recall_policy as _recall_policy
+from . import review_boundary as _review_boundary
+from . import version_guard as _version_guard
+from . import write_provenance as _write_provenance
 from .storage import _now_iso, overflow_batch
+
+_ONBOARD_ACCEPT_HINT = "run `engram onboard-accept <id>` locally"
 
 
 class KnowledgeOpsMixin:
@@ -52,7 +59,7 @@ class KnowledgeOpsMixin:
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
-        return None
+        return _write_provenance.update_refusal(str(item.get("id", "")), updates)
 
     def _archived_update_error(self, item_id: str) -> dict | None:
         """The error for an update whose target is only in the overflow archive, else None."""
@@ -162,12 +169,17 @@ class KnowledgeOpsMixin:
 
         ``version`` requests an exact by-version lookup — a miss returns
         ``{"error": "version_not_found", ...}``, never a nearest neighbor.
+
+        By-id read (recall eligibility): the result names the item's own state
+        (``eligibility``) and, when a newer version replaced it, its
+        ``superseded_by`` id; every snapshot names the row that superseded it.
         """
         item_type, item = self._find_item_by_id(item_id)
         if item is None:
             item_type, item, _where = self._find_lineage_record(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
+        verdict = _recall_policy.classify(item, self._recall_supersede_index())
         head_version = int(item.get("version") or 1)
         records: dict[str, dict] = {}
         if item_type in {"lesson", "decision"}:
@@ -218,6 +230,7 @@ class KnowledgeOpsMixin:
                 "snapshot_version": snapshot_version,
                 "superseded_at": record.get("superseded_at", ""),
                 "snapshot_of": record.get("snapshot_of", ""),
+                "superseded_by": str(record.get("superseded_by") or item_id),
                 "status": record.get("status", ""),
                 "tier": record.get("tier", ""),
             }
@@ -252,7 +265,7 @@ class KnowledgeOpsMixin:
                 "requested_version": version,
                 "head_version": head_version,
             }
-        return {
+        result = {
             "id": item_id,
             "type": item_type,
             "head_version": head_version,
@@ -261,7 +274,15 @@ class KnowledgeOpsMixin:
             "total_body_size": total_body_size,
             "pending_commits": len(pending),
             "pending_commit_ids": pending,
+            "eligibility": verdict.state,
+            # the version an MCP write to this entry must name (expected_version)
+            "current_version": head_version,
         }
+        if verdict.superseded_by:
+            result["superseded_by"] = verdict.superseded_by
+        if verdict.state == _recall_policy.PENDING:
+            result["pending_untrusted"] = True
+        return result
 
     def create_onboard_candidate(
         self,
@@ -480,6 +501,9 @@ class KnowledgeOpsMixin:
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
+        if _review_boundary.refuses_decision(item):
+            # an Owner confirmation stamp on a pending proposal is a review decision
+            return _review_boundary.refusal(item_id, action="confirm")
 
         ts = _now_iso()
 
@@ -526,9 +550,25 @@ class KnowledgeOpsMixin:
         given, else "unknown" — never fabricated. (A later read-time check_anchors
         pass demotes the fact if the anchor is INVALID.)
         """
+        if _review_boundary.mcp_origin():
+            # Accepting a candidate is the Owner's local command, in every mode.
+            return _review_boundary.refusal(item_id, action="onboard_accept",
+                                            hint=_ONBOARD_ACCEPT_HINT)
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision", "playbook"}:
             return {"error": f"Item not found: {item_id}"}
+        if item_type == "playbook" and item.get("pending_supersedes"):
+            # A playbook update proposal replaces another playbook when it is
+            # approved; that is a review decision (engram review), never an
+            # onboard accept, which would mark it verified without retiring
+            # the old one or honoring its pin.
+            return {
+                "error": "revision_proposal",
+                "item_id": item_id,
+                "changed": False,
+                "message": "This playbook is a revision proposal, not an onboard candidate; "
+                           "decide it with engram review. Nothing was written.",
+            }
         provenance = item.get("provenance")
         anchor_ref = provenance.get("anchor_ref") if isinstance(provenance, dict) else None
         if not isinstance(anchor_ref, str) or not anchor_ref.strip():
@@ -561,6 +601,7 @@ class KnowledgeOpsMixin:
 
         def _mark(entry: dict) -> dict:
             entry["tier"] = "verified"
+            entry.pop("duplicate_candidate", None)
             updated = self._stamp_validated_entry(
                 entry,
                 item_type,
@@ -611,8 +652,10 @@ class KnowledgeOpsMixin:
         an unresolved root never silently accepts an identified repo's candidate.
         dry_run is a zero-write preview that still verifies anchors read-only, so
         would_accept / would_reject are honest. The CLI runs dry by default;
-        --yes commits.
+        --yes commits. Over MCP only the dry run is allowed (local command only).
         """
+        if not dry_run and _review_boundary.mcp_origin():
+            return _review_boundary.refusal(action="onboard_accept", hint=_ONBOARD_ACCEPT_HINT)
         resolved_repo_id = repo_id
         if resolved_repo_id is None and project_root:
             resolved_repo_id = _freshness_anchors.read_project_id(project_root)
@@ -880,6 +923,11 @@ class KnowledgeOpsMixin:
             item_id = item.get("id")
             if not isinstance(item_id, str) or not item_id:
                 continue
+            if _pinning.mcp_refuses(item):
+                # An MCP caller never changes an Owner-pinned entry; the Owner's
+                # own `engram anchors check` still checks it.
+                report["pinned_skipped"] = report.get("pinned_skipped", 0) + 1
+                continue
 
             item_project_id = provenance.get("anchor_project_id")
             if not isinstance(item_project_id, str) or not item_project_id.strip():
@@ -1007,16 +1055,159 @@ class KnowledgeOpsMixin:
         self._audit.log("write", "knowledge/validate", detail=item_id)
         return updated
 
-    def archive_knowledge(self, item_id: str, *, _owner_reject: str = "") -> dict:
-        """Archive a lesson, decision, or playbook by ID (auto-detects type)."""
-        item_type, _ = self._find_item_by_id(item_id)
+    def archive_knowledge(
+        self, item_id: str, *, _owner_reject: str = "", expected_version: int | None = None
+    ) -> dict:
+        """Archive a lesson, decision, or playbook by ID (auto-detects type).
+
+        ``expected_version`` (optional here, required over MCP) is checked under
+        the write lock: a stale value writes nothing (``version_conflict``).
+        """
+        item_type, item = self._find_item_by_id(item_id)
         if item_type is None:
             return {"error": f"Item not found: {item_id}"}
+        if _review_boundary.refuses_decision(item) or (_owner_reject and _review_boundary.mcp_origin()):
+            # retiring a pending proposal is the Owner's review decision
+            return _review_boundary.refusal(item_id, action="archive")
         if item_type == "lesson":
-            return self.archive_lesson(item_id, _owner_reject=_owner_reject)
+            return self.archive_lesson(item_id, _owner_reject=_owner_reject, expected_version=expected_version)
         if item_type == "playbook":
-            return self.archive_playbook(item_id)
-        return self.archive_decision(item_id, _owner_reject=_owner_reject)
+            return self.archive_playbook(item_id, expected_version=expected_version)
+        return self.archive_decision(item_id, _owner_reject=_owner_reject, expected_version=expected_version)
+
+    # -- MCP write contract: an existing entry is changed only at a named version --
+
+    def mcp_existing_write_guard(
+        self,
+        item_id: str,
+        expected_version: Any,
+        *,
+        example: dict,
+        param: str = "expected_version",
+        allow_pinned: bool = False,
+    ) -> dict | None:
+        """The refusal for an MCP write to an existing entry, or None to go ahead.
+
+        ``pinned_entry`` (the Owner pinned it: only a revision proposal is
+        possible), else ``version_required`` (no version given) or
+        ``version_conflict`` (another version is current). An id that is not a
+        live lesson, decision or playbook (unknown, a history snapshot, in the
+        overflow archive) passes through so the write itself reports it. Reads only.
+        """
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return None
+        if self._is_snapshot_record(item):
+            return None
+        if _pinning.is_pinned(item) and not allow_pinned:
+            return _pinning.refusal(item_id, item_type, item)
+        return _version_guard.check(item_id, item, expected_version, example, param=param)
+
+    def mcp_entry_version(self, item_id: str) -> int | None:
+        """The current version of a live lesson, decision or playbook (None when there is none)."""
+        item_type, item = self._find_item_by_id(item_id)
+        if item is None or item_type not in {"lesson", "decision", "playbook"}:
+            return None
+        return _version_guard.current_version(item)
+
+    def mcp_supersede_guard(
+        self,
+        target_id: str,
+        expected_version: Any,
+        *,
+        kind: str,
+        example: dict,
+        content: dict | None = None,
+    ) -> dict | None:
+        """The refusal for a proposal that supersedes ``target_id``, or None.
+
+        The target must be an active ``kind`` entry in the same project scope
+        as the proposal (``content``): one that does not exist is
+        ``supersedes_target_not_found``; one in another project, or archived
+        (retired, or moved to the overflow archive), is
+        ``supersedes_target_not_applicable`` with the reason. The proposal must
+        name the target's current version (``supersedes_expected_version``).
+        Reads only.
+        """
+        target_id = str(target_id or "").strip()
+        row, where = self._supersede_lookup(kind, target_id)
+        if row is None:
+            return {
+                "error": "supersedes_target_not_found",
+                "supersedes": target_id,
+                "kind": kind,
+                "changed": False,
+                "message": f"No {kind} with this id to supersede. Nothing was written.",
+            }
+        reason = ""
+        why = ""
+        if (
+            where == "archive"
+            or str(row.get("status") or "active") != "active"
+            or str(row.get("tier") or "") == "archived"
+        ):
+            reason = "archived"
+            why = "it is archived (restore it first, or write a new entry)."
+        elif isinstance(content, dict) and not self._supersede_same_scope(kind, content, row):
+            new_scope = self._supersede_scope_kind(kind, content)
+            old_scope = self._supersede_scope_kind(kind, row)
+            if new_scope == old_scope:
+                reason = "different_project"
+                why = "it belongs to a different project than the proposal."
+            elif old_scope == "global":
+                reason = "scope_mismatch"
+                why = ("it is a global entry; a revision of a global entry must be global too "
+                       "(leave project_folder empty / use scope_type global).")
+            else:
+                reason = "scope_mismatch"
+                why = ("it belongs to a project; a revision of a project entry must be in the "
+                       "same project (pass that project_folder).")
+        if reason:
+            return {
+                "error": "supersedes_target_not_applicable",
+                "supersedes": target_id,
+                "kind": kind,
+                "reason": reason,
+                "changed": False,
+                "message": f"This {kind} cannot be superseded by this proposal: {why} Nothing was written.",
+            }
+        return _version_guard.check(target_id, row, expected_version, example,
+                                    param="supersedes_expected_version")
+
+    def _supersede_scope_kind(self, kind: str, row: dict) -> str:
+        """"global" or "project" (a project or shared scope)."""
+        if kind == "playbook":
+            scope_type = str(self._normalize_playbook_scope(dict(row)).get("type") or "global")
+            return "global" if scope_type == "global" else "project"
+        normalized = self._normalize_project_scope_for_entry(dict(row))
+        has_project = self._entry_project_id(normalized) or self._entry_project_label(normalized)
+        return "project" if has_project else "global"
+
+    def _supersede_same_scope(self, kind: str, content: dict, target: dict) -> bool:
+        if kind == "playbook":
+            return self._same_playbook_scope(dict(content), target)
+        new_row = self._normalize_project_scope_for_entry(dict(content))
+        return self._entries_share_project_scope(new_row, target)
+
+    def _supersede_lookup(self, kind: str, target_id: str) -> tuple[dict | None, str]:
+        """(row, "active" | "archive") of a supersede target, or (None, "")."""
+        if not target_id:
+            return None, ""
+        if kind == "playbook":
+            row = self._read_playbook_by_id(target_id)
+            if isinstance(row, dict) and not self._is_snapshot_record(row):
+                return row, "active"
+            return None, ""
+        if kind not in {"lesson", "decision"}:
+            return None, ""
+        filename = "lessons.json" if kind == "lesson" else "decisions.json"
+        for row in self._read_entries(self._knowledge_dir / filename, kind, migrate=False):
+            if str(row.get("id") or "") == target_id and not self._is_snapshot_record(row):
+                return row, "active"
+        row = self._archive_current_rows(kind).get(target_id)
+        if isinstance(row, dict) and not self._is_snapshot_record(row):
+            return row, "archive"
+        return None, ""
 
     def soft_archive_knowledge_tier(
         self,
@@ -1243,12 +1434,43 @@ class KnowledgeOpsMixin:
         self._audit.log("write", "knowledge/review", detail=knowledge_id)
         return item
 
-    def merge_knowledge(self, primary_id: str, secondary_id: str) -> dict:
-        """Merge secondary into primary, then archive the secondary item."""
+    def merge_knowledge(
+        self,
+        primary_id: str,
+        secondary_id: str,
+        *,
+        primary_expected_version: int | None = None,
+        secondary_expected_version: int | None = None,
+    ) -> dict:
+        """Merge secondary into primary, then archive the secondary item.
+
+        The expected versions (optional here, required over MCP) are checked
+        inside the commit locks before any write; a stale one returns
+        ``version_conflict``.
+        """
+        refusal = self._merge_knowledge_locked(
+            primary_id, secondary_id,
+            primary_expected_version=primary_expected_version,
+            secondary_expected_version=secondary_expected_version,
+            _validate_only=True,
+        )
+        if refusal is not None:
+            return refusal
+        with self._review_locks():
+            return self._merge_knowledge_locked(
+                primary_id, secondary_id,
+                primary_expected_version=primary_expected_version,
+                secondary_expected_version=secondary_expected_version,
+            )
+
+    def _merge_knowledge_locked(self, primary_id: str, secondary_id: str, *,
+                                primary_expected_version: int | None,
+                                secondary_expected_version: int | None,
+                                _validate_only: bool = False) -> dict | None:
         if primary_id == secondary_id:
             return {"error": "Cannot merge an item with itself"}
 
-        lessons, decisions, playbooks = self._read_link_collections()
+        lessons, decisions, playbooks = self._read_link_collections(migrate=not _review_boundary.mcp_origin())
         primary_type, primary = self._find_item_in_collections(primary_id, lessons, decisions, playbooks)
         secondary_type, secondary = self._find_item_in_collections(secondary_id, lessons, decisions, playbooks)
 
@@ -1256,11 +1478,34 @@ class KnowledgeOpsMixin:
             return {"error": f"Primary item not found: {primary_id}"}
         if secondary is None:
             return {"error": f"Secondary item not found: {secondary_id}"}
+        for item_id, row in ((primary_id, primary), (secondary_id, secondary)):
+            if _review_boundary.refuses_decision(row):
+                return _review_boundary.refusal(item_id, action="merge")
         if primary.get("status") != "active":
             return {"error": f"Primary item is not active (status={primary.get('status')})"}
         if secondary.get("status") != "active":
             return {"error": f"Secondary item is not active (status={secondary.get('status')})"}
+        for item_id, item_type, row in ((primary_id, primary_type, primary), (secondary_id, secondary_type, secondary)):
+            if _pinning.mcp_refuses(row):
+                return _pinning.refusal(item_id, str(item_type), row)
+        for item_id, row, expected, param in (
+            (primary_id, primary, primary_expected_version, "primary_expected_version"),
+            (secondary_id, secondary, secondary_expected_version, "secondary_expected_version"),
+        ):
+            if expected is None:
+                continue
+            current = _version_guard.current_version(row)
+            wanted = _version_guard.parse(expected)
+            if wanted is _version_guard.INVALID:
+                return _version_guard.invalid(item_id, expected, current, param=param)
+            if wanted != current:
+                return _version_guard.conflict(item_id, wanted if wanted is not None else -1, current,
+                                               param=param)
 
+        if _validate_only:
+            # Refusals need not create lock files; repeat every check inside
+            # the commit locks so the preflight is never the authority.
+            return None
         primary_related = set(primary.get("related_ids", []))
         transferred = []
         secondary_related = list(secondary.get("related_ids", []))
@@ -1285,6 +1530,10 @@ class KnowledgeOpsMixin:
             )
             if related_item is None or related_type is None:
                 continue
+            if _review_boundary.mcp_origin() or _pinning.is_pinned(related_item):
+                # MCP guards only the two operands; neighbors retain their links
+                # to the merged-away entry, which remains readable by id.
+                continue
             related_types[related_id] = related_type
 
         def _merge_primary(entry: dict) -> dict:
@@ -1295,11 +1544,11 @@ class KnowledgeOpsMixin:
             entry["related_ids"] = sorted(current_related)
             return entry
 
-        updated_primary = self._update_knowledge_item(primary_type, primary_id, _merge_primary)
+        updated_primary = self._update_merge_operand(primary_type, primary_id, _merge_primary)
         if updated_primary is None:
             return {"error": f"Primary item not found: {primary_id}"}
 
-        # Preserve bidirectional link semantics for migrated related items.
+        # Only Owner-local merges retarget unpinned neighbors.
         for related_id, related_type in related_types.items():
             def _retarget_related(entry: dict, *, _related_id: str = related_id) -> dict:
                 related_ids = set(entry.get("related_ids", []))
@@ -1319,7 +1568,7 @@ class KnowledgeOpsMixin:
             entry["last_updated"] = ts
             return entry
 
-        updated_secondary = self._update_knowledge_item(
+        updated_secondary = self._update_merge_operand(
             secondary_type, secondary_id, _archive_secondary, keep_ids=frozenset({primary_id})
         )
         if updated_secondary is None:
@@ -1340,9 +1589,9 @@ class KnowledgeOpsMixin:
             "secondary_title": self._knowledge_title(secondary_type, updated_secondary),
         }
 
-    def _read_link_collections(self) -> tuple[list[dict], list[dict], list[dict]]:
-        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
-        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+    def _read_link_collections(self, *, migrate: bool = True) -> tuple[list[dict], list[dict], list[dict]]:
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson", migrate=migrate)
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision", migrate=migrate)
         playbooks = self._export_playbooks()
         return lessons, decisions, playbooks
 
@@ -1376,6 +1625,51 @@ class KnowledgeOpsMixin:
             if tool.get("id") == item_id:
                 return "tool", tool
         return None, None
+
+    def _update_merge_operand(self, item_type: str, item_id: str, mutator, *, keep_ids: frozenset = frozenset()) -> dict | None:
+        """An MCP merge writes only an operand, never migrates or archives peers.
+
+        Owner-local merges retain the ordinary capacity/link maintenance path.
+        The caller holds the review locks and has checked both operand versions.
+        """
+        if not _review_boundary.mcp_origin() or item_type == "playbook":
+            return self._update_knowledge_item(item_type, item_id, mutator, keep_ids=keep_ids)
+        from copy import deepcopy
+
+        from .storage import ReadOnlyStoreError, SkipWrite, _update_json, knowledge_write_allowed
+
+        if self._read_only:
+            raise ReadOnlyStoreError("read-only handle: refused merge write")
+        if item_type not in {"lesson", "decision"}:
+            return None
+        path = self._knowledge_dir / ("lessons.json" if item_type == "lesson" else "decisions.json")
+        result: dict[str, dict] = {}
+        unpinned: list[str] = []
+
+        def _locked(rows):
+            if not isinstance(rows, list):
+                raise SkipWrite
+            for idx, raw in enumerate(rows):
+                if not isinstance(raw, dict) or raw.get("id") != item_id:
+                    continue
+                entry = self._entries_for_locked_mutation([deepcopy(raw)], item_type)[0]
+                before = deepcopy(entry)
+                updated = mutator(entry)
+                if updated is None:
+                    updated = entry
+                unpinned[:] = _pinning.clear_stale([updated])
+                result["row"] = updated
+                if updated == before:
+                    raise SkipWrite
+                rows[idx] = self._entries_for_storage([updated], item_type)[0]
+                return rows
+            raise SkipWrite
+
+        with knowledge_write_allowed():
+            _update_json(path, _locked, default=[])
+        if unpinned:
+            _pinning.audit_auto_unpin(self, item_type, unpinned, reason="no_longer_trusted")
+        return result.get("row")
 
     def _update_knowledge_item(
         self, item_type: str, item_id: str, mutator, *, keep_ids: frozenset = frozenset()
@@ -1519,6 +1813,14 @@ class KnowledgeOpsMixin:
         if item is None or item_type is None:
             return {"error": f"Item not found: {item_id}"}
 
+        # By-id read: every row comes back, labelled with its eligibility.
+        index = self._recall_supersede_index()
+
+        def _view(kind: str, row: dict) -> dict:
+            return _recall_policy.label(
+                self._knowledge_view(kind, row), _recall_policy.classify(row, index)
+            )
+
         related = []
         for related_id in item.get("related_ids", []):
             related_type, related_item = self._find_item_in_collections(
@@ -1528,10 +1830,10 @@ class KnowledgeOpsMixin:
                 playbooks,
             )
             if related_item is not None and related_type is not None:
-                related.append(self._knowledge_view(related_type, related_item))
+                related.append(_view(related_type, related_item))
 
         return {
-            "source": self._knowledge_view(item_type, item),
+            "source": _view(item_type, item),
             "related": related,
             "total": len(related),
         }

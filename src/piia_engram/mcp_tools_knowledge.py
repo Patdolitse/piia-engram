@@ -5,8 +5,10 @@ import json
 
 try:
     from . import mcp_server as S
+    from . import version_guard as _version_guard
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
+    import version_guard as _version_guard  # type: ignore[no-redef]
 
 
 def _confirmation_detail(content) -> str:
@@ -142,13 +144,24 @@ async def update_knowledge(
     用途：需要修改已有知识条目的内容、状态或元数据时调用。内容变更会自动保留旧版本为不可变快照并递增版本号（用 get_knowledge_history 查看）。
     Purpose: Call when an existing knowledge item's content, status, or metadata needs to be changed. Content changes automatically retain the prior body as an immutable snapshot and bump the version (see get_knowledge_history).
 
+    必填 expected_version：先读取条目（get_lessons / get_decisions / search_knowledge / get_playbooks 的结果都带 version），再把该值传入。缺失返回 version_required（附当前版本与示例），过期返回 version_conflict，两者都零写入。
+    Required expected_version: read the entry first (results of get_lessons / get_decisions / search_knowledge / get_playbooks carry version) and pass that value. Missing -> version_required (with the current version and an example); stale -> version_conflict; both write nothing.
+
+    被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
+    An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
+
+    已批准 playbook 的内容修改是待审修订提案（返回 status=pending 与 pending_supersedes），批准前原版本照常使用。
+    改待审条目的 tier / status，或把条目提升为 verified，由主人在本地 engram review 决定：返回 local_review_only，零写入。
+    A content change of an approved playbook is a pending revision proposal (status=pending, pending_supersedes); the approved version stays in use until the Owner approves.
+    Changing a pending item's tier or status, or raising an item to verified, is the Owner's local engram review: the reply is local_review_only (nothing written).
+
     注意：如果只是确认某条知识仍有效，用 review_staging(action="review_item")；如果要归档，用 archive_knowledge。
     Note: If you only need to confirm an item is still valid, use review_staging(action="review_item"); to archive, use archive_knowledge.
 
     Args:
         item_id: lesson、decision 或 playbook 的 ID。 / ID of the lesson, decision, or playbook.
         updates_json: 要更新字段的 JSON 字符串。 / JSON string containing fields to update.
-        expected_version: 乐观并发保护（可选）：传入当前版本号，不匹配则拒绝写入且零改动（version_conflict）。修订指引的 guidance.revision.expected_version 会给出当前值。 / Optimistic-concurrency guard (optional): the current version; a mismatch refuses the write with zero changes (version_conflict). The dedup guidance's revision.expected_version carries the current value.
+        expected_version: 必填：读取结果中的当前版本号（从未修订的条目为 1；修订指引的 guidance.revision.expected_version 也会给出）。缺失 → version_required，不匹配 → version_conflict，均零改动。 / Required: the current version from a read result (1 for an entry never revised; the dedup guidance's revision.expected_version carries it too). Missing -> version_required; mismatch -> version_conflict; both change nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="update_knowledge")
@@ -162,10 +175,19 @@ async def update_knowledge(
     # Returns the FULL stored item; an attacker who guesses an id can no-op
     # update and read a secret item back through this "write" tool (Codex
     # round-16 P1-3). Gate the returned item — over-ceiling → withheld stub.
-    result = S._locked_engram_call(
-        S._get_engram().update_knowledge, item_id, updates, expected_version=expected_version
-    )
-    result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="update_knowledge")
+    eng = S._get_engram()
+
+    def _guarded() -> dict:
+        refusal = eng.mcp_existing_write_guard(
+            item_id, expected_version,
+            example={"item_id": item_id, "updates_json": updates_json, "expected_version": None},
+        )
+        if refusal is not None:
+            return refusal
+        return eng.update_knowledge(item_id, updates, expected_version=_version_guard.normalized(expected_version))
+
+    result = S._locked_engram_call(_guarded)
+    result = S._gov_rt.maybe_govern_one(eng.root, result, tool="update_knowledge")
     return S._json(result)
 
 
@@ -202,24 +224,42 @@ async def get_knowledge_history(
 
 
 @S.mcp.tool()
-async def archive_knowledge(item_id: str) -> str:
-    """按 ID 归档 lesson 或 decision（自动识别类型）。 / Archive a lesson or decision by ID, automatically detecting the item type.
+async def archive_knowledge(item_id: str, expected_version: int | None = None) -> str:
+    """按 ID 归档 lesson、decision 或 playbook（自动识别类型）。 / Archive a lesson, decision, or playbook by ID, automatically detecting the item type.
 
     用途：某条知识已经过时但不应删除时调用。
     Purpose: Call when a knowledge item is outdated but should be preserved rather than deleted.
 
-    注意：如果只是内容重复需要合并，用 merge_knowledge。
-    Note: If the item is a duplicate that should be merged, use merge_knowledge.
+    注意：如果只是内容重复需要合并，用 merge_knowledge。被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
+    Note: If the item is a duplicate that should be merged, use merge_knowledge. An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
+
+    待审（pending）条目的归档由主人在本地 engram review 决定：返回 local_review_only，零写入。
+    Archiving a pending item is the Owner's local engram review: the reply is local_review_only (nothing written).
 
     Args:
-        item_id: 要归档的 lesson 或 decision ID。 / ID of the lesson or decision to archive.
+        item_id: 要归档的条目 ID。 / ID of the item to archive.
+        expected_version: 必填：读取结果中的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零改动。 / Required: the current version from a read result. Missing -> version_required; mismatch -> version_conflict; both change nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="archive_knowledge")
     if refusal is not None:
         return refusal
 
-    result = S._locked_engram_call(S._get_engram().archive_knowledge, item_id)
+    eng = S._get_engram()
+
+    def _guarded() -> dict:
+        refusal = eng.mcp_existing_write_guard(
+            item_id, expected_version, example={"item_id": item_id, "expected_version": None},
+        )
+        if refusal is not None:
+            return refusal
+        return eng.archive_knowledge(item_id, expected_version=_version_guard.normalized(expected_version))
+
+    result = S._locked_engram_call(_guarded)
+    if isinstance(result, dict) and result.get("error") in (
+        "version_required", "version_conflict", "version_invalid", "pinned_entry",
+    ):
+        return S._json(result)
     S._beta("knowledge_rejected", action="archive")
     # Returns the full stored item (delegates to update_*) — same read-back
     # bypass as update_knowledge; gate the returned item (Codex round-16 P1-3).
@@ -237,6 +277,7 @@ async def confirm_knowledge(
     """Owner-only: explicitly stamp a knowledge item with human/test/anchor freshness provenance.
 
     Owner/admin surface: writes owner-confirmed provenance stamps and is refused for non-owner callers when governance is enabled.
+    A pending (staging) item is decided in the local engram review: the reply is local_review_only (nothing written).
 
     用途：用户/owner 已经确认某条知识仍成立，或明确背书它由测试信号/锚点支撑时调用。
     Purpose: Call only after explicit owner confirmation that a knowledge item is
@@ -278,10 +319,11 @@ async def onboard_repo(project_root: str = "") -> str:
     Owner/admin surface: writes staging candidate repo-facts and is refused for
     non-owner callers when governance is enabled.
 
-    用途：owner 扫描仓库中的 npm/Python/file 锚点，生成 staging 候选事实供后续确认；
-    不会自动验证或提升信任。
+    用途：owner 扫描仓库中的 npm/Python/file 锚点，生成 staging 候选事实供主人在本地用
+    `engram onboard-accept` 确认；不会自动验证或提升信任。
     Purpose: Scan the repo's npm/Python/file anchors and create staging
-    repo-fact candidates for the owner to accept later. Nothing is auto-verified.
+    repo-fact candidates for the owner to accept locally with `engram onboard-accept`.
+    Nothing is auto-verified.
 
     Args:
         project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
@@ -302,33 +344,30 @@ async def onboard_repo(project_root: str = "") -> str:
 
 @S.mcp.tool()
 async def onboard_accept(item_id: str, project_root: str = "") -> str:
-    """Owner-only: accept an onboard candidate and stamp anchor provenance.
+    """Owner-only, local only: accepting an onboard candidate is the local `engram onboard-accept`.
 
-    Owner/admin surface: promotes a staging candidate to a verified owner fact
-    and is refused for non-owner callers when governance is enabled.
+    Owner/admin surface: compatibility endpoint that directs the Owner to the
+    local command; no candidate is accepted over MCP.
 
-    用途：owner 确认一条 onboard 候选，先按仓库校验其锚点，再提升为 verified 并盖
-    anchor 确认戳；锚点无效或绑定到不同仓库时拒绝。
-    Purpose: Owner-accept an onboard candidate by checking its anchor against
-    the repo, then promoting it to a verified fact with anchor provenance.
+    接受 onboard 候选（校验锚点并提升为 verified）是主人的本地命令
+    `engram onboard-accept <id>`；经 MCP 在任何模式下都返回 local_review_only，零写入。
+    Accepting an onboard candidate (check its anchor, promote it to verified) is
+    the Owner's local command `engram onboard-accept <id>`; over MCP, in every
+    approval mode, the reply is local_review_only and nothing is written.
 
     Args:
         item_id: onboard 候选的 ID。 / The onboard candidate id.
-        project_root: 仓库根目录；留空时使用当前工作目录。 / Repository root; defaults to cwd.
+        project_root: 保留以兼容旧调用；不使用。 / Kept for compatibility; unused.
     """
     refusal = S._gov_rt.maybe_refuse_owner_write(S._get_engram().root, tool="onboard_accept")
     if refusal is not None:
         return refusal
+    from piia_engram import review_boundary as _review_boundary
 
-    import os as _os
-
-    root = project_root.strip() or _os.getcwd()
-    result = S._locked_engram_call(
-        S._get_engram().accept_onboard_candidate, item_id, project_root=root
+    result = _review_boundary.refusal(
+        item_id, action="onboard_accept", hint="run `engram onboard-accept <id>` locally",
     )
-    result = S._gov_rt.maybe_govern_owner_only(
-        S._get_engram().root, result, tool="onboard_accept"
-    )
+    result = S._gov_rt.maybe_govern_owner_only(S._get_engram().root, result, tool="onboard_accept")
     return S._json(result)
 
 
@@ -379,13 +418,17 @@ async def review_staging(
     """知识评审统一入口：列队列 / 批量审批 / 单条复习 / 执行审查结果。 / Unified knowledge review: list the staging queue, batch-approve, refresh one item, or apply review-page results.
 
     用途：action=list 查看待审核 staging 候选（metadata-only，只返回 id/类型/领域/
-    计数，不回显正文）；batch 批量 approve/reject staging 候选（默认 dry_run 预览，
-    confirm=True 才落盘）；review_item 标记单条知识"已复习"（只刷新 last_reviewed，
-    不改内容）；apply_text 执行审查页面粘贴回来的归档结果。
+    计数，不回显正文）；batch 只做 approve/reject 预览（dry_run=True）；review_item
+    标记单条知识"已复习"（只刷新 last_reviewed，不改内容）。
     Purpose: action=list inspects pending staging candidates (metadata-only);
-    batch approves/rejects candidates (dry-run preview by default); review_item
-    marks one knowledge item as reviewed; apply_text executes archive results
-    pasted back from the review page.
+    batch previews approve/reject (dry_run=True); review_item marks one
+    knowledge item as reviewed.
+
+    批准、拒绝、归档待审提案只能由主人在本地 engram review 中完成（任何模式）：
+    经 MCP 的 batch 落盘（dry_run=False）与 apply_text 返回 local_review_only，零写入。
+    Approving, rejecting or archiving pending proposals is the Owner's local
+    engram review in every mode: an applying batch (dry_run=False) and
+    apply_text return local_review_only over MCP and write nothing.
 
     Cross-queue visibility: list 响应附带 ``other_queues`` —— 其他待审积压的计数
     （如 playbook scope review），空 staging 队列不会掩盖其他待办。
@@ -393,15 +436,15 @@ async def review_staging(
     hides pending work elsewhere.
 
     Args:
-        action: list（默认）| batch | review_item | apply_text。
+        action: list（默认）| batch（仅预览）| review_item。apply_text 仅限本地。 / list (default) | batch (preview only) | review_item; apply_text is local only.
         actions_json: JSON array of {"id": "...", "action": "approve|reject"}（batch）。
-        confirm: 与 dry_run=False 同时为 True 才真正变更（batch）。 / Must be true together with dry_run=false to mutate (batch).
-        dry_run: 默认 True 只预览不变更（batch）。 / Defaults to true; no knowledge is changed when true (batch).
+        confirm: 经 MCP 不会落盘；保留用于兼容。 / Never applies over MCP; kept for compatibility.
+        dry_run: 必须为 True（预览）；False 返回 local_review_only。 / Must be true (preview); false returns local_review_only.
         filters_json: 过滤 JSON 对象，如 {"type":"decision","domain":"release"}（list/batch）。 / Filters JSON object (list/batch).
         limit: 列表条数上限（list）。 / Max pending items to list.
         offset: 列表偏移（list）。 / Pending-list offset.
         knowledge_id: 要复习的知识条目 ID（review_item）。 / ID of the knowledge item to refresh (review_item).
-        review_text: 审查结果文本或 JSON 字符串（apply_text）。 / Review results text or JSON string (apply_text).
+        review_text: 仅限本地（apply_text 经 MCP 返回 local_review_only）。 / Local only (apply_text returns local_review_only over MCP).
     """
     # a4: write-path governance gate — must run unconditionally BEFORE action
     # validation so a low-trust caller gets a governance refusal, never an
@@ -421,6 +464,11 @@ async def review_staging(
         return S._gov_rt._strict_mode.refuse(
             S._get_engram().root, tool="review_staging", detail=f"action={action or '?'}"
         )
+    if (action == "batch" and dry_run is not True) or action == "apply_text":
+        # Deciding pending proposals is the Owner's local review in every mode.
+        from piia_engram import review_boundary as _review_boundary
+
+        return S._json(_review_boundary.refusal(action=action))
     if action == "list":
         try:
             filters = json.loads(filters_json or "{}")
@@ -481,26 +529,9 @@ async def review_staging(
         # full stored item. Gate the returned item (Codex round-16 P1-3).
         result = S._gov_rt.maybe_govern_one(S._get_engram().root, result, tool="review_staging")
         return S._json(result)
-    if action == "apply_text":
-        if not review_text:
-            return (
-                "action=apply_text 需要提供 review_text。 "
-                "/ action=apply_text requires review_text."
-            )
-        # Try to parse as JSON first
-        try:
-            data = json.loads(review_text)
-            if isinstance(data, dict) and "archive" in data:
-                result = S._locked_engram_call(S._get_engram().apply_review, data)
-                return S._json(result)
-        except (ValueError, TypeError):
-            pass
-        # Treat as text format
-        result = S._locked_engram_call(S._get_engram().apply_review, review_text)
-        return S._json(result)
     return (
-        f"未知 action: {action}。可用: list / batch / review_item / apply_text。 "
-        f"/ Unknown action: {action}. Available: list / batch / review_item / apply_text."
+        f"未知 action: {action}。可用: list / batch / review_item。 "
+        f"/ Unknown action: {action}. Available: list / batch / review_item."
     )
 
 
@@ -557,18 +588,28 @@ async def request_outline_review(lang: str = "zh") -> str:
 
 
 @S.mcp.tool()
-async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
+async def merge_knowledge(
+    primary_id: str,
+    secondary_id: str,
+    primary_expected_version: int | None = None,
+    secondary_expected_version: int | None = None,
+) -> str:
     """将次要知识条目合并进主知识条目。 / Merge a secondary knowledge item into a primary knowledge item.
 
     用途：find_similar_knowledge 发现重复或高度相似条目后，用来保留主条目并归档次要条目。
     Purpose: Call after find_similar_knowledge identifies duplicate or highly similar items, keeping the primary item and archiving the secondary one.
 
-    注意：主条目的内容会保留，次要条目的关联关系会转移后归档。
-    Note: The primary item's content is preserved; related links from the secondary item are transferred before it is archived.
+    注意：主条目的内容会保留，次要条目的关联关系会转移后归档。两个条目都会被改动，因此两个版本号都必填。
+    Note: The primary item's content is preserved; related links from the secondary item are transferred before it is archived. Both entries change, so both versions are required.
+
+    被主人钉住的条目经 MCP 只读：返回 pinned_entry（零写入）并给出用 supersedes 提交修订提案的方式。
+    An Owner-pinned entry is read-only over MCP: the reply is pinned_entry (nothing written) with how to submit a supersedes revision proposal instead.
 
     Args:
         primary_id: 要保留的主条目 ID。 / ID of the primary item to keep.
         secondary_id: 要合并并归档的次要条目 ID。 / ID of the secondary item to merge and archive.
+        primary_expected_version: 必填：主条目的当前版本号。 / Required: the primary item's current version.
+        secondary_expected_version: 必填：次要条目的当前版本号。缺失 → version_required，不匹配 → version_conflict，均零改动。 / Required: the secondary item's current version. Missing -> version_required; mismatch -> version_conflict; both change nothing.
     """
     # a4: write-path governance gate
     refusal = S._gov_rt.maybe_refuse_write(S._get_engram().root, tool="merge_knowledge")
@@ -578,8 +619,29 @@ async def merge_knowledge(primary_id: str, secondary_id: str) -> str:
     # Returns {primary_title, secondary_title} — stored titles the caller only
     # referenced by id. Gate the ack so lower tiers don't read titles back
     # (Codex round-16 write-echo class).
-    result = S._locked_engram_call(S._get_engram().merge_knowledge, primary_id, secondary_id)
-    result = S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="merge_knowledge")
+    eng = S._get_engram()
+
+    def _guarded() -> dict:
+        example = {"primary_id": primary_id, "secondary_id": secondary_id,
+                   "primary_expected_version": eng.mcp_entry_version(primary_id),
+                   "secondary_expected_version": eng.mcp_entry_version(secondary_id)}
+        for item_id, expected, param in ((primary_id, primary_expected_version, "primary_expected_version"),
+                                         (secondary_id, secondary_expected_version, "secondary_expected_version")):
+            refusal = eng.mcp_existing_write_guard(item_id, expected, example=example, param=param)
+            if refusal is not None:
+                return refusal
+        return eng.merge_knowledge(
+            primary_id, secondary_id,
+            primary_expected_version=_version_guard.normalized(primary_expected_version),
+            secondary_expected_version=_version_guard.normalized(secondary_expected_version),
+        )
+
+    result = S._locked_engram_call(_guarded)
+    if isinstance(result, dict) and result.get("error") in (
+        "version_required", "version_conflict", "version_invalid", "pinned_entry",
+    ):
+        return S._json(result)
+    result = S._gov_rt.maybe_govern_write_ack(eng.root, result, tool="merge_knowledge")
     return S._json(result)
 
 
@@ -594,12 +656,13 @@ async def manage_relation(
 
     用途：rel 留空时管理无类型、双向的"see also"关联；rel 取 led_to / supersedes /
     implemented_by 时管理有类型、有方向的演进边，用于重建"想法 → 决策 → 实现"
-    决策链（喂给 get_decisions 的 thread_seed_id 分支）。unlink 幂等——关系不存在
-    也不报错。
+    决策链（喂给 get_decisions 的 thread_seed_id 分支）；内部 supersedes 链仅由版本
+    更新维护，不能手工建立或移除，其他关系的 unlink 幂等。
     Purpose: with rel empty this manages the untyped bidirectional "see also"
     link; with rel set (led_to / supersedes / implemented_by) it manages the
     typed, directed evolution edge consumed by decision threads
-    (get_decisions thread_seed_id). unlink is idempotent.
+    (get_decisions thread_seed_id); internal supersedes lineage cannot be
+    manually added or removed, and unlink is idempotent for other relations.
 
     rel 取值 / values:
       - led_to：src 引出 / 导致 dst（src led to dst）

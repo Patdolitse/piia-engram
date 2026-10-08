@@ -9,7 +9,6 @@ ContextMixin provides:
 
 Top-level functions:
 - extract_knowledge: LLM-driven structured extraction
-- ingest_extraction: apply extracted knowledge to an Engram
 """
 
 from __future__ import annotations
@@ -18,10 +17,12 @@ from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
 import json
 import logging
 import re
+from collections import Counter
 from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+from . import recall_policy as _recall_policy
 from .continuity_digest import build_session_digest, sanitize_digest_value
 from .storage import (
     overflow_batch,
@@ -31,7 +32,6 @@ from .storage import (
     PLAYBOOK_TRIGGERS,
     STALE_KNOWLEDGE_DAYS,
     _now_iso,
-    strip_untrusted_trust_fields,
 )
 from .session_filters import (
     has_explicit_decision_signal,
@@ -377,7 +377,6 @@ class ContextMixin:
         "domains": 10,
         "stale": 11,
         "staging": 12,
-        "sync": 13,
     }
     _SECTION_DISPLAY: dict[str, int] = {
         "fragmentation": 0,
@@ -393,13 +392,12 @@ class ContextMixin:
         "project": 10,
         "stale": 11,
         "staging": 12,
-        "sync": 13,
     }
 
     # Tiered context levels for cold-start latency control.
     # quick:    profile + preferences only — pure JSON reads, no scans.
     # standard: + quality, domains, top lessons/decisions, project snapshot.
-    # full:     everything (conflicts, stale, staging, auto-sync side effects).
+    # full:     everything (conflicts, stale and staging reminders).
     _LEVEL_SECTIONS: dict[str, set[str] | None] = {
         "quick": {"profile", "preferences"},
         "standard": {"profile", "preferences", "quality", "domains",
@@ -756,6 +754,7 @@ class ContextMixin:
                 "skipped_low_quality": 0,
                 "rejected_by_output_guard": 0,
                 "rejected_quality": _empty_rejected_quality_summary(),
+                "skipped_by_reason": {},
                 "results": [],
             }
 
@@ -810,11 +809,15 @@ class ContextMixin:
         prev_guard_sentence = ""
         for raw in sentences:
             sentence = raw.strip()
-            if not sentence or len(sentence) < 8:
+            if not sentence:
+                continue  # the empty piece after a final full stop is not a skipped candidate
+            if len(sentence) < 8:
                 skipped += 1
+                results.append({"status": "skipped", "reason": "too_short", "text": sentence[:80]})
                 continue
             if not self._has_content_chars(sentence):
                 skipped += 1
+                results.append({"status": "skipped", "reason": "no_content", "text": sentence[:80]})
                 continue
             window_sentence = prev_guard_sentence
             prev_guard_sentence = sentence
@@ -845,7 +848,7 @@ class ContextMixin:
 
             if not is_decision and not is_lesson:
                 skipped += 1
-                results.append({"status": "skipped", "text": sentence[:80]})
+                results.append({"status": "skipped", "reason": "no_trigger", "text": sentence[:80]})
                 continue
 
             candidate_type = "decision" if is_decision else "lesson"
@@ -1014,6 +1017,9 @@ class ContextMixin:
             "skipped_low_quality": skipped_low_quality,
             "rejected_by_output_guard": rejected_by_output_guard,
             "rejected_quality": rejected_quality,
+            "skipped_by_reason": dict(Counter(
+                str(r.get("reason") or "unknown") for r in results if r.get("status") == "skipped"
+            )),
             "results": results,
         }
 
@@ -1279,13 +1285,7 @@ class ContextMixin:
             try:
                 session_content = ""
                 try:
-                    from .contexts import _sanitize_tool_name
-
-                    session_path = (
-                        self._contexts_dir
-                        / _sanitize_tool_name(source_tool)
-                        / f"{session_id}.md"
-                    )
+                    session_path = self._context_session_path(source_tool, session_id)
                     if session_path.exists():
                         session_content = session_path.read_text(encoding="utf-8")
                 except Exception:
@@ -1368,8 +1368,10 @@ class ContextMixin:
         # Save via add_playbook (inherits duplicate detection)
         result = self.add_playbook(playbook, source_tool=source_tool)
 
+        if result.get("status") == "queue_full":
+            return result  # reported by the caller; nothing was written
         if result.get("status") in _NOT_ADDED and result.get("status") != "duplicate":
-            return None  # rejected, retired or queue full: never merged into anything
+            return None  # rejected or retired: never merged into anything
         if result.get("status") == "duplicate":
             # Cross-session merge: if the existing playbook is staging, merge instead
             existing_id = result.get("existing_id")
@@ -1409,6 +1411,9 @@ class ContextMixin:
     # Smart cold-start context generation
     # ------------------------------------------------------------------
 
+    # Upper bound on re-fits while reserving room for the omission line.
+    _OMISSION_FIT_MAX_ROUNDS = 64
+
     def generate_context(
         self,
         project_folder: str | None = None,
@@ -1416,6 +1421,28 @@ class ContextMixin:
         level: str = "full",
     ) -> str:
         """Generate a concise context block that any AI can consume.
+
+        Thin wrapper over :meth:`generate_context_report`. The budget omission
+        of the latest call stays readable as ``last_context_omitted`` for
+        callers that only receive the text (kept for compatibility).
+        """
+        text, omitted = self.generate_context_report(
+            project_folder, max_tokens=max_tokens, level=level,
+        )
+        self.last_context_omitted = omitted
+        return text
+
+    def generate_context_report(
+        self,
+        project_folder: str | None = None,
+        max_tokens: int | None = None,
+        level: str = "full",
+    ) -> tuple[str, dict | None]:
+        """Generate the cold-start context; return ``(text, omitted)``.
+
+        ``omitted`` is ``{omitted_count, ids, sections, reason}`` when the
+        token budget dropped sections (the text then ends with one omission
+        line, paid for inside the budget), else None.
 
         This is the magic moment — inject this into any AI's system prompt
         and it immediately "knows" you.
@@ -1430,9 +1457,10 @@ class ContextMixin:
                 - "quick": profile + preferences only (pure JSON reads,
                   no filesystem scans). Use for low-latency cold start.
                 - "standard": adds quality, domains, top lessons/decisions,
-                  and project snapshot. Skips expensive reconciliation.
-                - "full" (default): everything, including conflict detection,
-                  stale/staging warnings, and auto-reconcile side effects.
+                  and project snapshot.
+                - "full" (default): everything, including conflict detection
+                  and stale/staging warnings. No level reads other AI tools'
+                  files or imports anything (that is `engram import-memories`).
                 Backward-compatible: defaults to "full" so existing callers
                 see no behaviour change.
         """
@@ -1448,6 +1476,13 @@ class ContextMixin:
 
         # ── Build each section independently ──────────────────────────
         sections: dict[str, str] = {}
+        # ids of the knowledge rows each section carries (budget omission report)
+        section_ids: dict[str, list[str]] = {}
+        # Recall eligibility (auto_inject): cold start shows trusted rows only.
+        supersede_index = self._recall_supersede_index()
+
+        def _trusted(rows: list[dict]) -> list[dict]:
+            return _recall_policy.trusted_only(rows, supersede_index)
 
         # Data fragmentation warning — surface before any content.
         if getattr(self, "data_orphans", None):
@@ -1546,29 +1581,30 @@ class ContextMixin:
         # Note: lessons/decisions variables are reused by the "conflicts" section,
         # so we initialise them as empty lists when skipped to keep that logic safe.
         if _wants("lessons"):
-            # verified-only: staged candidates are unreviewed and must not
-            # surface in cold-start context (they stay behind `engram review`)
-            lessons = [
-                l for l in self.get_relevant_lessons(
-                    project_folder=project_folder, limit=8, tier="verified",
-                    _update_access=False,
-                )
-                if (l.get("tier") or l.get("memory_state")) == "verified"
-            ]
+            # trusted-only (the recall policy inside get_relevant_lessons):
+            # staged candidates stay behind `engram review`
+            lessons = self.get_relevant_lessons(
+                project_folder=project_folder, limit=8, _update_access=False,
+            )
             if lessons:
                 ll: list[str] = ["\n## 相关经验教训（请在开发中主动避免）"]
                 for l in lessons:
                     ll.append(f"- {l.get('summary', '')}")
                 sections["lessons"] = "\n".join(ll)
+                section_ids["lessons"] = [str(l.get("id")) for l in lessons if l.get("id")]
         else:
             lessons = []
 
         # Decisions
         if _wants("decisions"):
-            decisions = [
-                d for d in self.get_decisions(limit=6, _update_access=False, tier="verified")
-                if (d.get("tier") or d.get("memory_state")) == "verified"
-            ]
+            # trusted-only; superseded decisions (e.g. an older choice for the
+            # same question) never take one of the six slots
+            # Owner-pinned decisions first, then the newest; six in all.
+            trusted_decisions = _trusted(self.get_decisions(limit=None, _update_access=False))
+            pinned_decisions = [d for d in trusted_decisions if _recall_policy.is_pinned(d)][-6:]
+            other_decisions = [d for d in trusted_decisions if not _recall_policy.is_pinned(d)]
+            room = 6 - len(pinned_decisions)
+            decisions = pinned_decisions + (other_decisions[-room:] if room > 0 else [])
             if decisions:
                 dc: list[str] = ["\n## 已做的关键决策（请遵循）"]
                 for d in decisions:
@@ -1581,12 +1617,16 @@ class ContextMixin:
                     elif choice:
                         dc.append(f"- {choice}")
                 sections["decisions"] = "\n".join(dc)
+                section_ids["decisions"] = [str(d.get("id")) for d in decisions if d.get("id")]
         else:
             decisions = []
 
         # Recent playbooks
         if _wants("playbooks"):
-            recent_pbs = self.get_recent_playbooks(limit=5, project_folder=project_folder)
+            # fetch a wider window, filter, then keep the five most recent
+            recent_pbs = _recall_policy.pinned_first(_trusted(
+                self.get_recent_playbooks(limit=50, project_folder=project_folder)
+            ))[:5]
             if recent_pbs:
                 pb_lines: list[str] = ["\n## 近期操作手册"]
                 for pb in recent_pbs:
@@ -1600,6 +1640,7 @@ class ContextMixin:
                         line += f" [参数: {', '.join(params)}]"
                     pb_lines.append(line)
                 sections["playbooks"] = "\n".join(pb_lines)
+                section_ids["playbooks"] = [str(pb.get("id")) for pb in recent_pbs if pb.get("id")]
 
         # Conflicts
         if _wants("conflicts"):
@@ -1654,59 +1695,61 @@ class ContextMixin:
             if staging["total_staging"] > 10:
                 sections["staging"] = (
                     "\n## staging_review_reminder\n"
-                    f"- 有 {staging['total_staging']} 条自动导入的知识尚未审核。"
+                    f"- 有 {staging['total_staging']} 条待审知识。"
                     " 建议运行 review_knowledge 查看并确认或归档。"
                 )
 
-        # Auto-reconcile (filesystem-scanning side effects — only at "full" level).
-        # Skipping these is the main latency win for quick/standard cold start.
-        if _wants("sync") and not getattr(self, "_read_only", False):
-            sync_msgs: list[str] = []
-            try:
-                reconcile = self.reconcile_memories()
-                if reconcile["imported"] > 0:
-                    sync_msgs.append(
-                        f"- 记忆同步：导入了 {reconcile['imported']} 条外部 AI 记忆"
-                        f"（来源：{', '.join(reconcile['sources'][:5])}）"
-                    )
-            except Exception as exc:
-                logger.warning("reconcile_memories failed: %s", exc)
-
-            try:
-                cfg_sync = self.reconcile_ai_configs()
-                if cfg_sync["imported"] > 0:
-                    sync_msgs.append(
-                        f"- 配置对齐：从 {cfg_sync['scanned_files']} 个 AI 配置文件"
-                        f"导入了 {cfg_sync['imported']} 条规则"
-                        f"（来源：{', '.join(cfg_sync['sources'][:5])}）"
-                    )
-            except Exception as exc:
-                logger.warning("reconcile_ai_configs failed: %s", exc)
-
-            if sync_msgs:
-                sections["sync"] = "\n## auto_sync\n" + "\n".join(sync_msgs)
-
         # ── Assemble ──────────────────────────────────────────────────
         if not sections:
-            return ""
+            return "", None
 
         if max_tokens is None:
             # No budget — include all, display order
             parts = sorted(sections.items(), key=lambda kv: self._SECTION_DISPLAY.get(kv[0], 99))
-            return "\n".join(text for _, text in parts)
+            return "\n".join(text for _, text in parts), None
+        max_tokens = max(0, int(max_tokens))
 
         # Budget-limited — include by priority until exhausted
-        budget = max_tokens
-        included: list[tuple[int, str]] = []
         by_priority = sorted(sections.items(), key=lambda kv: self._SECTION_PRIORITY.get(kv[0], 99))
-        for key, text in by_priority:
-            cost = self._estimate_tokens(text)
-            if cost <= budget:
-                included.append((self._SECTION_DISPLAY.get(key, 99), text))
-                budget -= cost
-        # Re-sort to display order
-        included.sort()
-        return "\n".join(text for _, text in included)
+
+        def _fit(budget: int) -> tuple[list[tuple[int, str]], list[str]]:
+            kept: list[tuple[int, str]] = []
+            dropped: list[str] = []
+            for key, text in by_priority:
+                cost = self._estimate_tokens(text)
+                if cost <= budget:
+                    kept.append((self._SECTION_DISPLAY.get(key, 99), text))
+                    budget -= cost
+                else:
+                    dropped.append(key)
+            kept.sort()  # display order
+            return kept, dropped
+
+        def _omitted(dropped: list[str]) -> dict | None:
+            ids = [i for key in dropped for i in section_ids.get(key, [])]
+            extra = sum(1 for key in dropped if not section_ids.get(key))
+            return _recall_policy.omitted_info(ids=ids, sections=dropped, extra=extra)
+
+        def _join(kept: list[tuple[int, str]], line: str) -> str:
+            body = "\n".join(text for _, text in kept)
+            return f"{body}\n\n{line}" if line else body
+
+        # A cut ends with one line naming what was left out; that line is
+        # paid for inside the same budget (reserve grows strictly each round).
+        reserve = 0
+        for _round in range(self._OMISSION_FIT_MAX_ROUNDS):
+            kept, dropped = _fit(max_tokens - reserve)
+            omitted = _omitted(dropped)
+            line = _recall_policy.omission_line(omitted)
+            text = _join(kept, line)
+            if not line or self._estimate_tokens(text) <= max_tokens:
+                return text, omitted
+            reserve += max(1, self._estimate_tokens(text) - max_tokens)
+            if reserve > max_tokens:
+                break
+        # Not even the line fits: keep the plain cut, report it in data only.
+        kept, dropped = _fit(max_tokens)
+        return _join(kept, ""), _omitted(dropped)
 
     # ------------------------------------------------------------------
     # Quick-context snapshot file (cross-tool / offline fallback)
@@ -1722,7 +1765,7 @@ class ContextMixin:
         Any AI tool — even one without the Engram MCP server connected —
         can `Read` this file to get the user's identity, preferences, and
         top knowledge. Default level is "standard" so the file stays under
-        a few KB and free of expensive reconcile output.
+        a few KB.
 
         Args:
             target: Override output path. Defaults to ``self.root / "quick_context.md"``.
@@ -1736,6 +1779,8 @@ class ContextMixin:
         import os as _os
         import tempfile as _tempfile
         from pathlib import Path as _Path
+
+        from .atomic_replace import replace_with_retry
 
         body = self.generate_context(level=level)
         timestamp = datetime.now().isoformat(timespec="seconds")
@@ -1758,7 +1803,7 @@ class ContextMixin:
                 f.write(content)
                 f.flush()
                 _os.fsync(f.fileno())
-            _os.replace(tmp_name, path)
+            replace_with_retry(tmp_name, path)
         except Exception:
             try:
                 _Path(tmp_name).unlink()
@@ -1864,145 +1909,3 @@ def extract_knowledge(
         logger.warning("extract_knowledge LLM call failed: %s", exc)
     return None
 
-
-def ingest_extraction(engram: "Engram", extracted: dict,
-                      project_folder: str, session_id: str = "") -> dict:
-    """Apply extracted knowledge to the Engram. Returns a summary of what was learned."""
-    learned: list[str] = []
-    skipped_low_quality = 0
-    rejected_quality = _empty_rejected_quality_summary()
-    source = {"project": project_folder, "session": session_id, "time": _now_iso()}
-
-    # Profile updates
-    profile_updates = extracted.get("profile_updates", {})
-    if profile_updates:
-        # Only update non-empty values
-        clean = {k: v for k, v in profile_updates.items() if v}
-        if clean:
-            engram.update_profile(clean)
-            learned.append(f"了解到你的基本信息（{', '.join(clean.keys())}）")
-
-    # Work style updates
-    style_updates = extracted.get("work_style_updates", {})
-    if style_updates:
-        clean = {}
-        if style_updates.get("preferences"):
-            clean["preferences"] = style_updates["preferences"]
-        if style_updates.get("communication"):
-            clean["communication"] = style_updates["communication"]
-        if clean:
-            engram.update_work_style(clean)
-            learned.append("了解到你的工作风格偏好")
-
-    # Quality standards
-    quality = extracted.get("quality_updates", {})
-    if quality:
-        clean = {}
-        if quality.get("acceptance_threshold"):
-            try:
-                clean["acceptance_threshold"] = int(quality["acceptance_threshold"])
-            except (ValueError, TypeError):
-                pass
-        if quality.get("rules"):
-            existing = engram.get_quality_standards()
-            existing_rules = set(existing.get("rules", []))
-            new_rules = [r for r in quality["rules"] if r not in existing_rules]
-            if new_rules:
-                all_rules = list(existing_rules) + new_rules
-                clean["rules"] = all_rules[-15:]  # keep last 15 rules
-        if clean:
-            engram.update_quality_standards(clean)
-            learned.append("更新了你的质量标准")
-
-    # Lessons
-    lessons = extracted.get("lessons", [])
-    for l in lessons[:5]:
-        if isinstance(l, dict) and l.get("summary"):
-            quality = _assess_extraction_candidate(
-                str(l.get("summary", "")),
-                "lesson",
-                "llm_extraction",
-                l.get("confidence", 0.7),
-            )
-            if not quality["accepted"]:
-                skipped_low_quality += 1
-                _record_rejected_quality(rejected_quality, quality)
-                continue
-            lesson = dict(l)
-            # LLM extraction cannot self-certify trust: strip any tier / state
-            # fields it tried to set so the risk-based write gate is the sole
-            # authority (low/medium auto-absorb to verified, high -> staging).
-            strip_untrusted_trust_fields(lesson)
-            lesson["source_project"] = project_folder
-            lesson["source_session"] = session_id
-            # tier decided by risk gate: low/medium auto-absorb, high->staging
-            lesson["extraction"] = _make_extraction_metadata(
-                "llm",
-                str(lesson.get("summary", "")),
-                "llm_extraction",
-                str(lesson.get("source_tool") or "extract_knowledge"),
-                lesson.get("confidence", 0.7),
-                quality,
-            )
-            engram.add_lesson(lesson)
-            learned.append(f"记住了教训: {l['summary'][:40]}")
-
-    # Decisions
-    decisions = extracted.get("decisions", [])
-    for d in decisions[:5]:
-        if isinstance(d, dict) and d.get("question"):
-            decision_text = " ".join(
-                str(d.get(key, ""))
-                for key in ("question", "choice", "reasoning")
-                if d.get(key)
-            )
-            trigger_reason = "llm_extraction_choice" if d.get("choice") else "llm_extraction"
-            quality = _assess_extraction_candidate(
-                decision_text,
-                "decision",
-                trigger_reason,
-                d.get("confidence", 0.7),
-            )
-            if not quality["accepted"]:
-                skipped_low_quality += 1
-                _record_rejected_quality(rejected_quality, quality)
-                continue
-            decision = dict(d)
-            # LLM extraction cannot self-certify trust: strip any tier / state
-            # fields it tried to set so the risk-based write gate is the sole
-            # authority (low/medium auto-absorb to verified, high -> staging).
-            strip_untrusted_trust_fields(decision)
-            decision["source_project"] = project_folder
-            decision["source_session"] = session_id
-            # tier decided by risk gate: low/medium auto-absorb, high->staging
-            decision["extraction"] = _make_extraction_metadata(
-                "llm",
-                str(decision.get("question", "")),
-                trigger_reason,
-                str(decision.get("source_tool") or "extract_knowledge"),
-                decision.get("confidence", 0.7),
-                quality,
-            )
-            engram.add_decision(decision)
-            learned.append(f"记录了决策: {d['question'][:40]}")
-
-    # Domain usage
-    domains = extracted.get("domains_used", [])
-    for domain in domains[:5]:
-        if isinstance(domain, str) and domain:
-            engram.increment_domain_usage(domain)
-
-    # Project snapshot
-    proj_info = extracted.get("project_info", {})
-    if proj_info:
-        existing = engram.get_project_snapshot(project_folder)
-        session_count = existing.get("session_count", 0) + 1
-        proj_info["session_count"] = session_count
-        engram.save_project_snapshot(project_folder, proj_info)
-
-    return {
-        "items_learned": len(learned),
-        "summary": learned,
-        "skipped_low_quality": skipped_low_quality,
-        "rejected_quality": rejected_quality,
-    }

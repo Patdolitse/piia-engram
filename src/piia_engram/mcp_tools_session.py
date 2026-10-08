@@ -145,8 +145,9 @@ async def get_resume_brief(
     Args:
         project_folder: 项目文件夹路径（可选）。留空只返回身份卡。 /
             Project folder (optional). Empty returns identity-only.
-        token_budget: 输出 token 软上限（默认 2000，约 8000 字符）。 /
-            Soft cap for output tokens (default 2000 ≈ 8000 chars).
+        token_budget: 输出 token 软上限（默认 2000，约 8000 字符）。超出时结果带 omitted，正文末尾注明省略了什么。 /
+            Soft cap for output tokens (default 2000 ≈ 8000 chars). When it cuts content,
+            the result carries ``omitted`` and the brief ends with one line naming what was left out.
         include_resume_pack: Include structured ``project_resume_pack.v1`` in
             the JSON response. Defaults to false to preserve existing output.
         include_agent_context_pack: Include structured
@@ -155,12 +156,9 @@ async def get_resume_brief(
         agent_role: Role used to shape the optional agent context pack.
         task_summary: Current delegated task summary for agent-pack selection.
     """
-    # Auto-bootstrap on first ever call when store is empty.
-    from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
-
-    if needs_bootstrap(S._get_engram()):
-        run_bootstrap(S._get_engram())
-
+    # Read-only with respect to memory content: other AI tools' rule and memory
+    # files are never scanned or imported here (`engram import-memories` does
+    # that on the Owner's explicit request).
     brief = S._get_engram().get_resume_brief(
         project_folder=project_folder,
         token_budget=token_budget,
@@ -208,6 +206,10 @@ async def get_recall(
     actionable memory bundle: identity slice, recent activity, relevant
     knowledge, and governance metadata.
 
+    只返回已审核且当前有效的知识；预算裁掉内容时 meta.omitted 给出 {omitted_count, ids, sections, reason}。
+    Returns reviewed, current knowledge only; when the budget drops items,
+    meta.omitted reports {omitted_count, ids, sections, reason} (no content).
+
     注意：该聚合视图可能组合多类知识和最近上下文，因此治理开启时仅 owner
     (private-self) 可读；非 owner 会在读取前被拒绝，不触发搜索或遥测写入。
     Note: Because this aggregate view can combine multiple knowledge classes and
@@ -220,7 +222,7 @@ async def get_recall(
         limit: 最多返回多少条知识（默认 8，上限 20）。 / Max knowledge items (default 8, max 20).
         token_budget: 知识片段的粗略 token 预算（默认 2000）。 / Rough token budget for knowledge items.
         include_freshness: 是否附加 freshness 提示。 / Attach freshness hints.
-        collapse_versions: 是否折叠版本链到当前 HEAD。 / Collapse version chains to current heads.
+        collapse_versions: 保留兼容；被取代的旧版本、待审和已归档条目一律不进入召回。 / Kept for compatibility; superseded versions, pending and archived items never enter recall.
         include_playbooks: 是否附带 playbook 指针桶（v4.20，默认 False；元数据+240 字描述预览，完整步骤永不入召回，最多 2 条且 ≤25% 知识预算）。 / Attach the playbook pointer bucket (v4.20, default False; metadata + 240-char description preview, full steps never enter recall, max 2 items and <=25% of the knowledge budget).
     """
     try:

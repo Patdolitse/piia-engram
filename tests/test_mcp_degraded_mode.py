@@ -107,14 +107,23 @@ def test_clean_shutdown_tolerates_none_engram():
         S._session = original_session
 
 
-def test_startup_sync_tolerates_none_engram():
-    """Startup sync must not crash when _engram is None (degraded mode)."""
+def test_server_start_tolerates_none_engram(monkeypatch):
+    """The server start must not crash when _engram is None (degraded mode)."""
+    from types import SimpleNamespace
+
     from piia_engram import mcp_server as S
 
-    original_engram = S._engram
-    try:
-        S._engram = None
-        # Should not raise
-        S._run_startup_sync()
-    finally:
-        S._engram = original_engram
+    events = []
+    monkeypatch.setattr(S, "_engram", None)
+    monkeypatch.setattr(
+        S, "_parse_args",
+        lambda: SimpleNamespace(transport="stdio", host="127.0.0.1", port=8123),
+    )
+    monkeypatch.setattr(S, "_configure_utf8_stdio", lambda: None)
+    monkeypatch.setattr(S, "_run_startup_auto_migrate", lambda: events.append("migrate"))
+    monkeypatch.setattr(S.mcp, "run", lambda transport: events.append(f"run:{transport}"))
+    monkeypatch.delenv("ENGRAM_EPHEMERAL", raising=False)
+
+    S.main()  # Should not raise
+
+    assert events == ["migrate", "run:stdio"]

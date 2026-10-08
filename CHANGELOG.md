@@ -6,6 +6,85 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [4.22.0] - 2026-10-07
+
+### Breaking changes
+
+- MCP edits to existing entries require the current version (`version_required` / `version_conflict`), reads carry `version`, and `supersedes` targets must be active and in the same scope and project.
+  - **Migration:** read first and pass `expected_version` (`primary_expected_version` / `secondary_expected_version` for merges, `supersedes_expected_version` for replacements), using the example in `version_required` and reading again after a conflict.
+- MCP `import_engram` only previews (`dry_run=true`); write requests return `local_only` without importing anything, and the tool is marked read-only.
+  - **Migration:** apply the import on the machine that holds the store with `engram import <backup.json> --apply --yes` (or `engram import --format openclaw ... --apply --yes`); the `local_only` reply names the command.
+- Playbooks an AI writes or rewrites through MCP wait for your review in every mode while the approved version stays in use, pending playbooks never run (`not_approved`), `add_playbook` replies with JSON, and a full queue refuses new proposals (`queue_full`, `ENGRAM_PLAYBOOK_QUEUE_MAX` defaults to 10).
+  - **Migration:** approve the drafts you still use with `engram review` or `engram review interactive`, and read the `add_playbook` reply as JSON.
+- Deciding pending proposals is local only in every mode: MCP approval, promotion, rejection, archive, merge and onboard acceptance return `local_review_only`, while listing, batch previews and `review_item` remain available and directly admitted verified writes are unchanged.
+  - **Migration:** decide pending items with `engram review` or `engram review interactive`, and accept onboard candidates with `engram onboard-accept <id>` (or `--all`); an agent that applied batches over MCP can still preview them with `dry_run=true`.
+- A decision an AI adds over MCP with the same question as a reviewed decision but a different choice is pending with `pending_supersedes` in every mode; local additions are unchanged and the reviewed decision stays in use until you approve its replacement.
+  - **Migration:** approve the replacements you want with `engram review`.
+- Engram chooses a fresh id for each new MCP playbook, ignoring the caller's `id`, and refuses local inserts with an id already in use (`id_exists`).
+  - **Migration:** take the id from the reply instead of choosing one.
+- Cold start, resume briefs, hooks and recall provide reviewed, current memory only; `search_knowledge` separates untrusted proposals into `pending` and returns replaced items in `superseded` only with `include_superseded=true`, as described in the [user guide](docs/user-guide.md#4-governance-and-approval-ai-suggests-you-review-what-matters).
+  - **Migration:** clients that read `search_knowledge` should read the `pending` group separately and not treat it as reviewed; a `{"tier": "staging"}` filter now fills the `pending` group.
+- Starting the MCP server, cold start and `wrap_up_session` do not automatically import other AI tools' memory or rule files, even with `ENGRAM_MCP_STARTUP_SYNC` or `run_reconcile=True`.
+  - **Migration:** run `engram import-memories` when you want to bring them in; they go to the review queue with a receipt.
+- `manage_relation` cannot manually add or remove internal `supersedes` version links (`supersedes_is_internal`).
+  - **Migration:** use versioned updates or replacement proposals rather than editing version links.
+
+### Added
+
+- A daily anonymous usage ping is on by default with a random install ID, version, OS, Python version, client name and date but no memories, paths, accounts or arguments; disable it with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (automatically off in CI and containers), as described in [PRIVACY.md](PRIVACY.md).
+- `engram doctor` adds a read-only "Client Connections" section showing each client's configuration and calls in the last 14 days (`--days N`, `--json`).
+- `engram import-memories` lists memories and rule-file sections found in other AI tools and adds them to the review queue after you confirm, with a receipt; `engram setup` offers a one-time import (default no).
+- `engram import --format openclaw` imports OpenClaw `SOUL.md` / `MEMORY.md` / `USER.md` locally; it previews by default, and MEMORY.md lessons go to the review queue.
+- `engram pin <id>` / `engram unpin <id>` / `engram pin --list` protect reviewed entries from archiving, imports and MCP edits, prioritize them in recall and require local review for revisions; see [Pinning what must stay](docs/user-guide.md#pinning-what-must-stay).
+- `engram review interactive` (`engram review -i`) walks through pending proposals one at a time in a terminal; nothing is written until you confirm the summary.
+- `engram review apply` marks accept `supersede:<id>`, `skip`, an optional reject `reason` and `expected_version`, apply in a fixed order (an entry and its replacement can pass in one run), and edit-type now also relabels decisions; `engram review export` writes a `marks-template.json`.
+- New entries record where they came from (`provenance.origin`, and for MCP writes the client's self-reported name and version), shown in review; `provenance` and `source_tool` can no longer be changed by an update (`provenance_immutable`).
+- MCP tools announce standard read-only, destructive, idempotent and open-world hints as client advice, not access control.
+
+### Changed
+
+- A near-duplicate (at least 95% similar but not the same text) goes to the review queue with `duplicate_candidate` instead of being refused; only text that is the same after normalization is refused as a duplicate.
+- The review card and `engram preview` show a duplicate candidate's earlier entry, similarity and a sentence-by-sentence diff.
+- When a token budget cuts content, `get_resume_brief`, `get_recall` and `engram preview` report `omitted` (counts, ids, sections), and text context ends with a one-line note.
+- Reading one item by id (`get_knowledge_history`, `explore_knowledge`) reports its state (`eligibility`) and, for a replaced item, `superseded_by`.
+- MCP instructions and setup blocks describe lasting facts, explicit dates and `supersedes` revisions; setup and `doctor --fix` refresh earlier default blocks while preserving your edits.
+- `extract_session_insights` and `wrap_up_session` list skipped candidates with a reason (`skipped_by_reason`) next to the saved counts.
+- `engram reconcile apply --commit --yes` and OpenClaw `MEMORY.md` lessons go through the review queue with a receipt, and the legacy memory migration follows the same off switch as other reads of other AI tools' files.
+
+### Removed
+
+- The unused internal function `ingest_extraction`.
+- MCP `review_staging` no longer approves, rejects or applies review results (see Breaking changes).
+
+### Fixed
+
+- **Claude Code users should rerun `engram setup`** to register Engram through `claude mcp add --scope user` instead of the unread `~/.claude/.mcp.json`, with an option to remove the old entry; see [Claude Code setup](docs/integrations/claude-code.md).
+- An Engram entry under another name (`piia-engram`, or any command that starts Engram) is recognised by doctor, status and dock, and setup moves a `piia-engram` entry to `engram` instead of adding a second server.
+- Client config files that setup rewrites are written atomically; a symlinked config stays a symlink, and on macOS and Linux the file keeps its permissions.
+- Windows: a write no longer fails while another process briefly holds the same file; Engram retries for up to one second.
+- JSON backups (`export_engram`, `engram dock-export`) include your rejection records (hashes and metadata only) and `engram import` restores them; malformed records are skipped and counted.
+- A rejection record with a field of the wrong type (for example a list) is skipped and counted instead of stopping an export, an import or a write, also when it is in the local file.
+- Playbook operations, execution plans and imports accept only plain file ids, new inserts never replace existing playbooks, and `get_daily_log` accepts only `YYYY-MM-DD` dates (`invalid_date`).
+- Playbook imports use locked, exclusive insertion, compare ids case-insensitively on Windows and reserve actual internal filenames such as `_index`; a failed import removes only its own new bodies. Safe legacy ids such as `_custom` remain readable, listable, reviewable and included in exports and backups.
+- Session, daily-log and execution-plan paths stay within their designated folders, including when a nested directory is a link.
+- Session saving, listing and digest reads use the same filename rules, preserving safe existing names such as `-session`.
+- Native imports reject invalid project ids before either previewing or applying changes (`invalid_project_id`).
+- MCP merges involving a pending proposal return `local_review_only` without changing the proposal or the reviewed entry.
+- MCP-origin merges modify only the two version-guarded operands, leaving all third entries unchanged, including `related_ids`. Their links to the merged-away entry remain readable by id. Owner-local merges still retarget unpinned links; pinned third entries stay unchanged in either case.
+- Merge, playbook delete and playbook restore compare expected versions inside their commit locks.
+- A failed playbook index update restores an existing body instead of removing it; atomic byte writes finish short writes and refuse zero progress before replacing a file.
+- `engram review` compares the version you reviewed (`expected_version`) inside the same lock that writes the decision, so an entry changed meanwhile is `version_conflict` and gets no approval, rejection or rejection record.
+- Playbook replacements durably record their target and both versions under the review locks before retiring the old playbook, including older stores with both versions already approved and active. After an interruption, replaying `approve` or the matching `supersede:<id>` mark completes the replacement only while the recorded target and versions still match; an unrelated retired target is refused. Recovery finishes the retired body's index before clearing the handoff. Preview and expected-version checks still apply.
+- Playbook approval retries reconcile index status and tier from the bodies under the review locks, including already-decided entries and the matching supersede mark's `already_applied` check. `engram doctor` reports discrepancies without changing the store; `engram doctor --fix` repairs them and removes pins from retired bodies. Bodies remain the source of truth and are never deleted by reconciliation.
+- Reading the trust boundaries no longer writes `identity/trust_boundaries.json`; missing defaults are filled in memory.
+- Reading knowledge (`get_lessons`, `get_decisions`, `get_playbooks` and the like) only counts an access and no longer refreshes `last_reviewed`, so `get_stale_knowledge` keeps listing what you have not reviewed; only your confirm and review actions set it.
+- The doctor connection report describes the server start as importing nothing and changing no knowledge or identity content, instead of "zero write" (reads still update access counts).
+- Pending proposals of every project appear in `engram review`, `engram review export`, `engram management` and the interactive review, with their `project:<name>` scope.
+- In strict mode `manage_playbook(action="update")` replies with the pending proposal instead of the whole proposed playbook.
+- `python -m piia_engram.setup_wizard` starts without a circular import.
+- The MCP server's log line naming the connecting client strips control characters and caps the length.
+- The Chinese setup message about seeded best practices says review decides what becomes verified, as the English one does.
+
 ## [4.21.2] - 2026-09-26
 
 ### Fixed

@@ -33,7 +33,8 @@ POOL_Q = "Q"
 POOL_QD = "Qd"
 POOL_R = "R"
 
-# Written only by the capacity core; callers can never set them.
+# Written only by the system (the capacity core; the Owner's pin command for
+# ``pinned`` / ``pinned_at``, see pinning.py); callers can never set them.
 SYSTEM_FIELDS = (
     "ingested_at",
     "queued_at",
@@ -42,6 +43,8 @@ SYSTEM_FIELDS = (
     "rejected_at",
     "approval_reason",
     "pending_supersedes",
+    "pinned",
+    "pinned_at",
 )
 
 # Body fields that identify a row's content (the archive dedup key uses them).
@@ -363,6 +366,9 @@ def plan_capacity(
         exempt |= {key for key, _ in after_keyed if key[0] == ctx.supersede_target}
     if ctx.keep_ids:
         exempt |= {key for key, _ in after_keyed if key[0] in ctx.keep_ids}
+    # An Owner-pinned row is never moved by these rules (pins only stay on
+    # reviewed rows, which no rule moves; this keeps it that way regardless).
+    exempt |= {key for key, row in after_keyed if row.get("pinned") is True}
 
     indexed = [(index, key, row) for index, (key, row) in enumerate(after_keyed)]
     moves: list[tuple[tuple[str, int], dict, str]] = []

@@ -21,12 +21,12 @@ engram setup
 Codex…），列出它将要修改的**具体配置文件路径**，然后请你**一键确认**后才写入
 MCP 连接（每次写入前都会自动备份）。选择"否"则不动任何外部配置文件。
 非交互/CI 场景可用 `engram setup --apply-external-config` 跳过确认直接写入。
+Claude Code 不走文件写入，而是通过 `claude mcp add --scope user engram ...` 注册；
+找不到 `claude` 命令时，setup 会打印这条命令请你手动运行。
 
-写入连接后，**自动引导（auto-bootstrap）** 会接手剩下的事：你的 AI 工具第一次
-调用 Engram 时（通过 `get_user_context` 或 `get_resume_brief`），会以只读方式扫描
-你已有的规则文件（`CLAUDE.md`、`AGENTS.md`、`.cursorrules` 等），自动导入你的偏好
-和项目规则——不需要单独的导入步骤。所以上面这一次"连接"就是你全部要做的；
-"它已经懂我了"这个时刻会在下一次会话里自己发生。
+Engram 不会自己读取其它 AI 工具的文件。想把它们已有的记忆（记忆文件、`CLAUDE.md`、
+`AGENTS.md`、`.cursorrules` 等）带进来，运行 `engram import-memories`（setup 也会问一次）：
+先列出条目，确认后才写入待审区。
 
 身份和知识工具使用本地文件，无需任何云账号。
 

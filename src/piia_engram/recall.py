@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Any
 
 from . import provenance as _provenance
+from . import recall_policy as _recall_policy
 
 # Rough chars-per-token estimate used only for trimming to ``token_budget``. The
 # real tokenizer is the caller's model; this is intentionally conservative and
@@ -95,6 +96,8 @@ def _project_playbook_item(
         trust = _project_trust(entry, freshness=view.get("freshness"), now=now)
         if trust:
             view["trust"] = trust
+    if _recall_policy.is_pinned(entry):
+        view["pinned"] = True
     return view
 
 
@@ -149,6 +152,8 @@ def _project_item(
         trust = _project_trust(entry, freshness=view.get("freshness"), now=now)
         if trust:
             view["trust"] = trust
+    if _recall_policy.is_pinned(entry):
+        view["pinned"] = True
     return view
 
 
@@ -236,10 +241,27 @@ def build_recall_payload(
 
     playbook_views: list[dict[str, Any]] = []
     playbook_excluded = 0
+    # budget omissions: ids + section names only (never the dropped text)
+    omitted_ids: list[str] = []
+    omitted_sections: list[str] = []
+    omitted_noid = 0
+
+    def _note_omitted(entry: dict[str, Any], section: str) -> None:
+        nonlocal omitted_noid
+        eid = entry.get("id")
+        if isinstance(eid, str) and eid.strip():
+            omitted_ids.append(eid.strip())
+        else:
+            omitted_noid += 1
+        if section not in omitted_sections:
+            omitted_sections.append(section)
+
     for entry in (playbooks or []):
         if not isinstance(entry, dict):
             continue
         if playbook_count >= _PLAYBOOK_MAX_ITEMS:
+            # a fixed item cap, not the budget: counted in playbooks.trimmed,
+            # never reported as a budget omission
             playbook_excluded += 1
             continue
         view = _project_item(
@@ -251,6 +273,7 @@ def build_recall_payload(
         # only one (a 100-token budget can never return a 209-token pointer).
         if playbook_spent + cost > playbook_token_cap:
             playbook_excluded += 1
+            _note_omitted(entry, "playbooks")
             continue
         playbook_views.append(view)
         playbook_count += 1
@@ -269,6 +292,7 @@ def build_recall_payload(
         # empty knowledge list when there is something to say.
         if knowledge and spent + cost > lesson_budget:
             excluded += 1
+            _note_omitted(entry, "knowledge")
             continue
         knowledge.append(view)
         spent += cost
@@ -319,17 +343,23 @@ def build_recall_payload(
         },
     }
 
+    meta: dict[str, Any] = {
+        "project": project,
+        "query": query,
+        "token_budget": budget,
+        "governance": gov_meta,
+        "context_usage": context_usage,
+    }
+    omitted = _recall_policy.omitted_info(
+        ids=omitted_ids, sections=omitted_sections, extra=omitted_noid
+    )
+    if omitted:
+        meta["omitted"] = omitted
     return {
         "identity": dict(identity) if isinstance(identity, dict) else {},
         "recent_activity": dict(recent_activity)
         if isinstance(recent_activity, dict)
         else {},
         "knowledge": knowledge,
-        "meta": {
-            "project": project,
-            "query": query,
-            "token_budget": budget,
-            "governance": gov_meta,
-            "context_usage": context_usage,
-        },
+        "meta": meta,
     }

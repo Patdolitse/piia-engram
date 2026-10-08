@@ -22,67 +22,145 @@ def _detect_installed_tools() -> list[dict]:
 
     不仅检查配置文件是否存在，还检查工具本身是否安装（配置目录存在）。
     返回 [{tool_id, name, config_path, format, verified, status, config, servers}]。
-    - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram)
+    - status: "configured" (有 engram 条目), "installed" (工具在但没配 engram),
+      "undetermined" (Claude Code's user config too large or not valid JSON),
+      "legacy" (Claude Code: an Engram entry only in ~/.claude/.mcp.json)
     - verified: True = evidence-tracked setup path, False = expected/community setup path
+
+    Claude Code is registered with ``claude mcp add`` into its user config
+    (``~/.claude.json`` or ``$CLAUDE_CONFIG_DIR/.claude.json``). That file is
+    only checked for an Engram entry (top level or under a project; an
+    ``engram`` / ``piia-engram`` key or a server launching Engram): the tool is
+    reported with ``detect_only=True`` and empty ``config``/``servers``, so
+    nothing validates, prints or rewrites it. ``~/.claude/.mcp.json`` is not
+    read by Claude Code; an entry there alone is ``legacy``.
     """
     results = []
     for tool_id, cfg in W._tool_configs().items():
-        fmt = cfg.get("format", "json")
-        server_key = cfg.get("server_key", "mcpServers")
-        verified = cfg.get("verified", False)
-        for config_path in cfg["config_paths"]:
-            # 检查工具是否安装（配置目录存在 = 工具装了）
-            tool_dir = config_path.parent
-            if not tool_dir.exists():
-                continue
-
-            config = W._read_mcp_config(config_path, fmt=fmt)
-
-            # 按工具的 server_key 取 MCP servers 段
-            servers = config.get(server_key, {})
-            # TOML 回退：也检查下划线变体
-            if not servers and server_key == "mcpServers":
-                servers = config.get("mcp_servers", {})
-            has_engram = "engram" in servers
-
-            results.append({
-                "tool_id": tool_id,
-                "name": cfg["name"],
-                "config_path": config_path,
-                "format": fmt,
-                "server_key": server_key,
-                "verified": verified,
-                "status": "configured" if has_engram else "installed",
-                "config": config,
-                "servers": servers,
-            })
-            break  # 每个工具只取第一个匹配的路径
+        if cfg.get("register_via") == "claude_cli":
+            found = _detect_claude_code(tool_id, cfg)
+        else:
+            found = _detect_tool_config(tool_id, cfg)
+        if found is not None:
+            results.append(found)
     return results
+
+
+def _detect_claude_code(tool_id: str, cfg: dict) -> dict | None:
+    """Claude Code's state from its user config.
+
+    The file is parsed to find an Engram entry; only the status and, for the
+    env check, the env key names of the user-scope entry are kept.
+    """
+    from . import claude_code_mcp as _claude
+
+    status = _claude.detection_status()
+    env_keys = _claude.read_user_config().env_keys if status == "configured" else None
+    if status == "not_installed":
+        return None
+    state = {
+        "configured": "configured",
+        "undetermined": "undetermined",
+        "legacy_only": "legacy",
+    }.get(status, "installed")
+    return {
+        "tool_id": tool_id,
+        "name": cfg["name"],
+        "config_path": _claude.user_config_path(),
+        "format": "json",
+        "server_key": "mcpServers",
+        "verified": cfg.get("verified", False),
+        "register_via": "claude_cli",
+        "status": state,
+        "config": {},
+        "servers": {},
+        "detect_only": True,
+        "detected_in": _claude.user_config_label(),
+        "env_keys": env_keys,
+    }
+
+
+def _detect_tool_config(tool_id: str, cfg: dict) -> dict | None:
+    """The first installed setup path of one tool, or None when none is installed."""
+    fmt = cfg.get("format", "json")
+    server_key = cfg.get("server_key", "mcpServers")
+    for config_path in cfg["config_paths"]:
+        # 检查工具是否安装（配置目录存在 = 工具装了）
+        if not config_path.parent.exists():
+            continue
+
+        config = W._read_mcp_config(config_path, fmt=fmt)
+
+        # 按工具的 server_key 取 MCP servers 段
+        servers = config.get(server_key, {})
+        # TOML 回退：也检查下划线变体
+        if not servers and server_key == "mcpServers":
+            servers = config.get("mcp_servers", {})
+
+        # 每个工具只取第一个匹配的路径
+        from .claude_code_mcp import engram_entry_name
+
+        name = engram_entry_name(servers)
+        return {
+            "tool_id": tool_id,
+            "name": cfg["name"],
+            "config_path": config_path,
+            "format": fmt,
+            "server_key": server_key,
+            "verified": cfg.get("verified", False),
+            "status": "configured" if name else "installed",
+            "engram_name": name,
+            "config": config,
+            "servers": servers,
+        }
+    return None
 
 
 # Settings an MCP server reads from its environment. Claude Desktop and Codex pass
 # the server only the env block of its config entry, not the user's environment.
+# ENGRAM_RECONCILE is not listed: the server no longer reads other AI tools' files,
+# so the variable only matters to the `engram import-memories` command.
 _CLIENT_ENV_WATCHED = (
     "ENGRAM_APPROVAL",
-    "ENGRAM_RECONCILE",
     "ENGRAM_REVIEW_QUEUE_MAX",
     "ENGRAM_REVIEW_QUEUE_CEILING",
 )
 
 
-def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> list[tuple[dict, dict]]:
+def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> list[tuple[dict, dict | None]]:
     """(tool, {var: wanted}) for configured clients whose engram env block misses a setting.
 
     Under strict approval ENGRAM_APPROVAL=strict belongs in every block; a watched
     variable set in this shell but absent (or different) in a block would not reach
     that client's MCP server either.
+
+    Claude Code: only the key names of its user-scope entry are known, so a
+    key that is present counts as set; ``(tool, None)`` when there is no
+    user-scope entry to look at (env not checked).
     """
     user_env = os.environ if user_env is None else user_env
     findings = []
     for tool in tools:
         if tool.get("status") != "configured":
             continue
-        entry = (tool.get("servers") or {}).get("engram")
+        if tool.get("register_via") == "claude_cli":
+            keys = tool.get("env_keys")
+            if keys is None:
+                findings.append((tool, None))
+                continue
+            missing = {}
+            if strict and "ENGRAM_APPROVAL" not in keys:
+                missing["ENGRAM_APPROVAL"] = "strict"
+            for var in _CLIENT_ENV_WATCHED:
+                wanted = str(user_env.get(var, "") or "").strip()
+                if wanted and var not in missing and var not in keys:
+                    missing[var] = wanted
+            if missing:
+                findings.append((tool, missing))
+            continue
+        if tool.get("detect_only"):
+            continue
+        entry = (tool.get("servers") or {}).get(tool.get("engram_name") or "engram")
         env = entry.get("env") if isinstance(entry, dict) else None
         env = env if isinstance(env, dict) else {}
         missing: dict[str, str] = {}
@@ -97,14 +175,28 @@ def _client_env_findings(tools: list[dict], *, strict: bool, user_env=None) -> l
     return findings
 
 
-def _print_client_env_findings(findings: list[tuple[dict, dict]]) -> None:
+def _print_client_env_findings(findings: list[tuple[dict, dict | None]]) -> None:
     print()
     W._safe_print("  -- MCP Client Env --\n")
+    unchecked = [tool for tool, missing in findings if missing is None]
+    findings = [(tool, missing) for tool, missing in findings if missing is not None]
+    for tool in unchecked:
+        W._safe_print(f"    [--] {tool['name']}: env not checked (no user-scope Engram entry to look at)")
     if not findings:
-        print("    [ok] Engram settings reach every configured client's MCP server")
+        if unchecked:
+            print("    [ok] Engram settings reach every checked client's MCP server")
+        else:
+            print("    [ok] Engram settings reach every configured client's MCP server")
         return
     for tool, missing in findings:
         names = ", ".join(missing)
+        if tool.get("register_via") == "claude_cli":
+            W._safe_print(
+                f"    [--] {tool['name']}: engram env block lacks {names}; "
+                "its MCP server may not see them")
+            W._safe_print("         Set them in this shell and run 'engram setup' again; it offers to "
+                          "re-register the entry with them.")
+            continue
         W._safe_print(
             f"    [--] {tool['name']}: engram env block lacks {names}; "
             "its MCP server may not see them"
@@ -156,7 +248,9 @@ def _shared_instruction_candidates(home: Path) -> list[Path]:
 
 
 def _claude_hook_rows(home: Path) -> list[dict]:
-    settings_path = home / ".claude" / "settings.json"
+    from .claude_code_mcp import settings_path as _settings_path
+
+    settings_path = _settings_path(home)
     settings_exists = settings_path.is_file()
     settings: dict = {}
     if settings_exists:
@@ -219,6 +313,37 @@ def _claude_hook_rows(home: Path) -> list[dict]:
     return rows
 
 
+def _claude_code_integrity_row(tool_id: str, cfg: dict) -> dict:
+    """Claude Code's integrity row from the shared detection.
+
+    Its user config holds Claude Code's history and changes all the time, so
+    it is not hashed; it is parsed only to find an Engram entry and nothing
+    from it is output. ``detection`` is the shared status,
+    ``legacy_entry_present`` says ``~/.claude/.mcp.json`` (a file Claude
+    Code does not read) still holds an Engram entry, and
+    ``config_dir_exists`` says Claude Code's config directory exists.
+    """
+    from . import claude_code_mcp as _claude
+
+    path = _claude.user_config_path()
+    status = _claude.detection_status()
+    return {
+        "tool_id": tool_id,
+        "name": cfg.get("name", tool_id),
+        "path": str(path),
+        "format": "json",
+        "server_key": "mcpServers",
+        "verified": bool(cfg.get("verified", False)),
+        "config_dir_exists": _claude.config_dir().is_dir(),
+        "exists": path.is_file(),
+        "configured": status == "configured",
+        "detection": status,
+        "legacy_entry_present": _claude.read_legacy().has_engram,
+        "legacy_servers": [],
+        "sha256_12": "",
+    }
+
+
 def _build_config_integrity_report(cwd: Path | None = None) -> dict:
     """Build a metadata-only portability/integrity report for local AI config.
 
@@ -229,6 +354,9 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
     for tool_id, cfg in W._tool_configs().items():
         fmt = cfg.get("format", "json")
         server_key = cfg.get("server_key", "mcpServers")
+        if cfg.get("register_via") == "claude_cli":
+            mcp_configs.append(_claude_code_integrity_row(tool_id, cfg))
+            continue
         for raw_path in cfg.get("config_paths", []):
             path = Path(raw_path)
             exists = path.is_file()
@@ -243,7 +371,7 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
                 "verified": bool(cfg.get("verified", False)),
                 "parent_exists": path.parent.exists(),
                 "exists": exists,
-                "configured": "engram" in servers,
+                "configured": bool(_engram_entry_name(servers)),
                 "legacy_servers": [
                     name for name in W.LEGACY_SERVER_NAMES if name in servers
                 ],
@@ -505,14 +633,23 @@ def _probe_mcp_entry(entry: dict, *, timeout: int = 5) -> str | None:
     return None
 
 
-def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
+def _engram_entry_name(servers: dict) -> str | None:
+    from .claude_code_mcp import engram_entry_name
+
+    return engram_entry_name(servers)
+
+
+def _validate_engram_entry(servers: dict, config_path: Path, name: str = "engram") -> list[str]:
     """验证 engram MCP 条目的所有路径是否有效。
+
+    ``name``: the key of the Engram entry (``engram``, ``piia-engram`` or
+    another name whose server launches Engram).
 
     Returns:
         问题描述列表（空 = 健康）。
     """
     issues = []
-    engram = servers.get("engram", {})
+    engram = servers.get(name, {})
     if not engram:
         return issues
 
@@ -574,7 +711,91 @@ def _validate_engram_entry(servers: dict, config_path: Path) -> list[str]:
     return issues
 
 
-def run_doctor(fix: bool = False) -> int:
+def _found_in(tool: dict) -> str:
+    """`` (in ~/.claude.json)`` for an entry found only in a detect-only config."""
+    return f" (in {tool['detected_in']})" if tool.get("detect_only") else ""
+
+
+def _undetermined_line(tool: dict) -> str:
+    return (f"    [??] {tool['name']} — {tool.get('detected_in') or 'config'} too large "
+            "(or not valid JSON) to check for an Engram entry")
+
+
+def _legacy_line(tool: dict) -> str:
+    from . import claude_code_mcp as _claude
+
+    return (f"    [--] {tool['name']} — Engram entry only in {_claude.LEGACY_LABEL}, which "
+            f"{tool['name']} does not read; run 'engram setup'")
+
+
+def _claude_code_section(tools: list[dict], *, fix: bool) -> int:
+    """Claude Code: an Engram entry left in ~/.claude/.mcp.json (a file it does not read).
+
+    Without --fix this only reports. With --fix an Engram entry found only
+    there is registered through ``claude mcp add --scope user`` (or the
+    command is printed when claude is not available). Neither Claude Code's
+    user config nor the old file is written here; the old entry stays for
+    ``engram setup`` to offer removing. Returns the problems left (0 or 1).
+    """
+    from . import claude_code_mcp as _claude
+
+    tool = next((t for t in tools if t.get("register_via") == "claude_cli"), None)
+    if tool is None:
+        return 0
+    legacy = _claude.read_legacy()
+    if tool["status"] == "configured":
+        if legacy.has_engram:
+            W._safe_print(
+                f"  [info] {_claude.LEGACY_LABEL} still holds an Engram entry; {tool['name']} does "
+                "not read that file. 'engram setup' can remove it (other entries are kept).\n")
+        return 0
+    if tool["status"] != "legacy":
+        return 0
+    W._safe_print(
+        f"  [!] {tool['name']}: the Engram entry is in {_claude.LEGACY_LABEL}, which {tool['name']} "
+        "does not read, so Engram is not loaded there.")
+    if not fix:
+        print("    Run 'engram doctor --fix' or 'engram setup' to register it with the claude command.\n")
+        return 1
+    python_path = W._find_python()
+    mcp_server_path = W._find_mcp_server()
+    if not python_path or not mcp_server_path:
+        print("    [error] Cannot register: Python 3.10+ or mcp_server.py not found.\n")
+        return 1
+    reg = W._register_claude_code(
+        python_path, mcp_server_path, None, engram_tools=None, interactive=False,
+    )
+    W._safe_print(
+        f"    The old entry in {_claude.LEGACY_LABEL} was left in place (doctor --fix does not "
+        "remove it); 'engram setup' offers to remove it.\n")
+    return 0 if reg.registered else 1
+
+
+def _run_playbook_index_check(*, fix: bool = False) -> int:
+    """Check derived playbook state independently of client configuration."""
+    from piia_engram.core import Engram
+
+    try:
+        report = Engram(read_only=not fix)._reconcile_playbook_index(dry_run=not fix)
+        pending = report["mismatches"] + report["unpinned"]
+        label = "repaired" if fix and pending else "mismatched" if pending else "consistent"
+        print(f"    Playbook index: {label} ({report['mismatches']} status/tier, {report['unpinned']} retired pins)")
+        if pending and not fix:
+            print("         Run 'engram doctor --fix' to reconcile from bodies; no body is deleted.")
+        if report["skipped"]:
+            print(f"    [!!] Playbook index: {report['skipped']} missing or unreadable bodies left unchanged")
+        return int(bool((pending and not fix) or report["skipped"]))
+    except Exception as exc:
+        print(f"    [!!] Playbook index check failed: {type(exc).__name__}")
+        return 1
+
+
+def run_doctor(fix: bool = False, days: int | None = None) -> int:
+    """Report playbook index drift; --fix reconciles it before client checks."""
+    return _run_playbook_index_check(fix=fix) + _run_doctor_config_checks(fix=fix, days=days)
+
+
+def _run_doctor_config_checks(fix: bool = False, days: int | None = None) -> int:
     """扫描系统中所有已安装的 AI 工具，检查 Engram MCP 配置健康状况。
 
     流程：
@@ -585,6 +806,7 @@ def run_doctor(fix: bool = False) -> int:
 
     Args:
         fix: True 时自动修复发现的问题。
+        days: 连接一节统计最近多少天的调用（默认 14）。
 
     Returns:
         发现的问题数量（0 = 健康）。
@@ -614,8 +836,12 @@ def run_doctor(fix: bool = False) -> int:
         print("  Evidence-tracked setup paths:")
         for t in verified_tools:
             if t["status"] == "configured":
-                W._safe_print(f"    [ok] {t['name']} — Engram configured")
+                W._safe_print(f"    [ok] {t['name']} — Engram configured{_found_in(t)}")
                 configured_count += 1
+            elif t["status"] == "undetermined":
+                W._safe_print(_undetermined_line(t))
+            elif t["status"] == "legacy":
+                W._safe_print(_legacy_line(t))
             else:
                 W._safe_print(f"    [--] {t['name']} — Engram NOT configured")
                 unconfigured.append(t)
@@ -626,8 +852,12 @@ def run_doctor(fix: bool = False) -> int:
         print("  Expected/community setup paths:")
         for t in community_tools:
             if t["status"] == "configured":
-                W._safe_print(f"    [ok] {t['name']} — Engram configured")
+                W._safe_print(f"    [ok] {t['name']} — Engram configured{_found_in(t)}")
                 configured_count += 1
+            elif t["status"] == "undetermined":
+                W._safe_print(_undetermined_line(t))
+            elif t["status"] == "legacy":
+                W._safe_print(_legacy_line(t))
             else:
                 W._safe_print(f"    [--] {t['name']} — installed, Engram not configured")
                 unconfigured.append(t)
@@ -637,8 +867,8 @@ def run_doctor(fix: bool = False) -> int:
     issues: list[tuple[dict, str]] = []  # (tool_info, 描述)
 
     for t in tools:
-        if t["status"] != "configured":
-            continue
+        if t["status"] != "configured" or t.get("detect_only"):
+            continue  # a detect-only config is never validated or rewritten
         servers = t["servers"]
 
         # 旧版 server 名称
@@ -647,7 +877,8 @@ def run_doctor(fix: bool = False) -> int:
             issues.append((t, f"包含旧版 server: {', '.join(stale)}"))
 
         # 路径验证（核心：stale path 检测）
-        path_issues = _validate_engram_entry(servers, t["config_path"])
+        path_issues = _validate_engram_entry(
+            servers, t["config_path"], name=t.get("engram_name") or "engram")
         for desc in path_issues:
             issues.append((t, desc))
 
@@ -658,11 +889,13 @@ def run_doctor(fix: bool = False) -> int:
             print(f"    - {t['name']} ({t['config_path']})")
         print("    Run 'engram setup' to configure them.\n")
 
+    claude_issues = _claude_code_section(tools, fix=fix)
+
     if not issues:
-        if configured_count > 0:
+        if configured_count > 0 and not claude_issues:
             print("  [ok] All configured tools look healthy.\n")
-        func_issues = _run_functional_checks(fix=fix)
-        return func_issues
+        func_issues = _run_functional_checks(fix=fix, days=days)
+        return claude_issues + func_issues
 
     print(f"  [!] Found {len(issues)} issue(s):\n")
     for t, desc in issues:
@@ -672,7 +905,7 @@ def run_doctor(fix: bool = False) -> int:
 
     if not fix:
         print("  Run 'engram doctor --fix' to auto-repair.\n")
-        return len(issues)
+        return len(issues) + claude_issues
 
     # ── 第四步：自动修复 ──
     python_path = W._find_python()
@@ -680,7 +913,7 @@ def run_doctor(fix: bool = False) -> int:
     if not python_path or not mcp_server_path:
         print("  [error] Cannot auto-fix: Python 3.10+ or mcp_server.py not found.")
         print("          Run 'engram setup' to complete installation first.\n")
-        return len(issues)
+        return len(issues) + claude_issues
 
     fixed = 0
     file_safety_root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
@@ -708,8 +941,43 @@ def run_doctor(fix: bool = False) -> int:
     print(_t("  重启以下工具生效：", "  Restart the following tools to apply:"))
     W._print_restart_hints()
     print()
-    func_issues = _run_functional_checks(fix=fix)
-    return remaining + func_issues
+    func_issues = _run_functional_checks(fix=fix, days=days)
+    return remaining + claude_issues + func_issues
+
+
+def _print_connection_report(root, days: int | None = None) -> None:
+    """Which clients are configured and which called Engram lately (read-only)."""
+    from piia_engram import connection_report as _connections
+
+    days = _connections.DEFAULT_DAYS if days is None else days
+    print()
+    W._safe_print(f"  -- Client Connections (last {days} days) --\n")
+    try:
+        report = _connections.build_report(Path(root), days=days)
+    except Exception as exc:  # the message may hold a private path: name the type only
+        W._safe_print(f"    [--] Client connection check skipped ({type(exc).__name__})")
+        return
+    for line in _connections.render_text(report):
+        W._safe_print(f"    {line}")
+
+
+def run_doctor_json(days: int | None = None) -> int:
+    """``engram doctor --json``: the client connection report as JSON (read-only).
+
+    Only this section: it reads the store directory and the client config files
+    directly and opens nothing for writing (no Engram instance, no version check).
+    """
+    from piia_engram import connection_report as _connections
+    from piia_engram.storage import _engram_root
+
+    days = _connections.DEFAULT_DAYS if days is None else days
+    try:
+        report = _connections.build_report(Path(_engram_root()), days=days)
+    except Exception as exc:  # the message may hold a private path: name the type only
+        print(json.dumps({"error": type(exc).__name__, "read_only": True}))
+        return 1
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _run_governance_visibility_check(eng) -> int:
@@ -748,7 +1016,7 @@ def _run_governance_visibility_check(eng) -> int:
     return 0
 
 
-def _run_functional_checks(*, fix: bool = False) -> int:
+def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int:
     """运行功能性验证：MCP server 能否启动、知识库能否读写、quick_context 是否可用。
 
     Args:
@@ -818,7 +1086,7 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         stale = _tombstones.stale_version_ids(eng.root)
         if stale:
             print(f"    [!!] Rejection records from an older hash version: {len(stale)}"
-                  f" (hv != {_tombstones.HASH_VERSION}); they refuse nothing until re-written"
+                  f" (hv not in {_tombstones.MATCHED_HASH_VERSIONS}); they refuse nothing until re-written"
                   " with engram review tombstone --ids-file")
             problems += 1
     except Exception as exc:
@@ -836,15 +1104,25 @@ def _run_functional_checks(*, fix: bool = False) -> int:
         print(f"    [!!] Strict latch check failed: {exc}")
         problems += 1
 
-    # 2.6 reconcile: an ENGRAM_RECONCILE=1 that the config overrides is reported
+    # 2.6 other AI tools' memories: never imported automatically. A read-only
+    # count of what `engram import-memories` would add, plus what the old
+    # switches mean now.
     try:
+        from piia_engram import memory_import
         from piia_engram.reconcile import reconcile_env_conflict_note
 
-        note = reconcile_env_conflict_note()
+        summary = memory_import.importable_summary(eng.root)
+        mark = "--" if summary.get("count") or not summary.get("enabled") else "ok"
+        W._safe_print(f"    [{mark}] Other AI tools' memories: {memory_import.importable_text(summary)}")
+        if summary.get("enabled"):
+            W._safe_print(f"    [--] Import {memory_import.LIMITS_NOTE}")
+        for line in memory_import.legacy_switch_notes(root=eng.root):
+            W._safe_print(f"    [--] {line}")
+        note = reconcile_env_conflict_note(eng.root)
         if note:
             print(f"    [!] Reconcile: {note}")
     except Exception as exc:
-        print(f"    [!!] Reconcile check failed: {exc}")
+        print(f"    [!!] Other AI tools' memory check failed: {exc}")
         problems += 1
 
     # 3. 身份数据读取
@@ -1011,7 +1289,9 @@ def _run_functional_checks(*, fix: bool = False) -> int:
             W._safe_print(f"    [--] {tool_id}: file exists but no Engram snippet")
             missing_snippets.append(tool_id)
         elif state == "stale_default":
-            if strict:
+            if strict and W._instruction_snippet_is_strict_default(tool_id, content):
+                why = "an older default snippet"
+            elif strict:
                 why = "default text that auto-saves; strict approval wants read + propose"
                 if W._SNIPPET_FRESHNESS_TOKEN not in content:
                     why = f"missing '{W._SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
@@ -1023,6 +1303,10 @@ def _run_functional_checks(*, fix: bool = False) -> int:
             stale_snippets.append(tool_id)
         elif state == "custom":
             W._safe_print(f"    [ok] {tool_id}: your own Engram block in {target_path} (left as is)")
+            W._safe_print(
+                "         Engram's default text may be newer than your block (for example the rules "
+                "on what to keep); merge it by hand if you want it. Your block is never overwritten."
+            )
             if W._SNIPPET_FRESHNESS_TOKEN not in content:
                 W._safe_print(
                     f"         It does not mention '{W._SNIPPET_FRESHNESS_TOKEN}'; "
@@ -1085,6 +1369,9 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     except Exception as exc:
         W._safe_print(f"    [--] Client env check skipped: {exc}")
 
+    # 6.6 Client connections: configured? called lately? (read-only, informational)
+    _print_connection_report(eng.root, days)
+
     # ── Claude Code Hooks (Stop / PreCompact / SessionStart) ──
     # v3.30 M7: doctor must check all three events the setup wizard
     # registers, not only Stop. Otherwise users who upgrade from
@@ -1092,7 +1379,9 @@ def _run_functional_checks(*, fix: bool = False) -> int:
     # (mechanism 4) and SessionStart (mechanism 6) silently.
     print()
     W._safe_print("  -- Claude Code Hooks --\n")
-    settings_path = Path.home() / ".claude" / "settings.json"
+    from .claude_code_mcp import settings_path as _settings_path
+
+    settings_path = _settings_path()
     settings: dict = {}
     if settings_path.is_file():
         try:

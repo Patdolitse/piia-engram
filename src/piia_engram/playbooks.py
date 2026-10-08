@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from . import pinning as _pinning
+from . import recall_policy as _recall_policy
+from . import review_boundary as _review_boundary
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from .storage import ReadOnlyStoreError
+from .store_paths import confined_path, valid_file_id
 from .storage import (
     SIMILARITY_THRESHOLD,
+    hold_directory_lock,
     _ALLOWED_PLAYBOOK_UPDATE_FIELDS,
     _now_iso,
     _project_id,
@@ -26,7 +32,7 @@ _BUILTIN_PLAYBOOKS: dict[str, dict] = {}
 
 # Content-bearing update fields: a change to any of these is a REVISION under
 # the v4.19 contract (snapshot + version bump). Everything else in
-# _ALLOWED_PLAYBOOK_UPDATE_FIELDS (status, scope, source_tool) is metadata:
+# _ALLOWED_PLAYBOOK_UPDATE_FIELDS (status, scope) is metadata:
 # applied + audited, but never snapshotted and never version-bumping.
 _PLAYBOOK_CONTENT_FIELDS: frozenset = frozenset({
     "title", "description", "triggers", "domain", "steps",
@@ -35,9 +41,45 @@ _PLAYBOOK_CONTENT_FIELDS: frozenset = frozenset({
 })
 
 
+# Fields an update proposal never copies from the row it revises.
+_PROPOSAL_DROP_FIELDS: frozenset = frozenset({
+    "id", "timestamp", "created_at", "last_updated", "last_reviewed", "access_count", "version",
+    "tier", "memory_state", "approval_status", "approval_required", "promoted_at", "promotion_reason",
+    "pending_supersedes", "_replacement_in_progress", "status", "snapshot_of", "superseded_by", "superseded_at", "labeling",
+    # The proposer is a new writer: the provenance stamp fills source_tool.
+    "source_tool",
+})
+
+
 def _stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
 
+
+
+# A playbook id names a file in playbooks/: a plain token, never a path.
+# Generated ids are 12 hex digits; snapshots add "-prev-<stamp>[-n[-xxxx]]".
+class PlaybookIdExists(Exception):
+    """An insert named a playbook id that is already taken."""
+
+
+def valid_playbook_id(value: Any) -> bool:
+    """True when ``value`` can safely name a file directly inside playbooks/."""
+    # Reserve actual internal JSON filenames, not the legacy underscore namespace.
+    return valid_file_id(value) and value.casefold() not in {"_index"}
+
+
+def playbook_id_key(value: Any) -> str:
+    """Compare ids as filenames, including Windows case-insensitive names."""
+    value = str(value or "")
+    return value.casefold() if os.name == "nt" else value
+
+
+def new_playbook_id(title: str) -> str:
+    """A fresh server-side id (12 hex digits, like every generated id)."""
+    import os
+
+    seed = f"{title}{_now_iso()}{os.urandom(8).hex()}"
+    return hashlib.sha256(seed.encode()).hexdigest()[:12]
 
 
 def _playbook_queue_max() -> int:
@@ -110,9 +152,25 @@ class PlaybookMixin:
 
         _update_json(self._playbooks_dir / "_index.json", _locked, default=[])
 
+    def _playbook_path(self, playbook_id: Any) -> Path:
+        """The file of one playbook; ValueError for an id that is not a plain token
+        or that would land outside playbooks/."""
+        import os
+
+        if not valid_playbook_id(playbook_id):
+            raise ValueError("invalid playbook id")
+        base = os.path.normcase(os.path.abspath(self._playbooks_dir))
+        path = self._playbooks_dir / f"{playbook_id}.json"
+        if os.path.dirname(os.path.normcase(os.path.abspath(path))) != base:
+            raise ValueError("invalid playbook id")
+        return confined_path(self._playbooks_dir, f"{playbook_id}.json")
+
     def _read_playbook_by_id(self, playbook_id: str) -> dict | None:
         """Read a single playbook file by ID (with corpus decryption)."""
-        path = self._playbooks_dir / f"{playbook_id}.json"
+        try:
+            path = self._playbook_path(playbook_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         pb = self._read_playbook_file(path) or None
@@ -129,11 +187,15 @@ class PlaybookMixin:
         """Apply ``mutator`` to one playbook file under that file's write lock."""
         if getattr(self, "_read_only", False):
             raise ReadOnlyStoreError(f"read-only handle: refused write to playbook {playbook_id}")
-        path = self._playbooks_dir / f"{playbook_id}.json"
+        try:
+            path = self._playbook_path(playbook_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
 
         result_box: dict[str, dict | None] = {}
+        unpinned: list[str] = []
 
         def _locked(current: Any) -> dict:
             if not isinstance(current, dict):
@@ -146,10 +208,14 @@ class PlaybookMixin:
             updated = mutator(playbook)
             if updated is None:
                 updated = playbook
+            # A pin counts only on a trusted playbook (see pinning.py).
+            unpinned[:] = _pinning.clear_stale([updated])
             result_box["result"] = updated
             return self._playbook_for_storage(updated)
 
         _update_json(path, _locked, default={})
+        if unpinned:
+            _pinning.audit_auto_unpin(self, "playbook", unpinned, reason="no_longer_trusted")
         return result_box.get("result")
 
     @staticmethod
@@ -526,6 +592,7 @@ class PlaybookMixin:
             "triggers": pb.get("triggers", []),
             "domain": pb.get("domain", ""),
             "status": pb.get("status", "active"),
+            "tier": pb.get("tier", "verified"),
             "updated_at": pb.get("last_updated") or pb.get("created_at") or _now_iso(),
         }
         if pb.get("builtin_name"):
@@ -539,6 +606,17 @@ class PlaybookMixin:
     def _hide_pending_playbooks(self) -> bool:
         """Pending playbooks are hidden from use only under strict (unset = 4.21.0)."""
         return _strict_mode.approval_strict(self.root)
+
+    def _not_approved(self, playbook_id: str) -> dict | None:
+        """A pending playbook never runs, in any approval mode (None when it may run)."""
+        if not self.is_pending_playbook(self._read_playbook_by_id(playbook_id)):
+            return None
+        if self._hide_pending_playbooks():  # strict: the 4.21.1 refusal, unchanged
+            return {"status": "pending_not_executable", "id": playbook_id,
+                    "message": "This playbook is a pending proposal; it runs only after Owner approval."}
+        return {"status": "not_approved", "id": playbook_id, "changed": False,
+                "message": "This playbook waits for review and does not run until the Owner approves it "
+                           "with engram review."}
 
     def pending_playbook_count(self) -> int:
         count = 0
@@ -575,40 +653,286 @@ class PlaybookMixin:
                         "message": "The same procedure is retired; the Owner can restore it."}
         return None
 
-    def approve_playbook(self, playbook_id: str) -> dict:
+    def _review_locks(self):
+        """Hold the knowledge and playbooks write locks across one review decision,
+        so its version check, tombstone and status writes commit together."""
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        stack.enter_context(hold_directory_lock(self._knowledge_dir, timeout=30))
+        stack.enter_context(hold_directory_lock(self._playbooks_dir, timeout=30))
+        return stack
+
+    @staticmethod
+    def _review_version_conflict(playbook_id: str, row: dict, expected_version: int | None) -> dict | None:
+        if expected_version is None:
+            return None
+        current = int(row.get("version") or 1)
+        if current == expected_version:
+            return None
+        return {"status": "version_conflict", "error": "version_conflict", "id": playbook_id,
+                "item_id": playbook_id, "expected_version": expected_version,
+                "current_version": current, "changed": False}
+
+    def _playbook_replacement_problem(self, row: dict, target: str = "") -> str:
+        """Validate the durable retirement/approval handoff without writing."""
+        if "_replacement_in_progress" not in row:
+            return ""
+        state = row["_replacement_in_progress"]
+        if not isinstance(state, dict):
+            return "replacement_state_invalid"
+        old_id = state.get("target")
+        if (not valid_playbook_id(old_id) or old_id == row.get("id")
+                or old_id != row.get("pending_supersedes") or (target and target != old_id)):
+            return "replacement_target_conflict"
+        for key in ("proposal_version", "target_version"):
+            if type(state.get(key)) is not int or state[key] < 1:
+                return "replacement_state_invalid"
+        old = self._read_playbook_by_id(old_id)
+        if old is None:
+            return "target_not_found"
+        if (int(row.get("version") or 1) != state["proposal_version"]
+                or int(old.get("version") or 1) != state["target_version"]):
+            return "version_conflict"
+        if old.get("status", "active") not in ("active", "outdated"):
+            return "target_not_trusted"
+        if not self._same_playbook_scope(row, old):
+            return "scope_mismatch"
+        return ""
+
+    def unfinished_playbook_replacement(self, row: dict | None) -> str:
+        """The matching replacement still to finish (empty when none).
+
+        A durable handoff covers retirement before approval. An older store
+        with both rows approved and active also completes the retirement.
+        """
+        if not isinstance(row, dict):
+            return ""
+        if "_replacement_in_progress" in row:
+            if (row.get("status", "active") == "active"
+                    and not self._playbook_replacement_problem(row)):
+                return row["_replacement_in_progress"]["target"]
+            return ""
+        if self.is_pending_playbook(row):
+            return ""
+        if row.get("approval_status") != "approved" or row.get("status", "active") != "active":
+            return ""
+        target = str(row.get("pending_supersedes") or "")
+        if not target or target == str(row.get("id") or ""):
+            return ""
+        old = self._read_playbook_by_id(target)
+        if old is None or old.get("status", "active") != "active":
+            return ""
+        return target
+
+    def _reconcile_playbook_index(self, playbook_id: str | None = None, *, dry_run: bool = False) -> dict:
+        """Derive index status/tier from bodies, never delete a body.
+
+        Repairs hold both review locks; a report-only snapshot creates no locks
+        or files. Missing/unreadable bodies are reported, not removed.
+        """
+        from contextlib import nullcontext
+        from .storage import SkipWrite
+
+        if not dry_run:
+            if getattr(self, "_read_only", False):
+                raise ReadOnlyStoreError("read-only handle: refused playbook index reconciliation")
+            if _review_boundary.mcp_origin():
+                return _review_boundary.refusal(playbook_id or "", action="reconcile")
+        with nullcontext() if dry_run else self._review_locks():
+            # Ordinary JSON reads quarantine corrupt files. A diagnostic must
+            # not create those copies; inspect safely contained files directly.
+            index_path = confined_path(self._playbooks_dir, "_index.json")
+            index = json.loads(index_path.read_text(encoding="utf-8-sig")) if index_path.is_file() else []
+            if not isinstance(index, list) or any(not isinstance(e, dict) for e in index):
+                raise ValueError("invalid playbook index")
+            ids = {playbook_id} if playbook_id is not None else {
+                p.stem for p in self._playbooks_dir.glob("*.json") if valid_playbook_id(p.stem)}
+            if playbook_id is None:
+                ids.update(str(e.get("id") or "") for e in index)
+            bodies: dict[str, dict] = {}
+            mismatches: set[str] = set()
+            unpinned: set[str] = set()
+            skipped = 0
+            for item_id in sorted(ids):
+                if not valid_playbook_id(item_id):
+                    skipped += 1
+                    continue
+                try:
+                    path = self._playbook_path(item_id)
+                    row = json.loads(path.read_text(encoding="utf-8-sig"))
+                    if not isinstance(row, dict):
+                        row = None
+                    elif self._corpus_key:
+                        row = self._crypto.decrypt_entry(row, self._corpus_key, "playbook")
+                    if row is not None:
+                        row = self._ensure_playbook_fields(row)
+                except (OSError, ValueError, TypeError):
+                    row = None
+                if row is None or playbook_id_key(row.get("id")) != playbook_id_key(item_id):
+                    skipped += 1
+                    continue
+                key = playbook_id_key(item_id)
+                bodies[key] = row
+                matches = [e for e in index if playbook_id_key(e.get("id")) == key]
+                if not matches or any(e.get("status") != row.get("status", "active")
+                                      or e.get("tier") != row.get("tier", "verified") for e in matches):
+                    mismatches.add(item_id)
+                if (row.get("status", "active") != "active" or row.get("tier") == "retired") and _pinning.has_pin(row):
+                    unpinned.add(item_id)
+                    if not dry_run:
+                        self._update_playbook_file_by_id(item_id, _pinning.strip)
+                        _pinning.audit_auto_unpin(self, "playbook", [item_id], reason="no_longer_trusted")
+
+            def _sync(current: list[dict]) -> list[dict]:
+                changed = False
+                seen: set[str] = set()
+                for entry in current:
+                    key = playbook_id_key(entry.get("id"))
+                    row = bodies.get(key)
+                    if row is None:
+                        continue
+                    seen.add(key)
+                    for field, default in (("status", "active"), ("tier", "verified")):
+                        value = row.get(field, default)
+                        if entry.get(field) != value:
+                            entry[field] = value
+                            changed = True
+                for key, row in bodies.items():
+                    if key not in seen:
+                        current.append(self._playbook_index_entry(row))
+                        changed = True
+                if not changed:
+                    raise SkipWrite
+                return current
+
+            if not dry_run and mismatches:
+                self._update_playbook_index(_sync)
+            return {"checked": len(bodies), "mismatches": len(mismatches), "unpinned": len(unpinned),
+                    "skipped": skipped, "changed": not dry_run and bool(mismatches or unpinned), "dry_run": dry_run}
+
+    def _record_playbook_replacement(self, row: dict, target: str) -> None:
+        """Persist the retirement handoff under the caller's review locks."""
+        if "_replacement_in_progress" in row:
+            return
+        old = self._read_playbook_by_id(target)
+        if old is None:
+            raise ValueError("replacement target not found")
+        state = {"target": target, "proposal_version": int(row.get("version") or 1),
+                 "target_version": int(old.get("version") or 1)}
+        self._update_playbook_file_by_id(row["id"], lambda r: {**r, "_replacement_in_progress": state})
+
+    def _retire_replaced_playbook(self, old_id: str, new_id: str) -> None:
+        """Finish retirement of both body and index under the caller's review locks.
+
+        The replacement handoff remains durable until this operation succeeds,
+        so a retry repairs an index commit interrupted after the body retired.
+        """
+        if getattr(self, "_read_only", False):
+            raise ReadOnlyStoreError("read-only handle: refused replacement retirement")
+        _pinning.auto_unpin(self, old_id, reason="superseded", by=new_id)
+        old = self._read_playbook_by_id(old_id)
+        if old is not None and old.get("status", "active") == "active":
+            self.archive_playbook(old_id)
+            old = self._read_playbook_by_id(old_id)
+        if old is None or old.get("status") != "outdated":
+            raise ValueError("replacement target is not retired")
+        self._reconcile_playbook_index(old_id)
+
+    def approve_playbook(self, playbook_id: str, expected_version: int | None = None) -> dict:
         """Owner approval: a pending playbook becomes verified; an approved update
-        proposal retires the row it replaces."""
+        proposal retires the row it replaces. Never over MCP (local review only).
+
+        ``expected_version`` (the version the Owner reviewed) is compared under
+        the same write locks that commit the approval. The row being replaced is
+        retired first, so an interrupted approval leaves at most one usable
+        version, and approving again completes it.
+        """
+        if _review_boundary.mcp_origin():
+            return _review_boundary.refusal(playbook_id, action="approve")
+        with self._review_locks():
+            return self._approve_playbook_locked(playbook_id, expected_version)
+
+    def _approve_playbook_locked(self, playbook_id: str, expected_version: int | None) -> dict:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"status": "not_found", "id": playbook_id}
+        stale = self._review_version_conflict(playbook_id, pb, expected_version)
+        if stale is not None:
+            return stale
+        problem = self._playbook_replacement_problem(pb)
+        if problem:
+            return {"status": problem, "error": problem, "id": playbook_id, "changed": False}
         if not self.is_pending_playbook(pb):
+            self._reconcile_playbook_index(playbook_id)
+            target = str(pb.get("pending_supersedes") or "")
+            if target:
+                self._reconcile_playbook_index(target)
+            unfinished = self.unfinished_playbook_replacement(pb)
+            if unfinished:
+                self._record_playbook_replacement(pb, unfinished)
+                self._retire_replaced_playbook(unfinished, playbook_id)
+                self._reconcile_playbook_index(playbook_id)
+                self._update_playbook_file_by_id(playbook_id, lambda r: {
+                    k: v for k, v in r.items() if k != "_replacement_in_progress"})
+                self._audit.log("write", "playbooks", detail=f"approved {playbook_id} (replacement completed)")
+                return {"status": "promoted", "id": playbook_id, "retired": unfinished, "completed": True}
             return {"status": "not_staging", "id": playbook_id}
         if _tombstones.by_id(self.root, playbook_id) or _tombstones.lookup(self.root, "playbook", pb):
             return {"status": "rejected_before", "id": playbook_id}
+        target = str(pb.get("pending_supersedes") or "")
+        old = self._read_playbook_by_id(target) if target else None
+        if target and old is None:
+            return {"status": "target_not_found", "id": playbook_id, "changed": False}
+        if old is not None and old.get("status", "active") != "active" and "_replacement_in_progress" not in pb:
+            return {"status": "target_not_trusted", "id": playbook_id, "changed": False}
+        if target and _pinning.blocked_targets([(playbook_id, target)],
+                                               [self._read_playbook_by_id(target) or {}]):
+            return {"status": _pinning.ERROR_PINNED_TARGET, "id": playbook_id, "targets": [target]}
+        self._reconcile_playbook_index(playbook_id)
+        if target:
+            self._reconcile_playbook_index(target)
         now = _now_iso()
 
         def _approve(row):
             row["tier"] = "verified"
+            row.pop("duplicate_candidate", None)
             row["approval_status"] = "approved"
             row["promoted_at"] = now
             row["promotion_reason"] = "owner_review"
+            row.pop("_replacement_in_progress", None)
             return row
 
+        old_id = target
+        if old is not None:
+            self._record_playbook_replacement(pb, old_id)
+            # Even an already-retired body can have an unfinished index commit.
+            # Complete both records before approval clears the durable handoff.
+            self._retire_replaced_playbook(old_id, playbook_id)
         self._update_playbook_file_by_id(playbook_id, _approve)
-        old_id = str(pb.get("pending_supersedes") or "")
-        if old_id and self._read_playbook_by_id(old_id) is not None:
-            self.archive_playbook(old_id)
+        self._reconcile_playbook_index(playbook_id)
         self._audit.log("write", "playbooks", detail=f"approved {playbook_id}")
         return {"status": "promoted", "id": playbook_id, "retired": old_id or None}
 
-    def reject_playbook(self, playbook_id: str, *, _owner_reject: str) -> dict:
-        """Owner reject mark: tombstone first, then archive the pending row."""
-        pb = self._read_playbook_by_id(playbook_id)
-        if pb is None:
-            return {"error": f"Playbook not found: {playbook_id}"}
-        if self.is_pending_playbook(pb):
-            _tombstones.append(self.root, "playbook", pb, via=_owner_reject)
-        return self.archive_playbook(playbook_id)
+    def reject_playbook(self, playbook_id: str, *, _owner_reject: str,
+                        expected_version: int | None = None) -> dict:
+        """Owner reject mark: tombstone first, then archive the pending row.
+
+        ``expected_version`` is compared under the write locks that hold both
+        the tombstone and the archive write: a changed row gets neither.
+        """
+        if _review_boundary.mcp_origin():
+            return _review_boundary.refusal(playbook_id, action="reject")
+        with self._review_locks():
+            pb = self._read_playbook_by_id(playbook_id)
+            if pb is None:
+                return {"error": f"Playbook not found: {playbook_id}"}
+            stale = self._review_version_conflict(playbook_id, pb, expected_version)
+            if stale is not None:
+                return stale
+            if self.is_pending_playbook(pb):
+                _tombstones.append(self.root, "playbook", pb, via=_owner_reject)
+            return self.archive_playbook(playbook_id, expected_version=expected_version)
 
     def add_playbook(
         self,
@@ -630,24 +954,46 @@ class PlaybookMixin:
         allow_internal_provenance = extra.pop("_allow_internal_provenance", False) is True
         update_of = str(extra.pop("_update_proposal_of", "") or "")
         new_pb = dict(playbook)
+        _pinning.strip(new_pb)
+        new_pb.pop("pending_supersedes", None)
+        # ``supersedes`` names the playbook this one revises: an update
+        # proposal that always waits for the Owner (approval retires the old one).
+        cited = str(new_pb.pop("supersedes", "") or "")
+        if cited and not update_of and self._read_playbook_by_id(cited) is not None:
+            update_of = cited
         if source_tool:
             new_pb["source_tool"] = source_tool
         for key, value in extra.items():
             if value is not None:
                 new_pb[key] = value
+        # Only the local approval operation creates a recovery handoff.
+        new_pb.pop("_replacement_in_progress", None)
         if not allow_internal_provenance:
             from .core import _strip_untrusted_freshness_provenance
 
             _strip_untrusted_freshness_provenance(new_pb)
+        from . import write_provenance as _write_provenance
+
+        _write_provenance.stamp(new_pb, allow_reserved=allow_internal_provenance)
+        from .dedup_review import strip_caller_fields
+
+        strip_caller_fields(new_pb)
 
         new_pb = self._repair_incoming_text(new_pb)
         if not new_pb.get("title"):
             return {"error": "Playbook must have a title"}
 
+        # The id names the playbook's file: an MCP caller never chooses it, and
+        # a local caller's id must be a plain token (else a fresh one is made).
+        if _pinning.mcp_origin() or not valid_playbook_id(new_pb.get("id")):
+            new_pb["id"] = new_playbook_id(str(new_pb.get("title") or ""))
         new_pb["timestamp"] = new_pb.get("timestamp") or _now_iso()
         new_pb = self._ensure_playbook_fields(new_pb)
         strict = _strict_mode.approval_strict(self.root)
-        if strict:
+        # A playbook an AI writes over MCP is a proposal in every approval mode;
+        # local Owner actions are unchanged.
+        proposal = strict or _pinning.mcp_origin()
+        if proposal:
             for key in [k for k in new_pb if k.startswith(("promotion_", "promoted_", "approval_"))]:
                 new_pb.pop(key, None)
             new_pb.pop("user_confirmed", None)
@@ -656,6 +1002,13 @@ class PlaybookMixin:
             new_pb["approval_status"] = "pending"
         if update_of:
             new_pb["pending_supersedes"] = update_of
+            if new_pb.get("tier") != "staging":
+                # An update proposal is the Owner's decision in every approval mode.
+                for key in [k for k in new_pb if k.startswith(("promotion_", "promoted_"))]:
+                    new_pb.pop(key, None)
+                new_pb["status"] = "active"
+                new_pb["tier"] = "staging"
+                new_pb["approval_status"] = "pending"
 
         refusal = self._playbook_insert_guard(new_pb)
         if refusal is not None:
@@ -696,16 +1049,17 @@ class PlaybookMixin:
                         # EXACT identity: the rejection can safely point at the
                         # revision target (v4.19.1: fuzzy hits never do —
                         # similarity must never auto-select a revise target).
+                        # allow_similar_new cannot bypass an identical title,
+                        # so the reply does not offer it.
+                        from .dedup_review import existing_guidance
+
                         result["guidance"] = {
                             "revision": {
                                 "tool_hint": "update_knowledge",
                                 "target_id": existing_id,
                                 "expected_version": int(existing_pb.get("version") or 1),
                             },
-                            "new_entry": {
-                                "param": "allow_similar_new",
-                                "note": "set allow_similar_new=true to store as a distinct entry",
-                            },
+                            "existing": existing_guidance(existing_id, "playbook"),
                         }
                     else:
                         # Fuzzy title match: name the new-entry escape hatch
@@ -718,7 +1072,7 @@ class PlaybookMixin:
                         }
                 return result
 
-        if strict:
+        if proposal:
             cap = _playbook_queue_max()
             if self.pending_playbook_count() >= cap:
                 self._audit.log("refused", "playbooks", detail=f"queue_full pending playbooks cap={cap}",
@@ -726,9 +1080,13 @@ class PlaybookMixin:
                 return {"status": "queue_full", "kind": "playbook", "cap": cap,
                         "message": "The pending playbook queue is full; nothing was dropped."}
 
-        self._write_playbook_and_index(new_pb)
+        try:
+            self._write_playbook_and_index(new_pb, create=True)
+        except PlaybookIdExists:
+            return {"status": "id_exists", "error": "id_exists", "existing_id": new_pb.get("id"),
+                    "message": "A playbook with this id already exists; nothing was written."}
 
-        if self.is_pending_playbook(new_pb) and strict:
+        if self.is_pending_playbook(new_pb) and proposal:
             # A pending proposal's text stays out of agent-readable surfaces,
             # including get_audit_log: record the id only.
             self._audit.log("write", "playbooks", detail=f"pending proposal {new_pb.get('id')}")
@@ -866,8 +1224,7 @@ class PlaybookMixin:
                 def _bump_access(p, _now=now):
                     if p.get("status", "active") != "active":
                         return p
-                    p["last_reviewed"] = _now
-                    p["access_count"] = p.get("access_count", 0) + 1
+                    p["access_count"] = p.get("access_count", 0) + 1  # a read never sets last_reviewed
                     return p
                 updated = self._update_playbook_file_by_id(pb["id"], _bump_access)
                 if updated:
@@ -921,8 +1278,7 @@ class PlaybookMixin:
             def _bump_single(p, _now=now):
                 if p.get("status", "active") != "active":
                     return p
-                p["last_reviewed"] = _now
-                p["access_count"] = p.get("access_count", 0) + 1
+                p["access_count"] = p.get("access_count", 0) + 1  # a read never sets last_reviewed
                 return p
             updated = self._update_playbook_file_by_id(playbook_id, _bump_single)
             if updated:
@@ -945,6 +1301,8 @@ class PlaybookMixin:
             and self._playbook_visible_for_project(pb, project_folder)
         ]
         active.sort(key=lambda pb: pb.get("last_reviewed", ""), reverse=True)
+        # Owner-pinned playbooks first (stable), so a cap keeps them.
+        active = _recall_policy.pinned_first(active)
         result = active[:limit]
         for pb in result:
             pb["parameters"] = self._extract_parameters(pb)
@@ -1079,13 +1437,17 @@ class PlaybookMixin:
             "suggestions": suggestions,
         }
 
-    def _write_playbook_and_index(self, pb: dict) -> None:
+    def _write_playbook_and_index(self, pb: dict, *, create: bool = False) -> None:
         """Persist a playbook and keep the lightweight index in sync.
 
-        Refused on a read-only handle (a backstop behind the verb guard).
+        Refused on a read-only handle (a backstop behind the verb guard), and
+        for an id that is not a plain token inside playbooks/ (ValueError).
+        ``create=True`` (a new row) reserves the file with an exclusive create
+        and raises PlaybookIdExists when the id is already taken, so an insert
+        never overwrites an existing playbook.
 
-        Body is written first; if the index update fails the body file is
-        removed so no orphaned body can accumulate without an index entry.
+        Body and index writes share the directory lock; on index failure a
+        new body is removed and an existing body is restored byte-for-byte.
         """
         if getattr(self, "_read_only", False):
             raise ReadOnlyStoreError("read-only handle: refused playbook write")
@@ -1093,14 +1455,37 @@ class PlaybookMixin:
         if not playbook_id:
             raise ValueError("missing playbook id")
 
-        body_path = self._playbooks_dir / f"{playbook_id}.json"
-        self._write_playbook_file(body_path, pb)
+        body_path = self._playbook_path(playbook_id)
+        with hold_directory_lock(self._playbooks_dir, timeout=30):
+            self._write_playbook_and_index_locked(pb, body_path, create=create)
+
+    def _write_playbook_and_index_locked(self, pb: dict, body_path: Path, *, create: bool) -> None:
+        import os as _os
+
+        playbook_id = pb["id"]
+        previous_body = body_path.read_bytes() if not create and body_path.exists() else None
+        if create:
+            if any(playbook_id_key(e.get("id")) == playbook_id_key(playbook_id)
+                   for e in self._read_playbook_index()):
+                raise PlaybookIdExists(playbook_id)
+            self._playbooks_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = _os.open(str(body_path), _os.O_CREAT | _os.O_EXCL | _os.O_WRONLY)
+            except FileExistsError:
+                raise PlaybookIdExists(playbook_id) from None
+            _os.close(fd)
+        try:
+            self._write_playbook_file(body_path, pb)
+        except Exception:
+            if create:
+                body_path.unlink(missing_ok=True)
+            raise
 
         idx_entry = self._playbook_index_entry(pb)
 
         def _upsert(index: list[dict]) -> list[dict]:
             for i, entry in enumerate(index):
-                if entry.get("id") == playbook_id:
+                if playbook_id_key(entry.get("id")) == playbook_id_key(playbook_id):
                     index[i] = idx_entry
                     break
             else:
@@ -1110,11 +1495,10 @@ class PlaybookMixin:
         try:
             self._update_playbook_index(_upsert)
         except Exception:
-            # Roll back body file to prevent orphaned body without index entry
-            try:
+            if previous_body is not None:
+                self._atomic_write_bytes(body_path, previous_body)
+            else:
                 body_path.unlink(missing_ok=True)
-            except OSError:
-                pass
             raise
 
     @staticmethod
@@ -1572,15 +1956,17 @@ class PlaybookMixin:
         now = _now_iso()
         suffix = re.sub(r"[^0-9A-Za-z]+", "", now) or "snapshot"
         base_id = f"{head_id}-prev-{suffix}"
+        if not valid_playbook_id(base_id):
+            return None
         existing_index_ids = {e.get("id") for e in self._read_playbook_index()}
         snapshot_id = base_id
         counter = 2
-        body_path = self._playbooks_dir / f"{snapshot_id}.json"
+        body_path = self._playbook_path(snapshot_id)
         while True:
             if snapshot_id in existing_index_ids:
                 snapshot_id = f"{base_id}-{counter}"
                 counter += 1
-                body_path = self._playbooks_dir / f"{snapshot_id}.json"
+                body_path = self._playbook_path(snapshot_id)
                 continue
             try:
                 self._playbooks_dir.mkdir(parents=True, exist_ok=True)
@@ -1590,7 +1976,7 @@ class PlaybookMixin:
             except FileExistsError:
                 snapshot_id = f"{base_id}-{counter}-{_os.urandom(2).hex()}"
                 counter += 1
-                body_path = self._playbooks_dir / f"{snapshot_id}.json"
+                body_path = self._playbook_path(snapshot_id)
                 continue
             except OSError:
                 # fall back to non-exclusive write (exotic filesystems)
@@ -1612,8 +1998,10 @@ class PlaybookMixin:
 
     def _delete_playbook_snapshot(self, snapshot_id: str) -> None:
         """Best-effort removal of an orphaned snapshot (body file + index row)."""
+        if not valid_playbook_id(snapshot_id):
+            return
         try:
-            body_path = self._playbooks_dir / f"{snapshot_id}.json"
+            body_path = self._playbook_path(snapshot_id)
             if body_path.exists():
                 body_path.unlink()
 
@@ -1664,6 +2052,11 @@ class PlaybookMixin:
         refusal = self._reject_update_payload(current, updates)
         if refusal is not None:
             return refusal
+        if _pinning.mcp_refuses(current):
+            return _pinning.refusal(playbook_id, "playbook", current)
+        decided = _review_boundary.update_refusal(current, updates, playbook_id)
+        if decided is not None:
+            return decided
         current_version = int(current.get("version") or 1)
         if expected_version is not None and expected_version != current_version:
             return {
@@ -1671,7 +2064,26 @@ class PlaybookMixin:
                 "item_id": playbook_id,
                 "expected_version": expected_version,
                 "actual_version": current_version,
+                "current_version": current_version,
             }
+        if _pinning.mcp_origin() and not self.is_pending_playbook(current):
+            # An AI's content change of an approved playbook is a pending
+            # revision proposal through every entry point; the approved
+            # version stays in use until the Owner approves the new one.
+            content_keys = {
+                key for key, value in updates.items()
+                if key in _PLAYBOOK_CONTENT_FIELDS and value != current.get(key)
+            }
+            if content_keys:
+                if "status" in updates and updates["status"] != current.get("status", "active"):
+                    return {
+                        "error": "mixed_update",
+                        "item_id": playbook_id,
+                        "changed": False,
+                        "message": "A content change of an approved playbook is a proposal and a status "
+                                   "change is a direct edit; send them as two calls.",
+                    }
+                return self.propose_playbook_update(playbook_id, updates)
 
         allowed_updates = {
             key: value
@@ -1704,6 +2116,13 @@ class PlaybookMixin:
                     "item_id": playbook_id,
                 }
                 return pb
+            if _pinning.mcp_refuses(pb):
+                outcome["error"] = _pinning.refusal(playbook_id, "playbook", pb)
+                return pb
+            decided_live = _review_boundary.update_refusal(pb, allowed_updates, playbook_id)
+            if decided_live is not None:
+                outcome["error"] = decided_live
+                return pb
             live_version = int(pb.get("version") or 1)
             if expected_version is not None and expected_version != live_version:
                 outcome["error"] = {
@@ -1711,6 +2130,7 @@ class PlaybookMixin:
                     "item_id": playbook_id,
                     "expected_version": expected_version,
                     "actual_version": live_version,
+                    "current_version": live_version,
                 }
                 return pb
             live_changed = False
@@ -1761,9 +2181,31 @@ class PlaybookMixin:
         self._audit.log("write", "playbooks", detail=f"updated {playbook_id}")
         return result
 
-    def archive_playbook(self, playbook_id: str) -> dict:
+    def propose_playbook_update(self, playbook_id: str, updates: dict) -> dict:
+        """A revision of ``playbook_id`` as a new pending row (the full merged
+        content, ``pending_supersedes`` = the row it replaces); the current row
+        is not touched. Owner approval retires the old one."""
+        current = self._read_playbook_by_id(playbook_id)
+        if current is None:
+            return {"error": f"Playbook not found: {playbook_id}"}
+        merged = {k: v for k, v in current.items() if k not in _PROPOSAL_DROP_FIELDS}
+        merged.update(updates)
+        merged.pop("status", None)
+        result = self.add_playbook(merged, allow_similar_new=True, _update_proposal_of=playbook_id)
+        if result.get("error") or result.get("status") in (
+            "duplicate", "rejected_before", "duplicate_retired", "queue_full", "id_exists",
+        ):
+            return result
+        return {
+            "status": "pending", "id": result.get("id"), "pending_supersedes": playbook_id,
+            "changed": False,
+            "message": "Update proposal saved; the current playbook stays in use until the Owner approves "
+                       "it with engram review.",
+        }
+
+    def archive_playbook(self, playbook_id: str, expected_version: int | None = None) -> dict:
         """Mark a playbook as outdated without deleting it."""
-        return self.update_playbook(playbook_id, {"status": "outdated"})
+        return self.update_playbook(playbook_id, {"status": "outdated"}, expected_version=expected_version)
 
     @staticmethod
     def _normalize_playbook_status_filter(status: str | None) -> str:
@@ -1794,6 +2236,7 @@ class PlaybookMixin:
         return {
             "id": pb.get("id", ""),
             "status": pb.get("status", "active"),
+            "tier": pb.get("tier", "verified"),
             "scope": public_scope,
             "scope_type": scope_type,
             "project_count": project_count,
@@ -1804,6 +2247,7 @@ class PlaybookMixin:
             "last_reviewed": pb.get("last_reviewed", ""),
             "version": pb.get("version", 1),
             "deleted_at": pb.get("deleted_at", ""),
+            "pinned": _recall_policy.is_pinned(pb),
         }
 
     def list_playbooks_for_management(
@@ -1871,11 +2315,26 @@ class PlaybookMixin:
         reason: str = "",
         dry_run: bool = True,
         confirm: bool = False,
+        expected_version: int | None = None,
     ) -> dict:
         """Soft-delete a Playbook so it is hidden but recoverable."""
+        if dry_run or not confirm:
+            return self._delete_playbook_locked(playbook_id, reason, dry_run, confirm, expected_version)
+        with hold_directory_lock(self._playbooks_dir, timeout=30):
+            return self._delete_playbook_locked(playbook_id, reason, dry_run, confirm, expected_version)
+
+    def _delete_playbook_locked(self, playbook_id: str, reason: str, dry_run: bool,
+                                confirm: bool, expected_version: int | None) -> dict:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        if _pinning.mcp_refuses(pb):
+            return _pinning.refusal(playbook_id, "playbook", pb)
+        if _review_boundary.refuses_decision(pb):
+            return _review_boundary.refusal(playbook_id, action="delete")
+        stale = self._playbook_version_conflict(playbook_id, pb, expected_version)
+        if stale is not None:
+            return stale
 
         current_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
         if current_status == "deleted":
@@ -1909,7 +2368,11 @@ class PlaybookMixin:
         pb["deletion_history"] = history
         pb["last_updated"] = now
         pb["version"] = pb.get("version", 1) + 1
+        was_pinned = _pinning.has_pin(pb)
+        _pinning.strip(pb)  # a deleted playbook keeps no pin, so a restore never brings one back
         self._write_playbook_and_index(pb)
+        if was_pinned:
+            _pinning.audit_auto_unpin(self, "playbook", [playbook_id], reason="no_longer_trusted")
         self._audit.log("write", "playbooks", detail=f"soft-deleted {playbook_id}")
         return {
             "dry_run": False,
@@ -1922,11 +2385,25 @@ class PlaybookMixin:
         playbook_id: str,
         dry_run: bool = True,
         confirm: bool = False,
+        expected_version: int | None = None,
     ) -> dict:
         """Restore a deleted/outdated Playbook to active status."""
+        if dry_run or not confirm:
+            return self._restore_playbook_locked(playbook_id, dry_run, confirm, expected_version)
+        with hold_directory_lock(self._playbooks_dir, timeout=30):
+            return self._restore_playbook_locked(playbook_id, dry_run, confirm, expected_version)
+
+    def _restore_playbook_locked(self, playbook_id: str, dry_run: bool, confirm: bool,
+                                 expected_version: int | None) -> dict:
         pb = self._read_playbook_by_id(playbook_id)
         if pb is None:
             return {"error": f"Playbook not found: {playbook_id}"}
+        if _review_boundary.refuses_decision(pb):
+            # a retired proposal comes back only through the Owner's review
+            return _review_boundary.refusal(playbook_id, action="restore")
+        stale = self._playbook_version_conflict(playbook_id, pb, expected_version)
+        if stale is not None:
+            return stale
 
         current_status = self._normalize_playbook_status_filter(pb.get("status", "active"))
         if current_status == "active":
@@ -1957,12 +2434,28 @@ class PlaybookMixin:
         pb["deletion_history"] = history
         pb["last_updated"] = now
         pb["version"] = pb.get("version", 1) + 1
+        _pinning.strip(pb)  # a restore never brings a pin back; the Owner pins again
         self._write_playbook_and_index(pb)
         self._audit.log("write", "playbooks", detail=f"restored {playbook_id}")
         return {
             "dry_run": False,
             "requires_confirmation": False,
             "restored": change,
+        }
+
+    @staticmethod
+    def _playbook_version_conflict(playbook_id: str, pb: dict, expected_version: int | None) -> dict | None:
+        if expected_version is None:
+            return None
+        current = int(pb.get("version") or 1)
+        if int(expected_version) == current:
+            return None
+        return {
+            "error": "version_conflict",
+            "item_id": playbook_id,
+            "expected_version": expected_version,
+            "actual_version": current,
+            "current_version": current,
         }
 
     def merge_playbooks(self, target_id: str, source: dict) -> dict:
@@ -2171,9 +2664,9 @@ class PlaybookMixin:
         Returns:
             ``{playbook_id, title, execution_plan: [{order, action, status}], parameters_used}``
         """
-        if self._hide_pending_playbooks() and self.is_pending_playbook(self._read_playbook_by_id(playbook_id)):
-            return {"status": "pending_not_executable", "id": playbook_id,
-                    "message": "This playbook is a pending proposal; it runs only after Owner approval."}
+        refusal = self._not_approved(playbook_id)
+        if refusal is not None:
+            return refusal
         pb = self.get_playbook(
             playbook_id,
             _update_access=True,
@@ -2224,12 +2717,14 @@ class PlaybookMixin:
     # ------------------------------------------------------------------
 
     def _executions_dir(self) -> Path:
-        d = self.root / "playbooks" / "executions"
+        d = confined_path(self._playbooks_dir, "executions")
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def _execution_path(self, playbook_id: str) -> Path:
-        return self._executions_dir() / f"{playbook_id}.json"
+        if not valid_playbook_id(playbook_id):
+            raise ValueError("invalid playbook id")
+        return confined_path(self._executions_dir(), f"{playbook_id}.json")
 
     def _update_execution_plan_file(self, playbook_id: str, mutator, *, allow_create: bool = False):
         """Apply ``mutator`` to execution plan under file lock."""
@@ -2341,6 +2836,8 @@ class PlaybookMixin:
         pid = plan.get("playbook_id", "")
         if not pid:
             return {"error": "missing playbook_id"}
+        if not valid_playbook_id(pid):
+            return {"error": "invalid playbook_id"}
         plan["started_at"] = _now_iso()
         plan["updated_at"] = _now_iso()
 
@@ -2387,6 +2884,11 @@ class PlaybookMixin:
         valid = {"completed", "skipped", "failed"}
         if status not in valid:
             return {"error": f"status must be one of {valid}"}
+        if not valid_playbook_id(playbook_id):
+            return {"error": "invalid playbook_id"}
+        refusal = self._not_approved(playbook_id)
+        if refusal is not None:
+            return refusal
 
         result_box: dict = {}
 
@@ -2434,6 +2936,8 @@ class PlaybookMixin:
 
     def get_execution_status(self, playbook_id: str) -> dict:
         """Return the current execution state for a playbook."""
+        if not valid_playbook_id(playbook_id):
+            return {"error": "invalid playbook_id"}
         plan = _read_json(self._execution_path(playbook_id))
         if not plan:
             return {"error": f"no execution plan found for {playbook_id}"}

@@ -85,7 +85,7 @@ def test_lifecycle_high_decay_verified_goes_to_review_not_prune():
 def test_lifecycle_proposal_carries_only_metadata():
     report = lifecycle.build_lifecycle_proposal(_lifecycle_corpus(), now=NOW)
     allowed = {"id", "entry_type", "decay_score", "freshness_status", "age_days",
-               "access_count", "tier", "reasons", "proposal"}
+               "access_count", "tier", "reasons", "proposal", "pinned"}
     blob = json.dumps(report, ensure_ascii=False)
     assert "metadata-only entry" not in blob  # no summary body leaks
     for p in report["proposals"]:

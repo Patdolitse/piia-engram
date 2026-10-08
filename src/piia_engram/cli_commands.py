@@ -133,10 +133,10 @@ def run_sessions(argv: list[str] | None = None) -> int:
             print(f"Session not found: {session_id}")
             return 1
 
-        session_path = eng.root / "contexts" / str(match.get("tool", "")) / f"{session_id}.md"
         try:
+            session_path = eng._context_session_path(str(match.get("tool", "")), session_id)
             content = session_path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             print(f"Session not readable: {session_id} ({exc})")
             return 1
 
@@ -190,11 +190,15 @@ def _print_review_usage() -> None:
     print(
         "Usage:\n"
         "  engram review [--limit N] [--sort recent|quality|quality-desc] [--low-quality]\n"
+        "  engram review interactive [--operator <name>]   (alias: engram review -i)\n"
+        "      one item at a time: a approve, r reject, s supersede, k skip, v full text, q stop;\n"
+        "      nothing is written until you confirm the summary with y (needs a terminal)\n"
         "  engram review show <id>\n"
         "  engram review approve <id> --yes\n"
         "  engram review archive <id> --yes\n"
         "  engram review export --out <dir>\n"
         "  engram review apply <marks.json> [--operator <name> --yes]\n"
+        "      marks: approve | reject | edit-type:<type> | supersede:<old id> | retire | restore\n"
         "  engram review tombstone --ids-file <file> [--go-ref <ref>] [--operator <name> --yes]\n"
     )
 
@@ -338,13 +342,14 @@ def _review_items(
     The explicit ``_update_access=False`` is part of the contract: listing the
     queue must not mutate access counters or timestamps.
     """
+    from piia_engram.review_cli import active_rows, scope_label
+
+    # Every project's proposals: the Owner's queue is not filtered by project.
     rows: list[dict] = []
-    for item in eng.get_lessons(limit=None, _update_access=False):
-        if item.get("tier") == "staging":
-            rows.append({"type": "lesson", "item": item})
-    for item in eng.get_decisions(limit=None, _update_access=False):
-        if item.get("tier") == "staging":
-            rows.append({"type": "decision", "item": item})
+    for kind in ("lesson", "decision"):
+        for item in active_rows(eng, kind):
+            if item.get("tier") == "staging":
+                rows.append({"type": kind, "item": item, "scope": scope_label(eng, kind, item)})
 
     if low_quality_only:
         rows = [
@@ -382,6 +387,8 @@ def _print_review_list(rows: list[dict]) -> None:
         title = _review_title(item_type, item)
         if len(title) > 70:
             title = title[:67] + "..."
+        if row.get("scope", "global") != "global":
+            title = f"{title}  [{row['scope']}]"
         quality = _review_quality_summary(item)
         evidence = _review_evidence_summary(item)
         if evidence:
@@ -402,6 +409,8 @@ def _print_review_item(item_type: str, item: dict) -> None:
     print(f"id: {item.get('id', '')}")
     print(f"tier: {item.get('tier', '')}")
     print(f"status: {item.get('status', '')}")
+    if item.get("pinned") is True:
+        print(f"pinned: yes (since {item.get('pinned_at') or '?'})")
     if item.get("domain"):
         print(f"domain: {item.get('domain')}")
     if item_type == "decision":
@@ -413,6 +422,9 @@ def _print_review_item(item_type: str, item: dict) -> None:
         W._safe_print(f"summary: {item.get('summary') or item.get('title') or ''}")
         if item.get("detail"):
             W._safe_print(f"detail: {item.get('detail')}")
+    from piia_engram.write_provenance import client_card_line
+
+    W._safe_print(client_card_line(item)[2:])
     _print_review_quality_detail(item)
     _print_review_evidence_detail(item)
 
@@ -950,6 +962,119 @@ def run_anchors(argv: list[str] | None = None) -> int:
     return 1 if missing_project else 0
 
 
+def _print_pin_usage() -> None:
+    print(
+        "Usage:\n"
+        "  engram pin <id> [--kind lesson|decision|playbook] [--json]\n"
+        "  engram pin --list [--json]\n"
+        "  engram unpin <id> [--kind lesson|decision|playbook] [--json]\n\n"
+        "A pinned entry is kept out of automatic archiving, capacity moves and import\n"
+        "overwrites and is shown first in recall. Only trusted entries can be pinned;\n"
+        "agents cannot change a pinned entry over MCP, they can only propose a revision.\n"
+    )
+
+
+_PIN_KINDS = ("lesson", "decision", "playbook")
+
+
+def _parse_pin_args(args: list[str]) -> tuple[str, str, bool, str]:
+    """(item id, kind, --json, usage error)."""
+    item_id = ""
+    kind = ""
+    json_output = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            json_output = True
+        elif arg == "--kind":
+            if i + 1 >= len(args):
+                return "", "", json_output, "--kind requires lesson|decision|playbook"
+            kind = args[i + 1].strip().lower()
+            if kind not in _PIN_KINDS:
+                return "", "", json_output, "--kind must be lesson, decision or playbook"
+            i += 1
+        elif arg.startswith("--"):
+            return "", "", json_output, f"Unknown option: {arg}"
+        elif not item_id:
+            item_id = arg.strip()
+        else:
+            return "", "", json_output, f"Unexpected argument: {arg}"
+        i += 1
+    return item_id, kind, json_output, ""
+
+
+def _print_pin_result(result: dict, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif result.get("error"):
+        print(f"ERROR: {result.get('message') or result['error']}")
+    else:
+        status = result.get("status", "")
+        label = {
+            "pinned": "Pinned",
+            "already_pinned": "Already pinned",
+            "unpinned": "Unpinned",
+            "not_pinned": "Not pinned",
+        }.get(status, status)
+        print(f"{label}: {result.get('kind', '')} {result.get('id', '')}")
+    return 1 if result.get("error") else 0
+
+
+def run_pin(argv: list[str] | None = None) -> int:
+    """Owner-only: pin a trusted entry, or list pinned entries (``--list``)."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_pin_usage()
+        return 0
+    from piia_engram import pinning
+    from piia_engram.core import Engram
+
+    if "--list" in args:
+        json_output = "--json" in args
+        rest = [a for a in args if a not in ("--list", "--json")]
+        if rest:
+            _print_pin_usage()
+            return 2
+        items = pinning.list_pinned(Engram(read_only=True))
+        if json_output:
+            print(json.dumps({"pinned": items, "count": len(items)}, ensure_ascii=False, indent=2))
+        elif not items:
+            print("No pinned entries.")
+        else:
+            for item in items:
+                note = "" if item["state"] == "trusted" else f"  ({item['state']})"
+                print(f"{item['kind']:<9} {item['id']}  v{item['version']}  pinned {item['pinned_at']}{note}")
+        return 0
+    item_id, kind, json_output, error = _parse_pin_args(args)
+    if error or not item_id:
+        if error:
+            print(error)
+        _print_pin_usage()
+        return 2
+    return _print_pin_result(pinning.pin(Engram(), item_id, kind or None), json_output)
+
+
+def run_unpin(argv: list[str] | None = None) -> int:
+    """Owner-only: remove the pin from an entry."""
+    W._configure_utf8_stdio()
+    args = list(argv or [])
+    if args and args[0] in ("-h", "--help"):
+        _print_pin_usage()
+        return 0
+    item_id, kind, json_output, error = _parse_pin_args(args)
+    if error or not item_id:
+        if error:
+            print(error)
+        _print_pin_usage()
+        return 2
+    from piia_engram import pinning
+    from piia_engram.core import Engram
+
+    return _print_pin_result(pinning.unpin(Engram(), item_id, kind or None), json_output)
+
+
 def _render_first_value_funnel(events: list) -> str:
     """Render the local first-value funnel state from recorded events.
 
@@ -1024,14 +1149,34 @@ def _render_first_value_funnel(events: list) -> str:
 
 def _run_telemetry_cli(sub_args: list[str]) -> None:
     """Handle `engram telemetry <subcommand>`."""
+    import sys
+
+    from piia_engram import usage_ping as _usage_ping
     from piia_engram.telemetry import (
         get_status, is_enabled, preview_payload, set_enabled,
         set_remote_enabled,
     )
 
+    def _save_ping_setting(enabled: bool) -> bool:
+        """Persist the daily ping on/off; report a failure without stopping the rest."""
+        try:
+            _usage_ping.set_enabled(enabled)
+            return True
+        except OSError as exc:
+            hint = "" if enabled else " Use ENGRAM_TELEMETRY=0 or DO_NOT_TRACK=1 instead."
+            print(f"  Could not save the daily ping setting: {exc}.{hint}", file=sys.stderr)
+            return False
+
     sub = sub_args[0] if sub_args else "status"
 
     if sub == "status":
+        ping = _usage_ping.status()
+        print(f"\n  Daily usage ping: {'ON' if ping['will_send'] else 'OFF'} "
+              f"(decided by: {ping['decided_by']})")
+        prefix = ping["install_id_prefix"]
+        print(f"  Install ID: {prefix + '…' if prefix else '(not created yet)'}")
+        print(f"  Last sent: {ping['last_sent'] or '(never)'}")
+        print(f"  Endpoint: {ping['endpoint']}")
         status = get_status()
         state = "ON" if status["enabled"] else "OFF"
         remote_state = "ON" if status.get("remote_enabled") else "OFF"
@@ -1048,6 +1193,8 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print()
 
     elif sub == "preview":
+        print("\n  Daily usage ping (sent at most once a day unless turned off):\n")
+        print(_usage_ping.preview())
         print("\n  Next payload (if enabled):\n")
         print(preview_payload())
         print()
@@ -1065,14 +1212,22 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print()
 
     elif sub in ("off", "disable"):
+        ping_saved = _save_ping_setting(False)
         set_enabled(False)
         set_remote_enabled(False)
-        print("\n  ✅ Anonymous usage statistics disabled (local + remote).")
+        print()
+        if ping_saved:
+            print("  ✅ Daily usage ping disabled.")
+        print("  ✅ Anonymous usage statistics disabled (local + remote).")
         print("  No data will be logged or sent.\n")
 
     elif sub in ("on", "enable"):
+        ping_saved = _save_ping_setting(True)
         set_enabled(True)
-        print("\n  ✅ Anonymous usage statistics enabled.")
+        print()
+        if ping_saved:
+            print("  ✅ Daily usage ping enabled.")
+        print("  ✅ Anonymous usage statistics enabled.")
         print("  Run 'engram telemetry preview' to see what will be logged.")
         print("  Run 'engram telemetry remote on' to also enable remote sending.\n")
 
@@ -1086,8 +1241,12 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print("  ✅ Remote anonymous statistics enabled.")
             print("  Data will be sent via HTTPS to Cloudflare Worker.\n")
         elif remote_sub in ("off", "disable"):
+            ping_saved = _save_ping_setting(False)
             set_remote_enabled(False)
-            print("\n  ✅ Remote sending disabled. Local logging continues if enabled.\n")
+            print()
+            if ping_saved:
+                print("  ✅ Daily usage ping disabled.")
+            print("  ✅ Remote sending disabled. Local logging continues if enabled.\n")
         else:
             status = get_status()
             remote_state = "ON" if status.get("remote_enabled") else "OFF"
@@ -1115,6 +1274,19 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print(f"\n  Weekly feedback reports: {fb_state}")
             print("  Toggle: engram telemetry feedback on/off\n")
 
+    elif sub == "reset-id":
+        if _usage_ping.decision()[0]:
+            new_id = _usage_ping.reset_install_id()
+            if new_id:
+                print(f"\n  ✅ New install ID: {new_id[:8]}…\n")
+            else:
+                print("\n  Could not write the install ID file.\n")
+        elif _usage_ping.delete_install_id():
+            # Off: no new id is stored until the ping runs again.
+            print("\n  ✅ Install ID deleted. A new install ID will be created when the ping next runs.\n")
+        else:
+            print("\n  Could not delete the install ID file.\n")
+
     elif sub == "--show-payload":
         print("\n  Next payload (if enabled):\n")
         print(preview_payload())
@@ -1124,12 +1296,13 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print(
             "\nUsage:\n"
             "  engram telemetry status         Show current status\n"
+            "  engram telemetry reset-id       Create a new random install ID for the daily ping\n"
             "  engram telemetry funnel         Show the local first-value funnel\n"
             "  engram telemetry preview        Show what data will be logged\n"
-            "  engram telemetry on             Enable anonymous usage statistics\n"
-            "  engram telemetry off            Disable anonymous usage statistics\n"
+            "  engram telemetry on             Enable the daily ping and anonymous usage statistics\n"
+            "  engram telemetry off            Disable the daily ping and all usage statistics\n"
             "  engram telemetry remote on      Enable remote sending (Phase 2)\n"
-            "  engram telemetry remote off     Disable remote sending\n"
+            "  engram telemetry remote off     Disable remote sending and the daily ping\n"
             "  engram telemetry feedback on    Enable weekly feedback reports\n"
             "  engram telemetry feedback off   Disable weekly feedback reports\n"
         )
@@ -1221,26 +1394,50 @@ def _run_privacy_report() -> None:
         print("        (telemetry module not available)")
     print()
 
-    # 5. Reconcile
-    print("  [SYNC] Cross-tool sync:")
+    # 5. Daily usage ping
+    print("  [PING] Daily usage ping:")
     try:
-        from piia_engram.reconcile import ReconcileMixin
-        authorized = ReconcileMixin._reconcile_authorized()
-        print(f"        Status: {'ON' if authorized else 'OFF'}")
-        print("        Scans: ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules, etc.")
-        print("        Control: ENGRAM_RECONCILE=0 to disable")
-    except ImportError:
-        print("        (reconcile module not available)")
+        from piia_engram import usage_ping as _usage_ping
+
+        ping = _usage_ping.status()
+        print(f"        Status: {'ON' if ping['will_send'] else 'OFF'} (decided by: {ping['decided_by']})")
+        prefix = ping["install_id_prefix"]
+        print(f"        Install ID: {prefix + '…' if prefix else '(not created yet)'}")
+        print(f"        Last sent: {ping['last_sent'] or '(never)'}")
+        print(f"        Endpoint: {ping['endpoint']}")
+        print("        Sends once a day: random install ID, version, OS, Python version, AI client name, date")
+        print("        Turn off: engram telemetry off (or ENGRAM_TELEMETRY=0 / DO_NOT_TRACK=1)")
+    except Exception:
+        print("        (status not available)")
     print()
 
-    # 6. Network
+    # 6. Other AI tools' memories: never read automatically
+    print("  [IMPORT] Other AI tools' memories:")
+    try:
+        from piia_engram import memory_import
+
+        print("        Automatic scanning: never (not at server start, cold start or session end)")
+        print("        Import on request: engram import-memories (lists first, then the review queue)")
+        print("        Reads when you run it: ~/.claude/projects/*/memory/*.md, CLAUDE.md, AGENTS.md, .cursorrules, etc.")
+        summary = memory_import.importable_summary()
+        print(f"        Importable now: {memory_import.importable_text(summary)}")
+        print("        Hard off switch: ENGRAM_RECONCILE=0 (or reconcile_authorized=false) - nothing is read;")
+        print("          engram import-memories, setup's import, engram reconcile apply and")
+        print("          engram import --format openclaw all refuse")
+    except Exception as exc:
+        print(f"        (status not available: {type(exc).__name__})")
+    print()
+
+    # 7. Network
     print("  [NET]  Network requests:")
-    print("        Core Engram: ZERO network requests (local files only)")
+    print("        Engram's identity and knowledge tools: no network requests (local files only)")
+    print("        Default network calls: the daily usage ping and the CLI update check")
+    print("        Turn them off: engram telemetry off, ENGRAM_NO_UPDATE_CHECK=1")
     print("        Optional: read_web_content (user-initiated only, via local Reader service)")
-    print("        Optional: telemetry Phase 2 (NOT implemented, requires re-consent)")
+    print("        Optional: remote statistics and feedback reports (separate opt-ins)")
     print()
 
-    # 7. How to delete
+    # 8. How to delete
     print("  [DEL]  Delete all data:")
     print(f"        rm -rf {data_dir}")
     print("        (This removes ALL Engram data permanently)")
@@ -1504,7 +1701,8 @@ def run_feedback(*, dry_run: bool = False) -> None:
             print(f"  冷启动级别: {cs}")
         rec = beta.get("reconcile", {})
         if rec:
-            print(f"  跨工具同步: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
+            # Historical events only: nothing imports automatically any more.
+            print(f"  跨工具导入（历史记录）: {rec.get('sync_count', 0)} 次, 导入 {rec.get('total_imported', 0)} 条")
         print()
 
     # --dry-run: show exactly what would be sent, then stop
@@ -1790,6 +1988,8 @@ def _render_import_result_text(payload: dict) -> str:
                 f"add={counts.get('would_add', 0)} "
                 f"skip={counts.get('would_skip', 0)} "
                 f"conflicts={counts.get('conflicts', 0)}"
+                + (f" kept={counts['kept']}" if "kept" in counts else "")
+                + (f" invalid={counts['invalid']}" if counts.get("invalid") else "")
             )
     if conflicts:
         lines.append(f"  conflicts: {len(conflicts)} (metadata only; values withheld)")
@@ -1807,6 +2007,25 @@ def _render_import_result_text(payload: dict) -> str:
                     f"    - {kind}: move_to_archive={counts.get('moved_to_archive', 0)} "
                     f"place_in_archive={counts.get('placed_in_archive', 0)}"
                 )
+    pinned = payload.get("pinned") if isinstance(payload.get("pinned"), dict) else {}
+    matched = pinned.get("matched") if isinstance(pinned.get("matched"), dict) else {}
+    dropped = [e for e in pinned.get("dropped_edges") or [] if isinstance(e, dict)]
+    if matched:
+        verb = "kept in place" if mode == "overwrite" else "skipped (not overwritten)"
+        count = sum(len(ids) for ids in matched.values() if isinstance(ids, list))
+        lines.append(f"  pinned: {count} {'entry' if count == 1 else 'entries'} {verb}")
+        for section, ids in sorted(matched.items()):
+            if isinstance(ids, list):
+                lines.append(f"    - {section}: {', '.join(str(i) for i in ids)}")
+    if dropped:
+        targets = sorted({str(e.get("dst")) for e in dropped})
+        pairs = ", ".join(f"{e.get('src')} -> {e.get('dst')}" for e in dropped)
+        lines.append(
+            f"  pinned: {len(targets)} {'entry' if len(targets) == 1 else 'entries'} protected from a "
+            f"supersedes link (link dropped): {pairs}"
+        )
+    if (matched or dropped) and pinned.get("warning"):
+        lines.append(f"  {pinned['warning']}")
     imported = payload.get("imported") if isinstance(payload.get("imported"), list) else []
     if imported:
         lines.append(f"  imported: {', '.join(str(item) for item in imported)}")
@@ -1877,6 +2096,68 @@ def _run_retention(args: list[str]) -> int:
     return 2
 
 
+def _run_import_openclaw(args: list[str]) -> int:
+    """``engram import --format openclaw``: preview by default, --apply --yes writes."""
+    import os as _os
+    from piia_engram.compat import import_from_openclaw, openclaw_command, preview_openclaw
+    from piia_engram.core import Engram
+
+    json_output = "--json" in args
+    values = {"--format": "", "--soul": "", "--memory": "", "--user": ""}
+    flags = {"--json", "--apply", "--yes"}
+    error = ""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in values:
+            if i + 1 >= len(args):
+                error = f"{arg} needs a value"
+                break
+            values[arg] = args[i + 1]
+            i += 2
+            continue
+        if arg not in flags:
+            error = f"Unknown import option: {arg}"
+            break
+        i += 1
+    if not error and values["--format"].strip().lower() != "openclaw":
+        error = "--format must be openclaw (a JSON backup needs no --format)"
+    if not error and not (values["--soul"] or values["--memory"] or values["--user"]):
+        error = "give at least one of --soul, --memory, --user"
+
+    def _emit(payload: dict) -> None:
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif payload.get("error"):
+            print(f"ERROR: {payload['error']}")
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    if error:
+        _emit({"error": error})
+        return 2
+    soul, memory, user = values["--soul"], values["--memory"], values["--user"]
+    root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    eng = Engram(root=root)
+    apply = "--apply" in args
+    confirm = "--yes" in args
+    if not apply or not confirm:
+        payload = preview_openclaw(eng, soul, memory, user)
+        if apply and not confirm:
+            payload["requires_confirmation"] = True
+            payload["confirmation_hint"] = f"re-run as `{openclaw_command(soul, memory, user)}` to write"
+            _emit(payload)
+            return 1
+        _emit(payload)
+        return 0
+    try:
+        payload = import_from_openclaw(eng, soul, memory, user)
+    except Exception as exc:  # never a traceback: report and exit non-zero
+        payload = {"error": f"OpenClaw import failed: {type(exc).__name__}"}
+    _emit(payload)
+    return 1 if payload.get("error") else 0
+
+
 def _run_import_backup(args: list[str]) -> int:
     """Preview/apply a full Engram JSON backup import.
 
@@ -1893,11 +2174,17 @@ def _run_import_backup(args: list[str]) -> int:
             "  engram import <backup.json> --apply --yes [--json]\n"
             "  engram import <backup.json> --apply --yes --materialize-version-chain [--json]\n"
             "  engram import <backup.json> --overwrite --apply --yes [--json]\n"
-            "  engram import <backup.json> --apply --yes --allow-over-cap [--json]\n\n"
+            "  engram import <backup.json> --apply --yes --allow-over-cap [--json]\n"
+            "  engram import --format openclaw [--soul SOUL.md] [--memory MEMORY.md] [--user USER.md]\n"
+            "                [--apply --yes] [--json]\n\n"
             "Default is metadata-only preview. --overwrite maps to merge=False.\n"
-            "--allow-over-cap imports even when reviewed memories would exceed the hard cap."
+            "--allow-over-cap imports even when reviewed memories would exceed the hard cap.\n"
+            "OpenClaw: MEMORY.md lessons go to the review queue (receipt + audit line);\n"
+            "USER.md / SOUL.md merge into the profile, preferences and quality standards."
         )
         return 0 if args and args[0] in {"-h", "--help"} else 2
+    if "--format" in args:
+        return _run_import_openclaw(args)
 
     json_output = "--json" in args
     apply = "--apply" in args
@@ -2336,6 +2623,22 @@ def _dock_config_governance_summary() -> dict:
             "name": name, "status": "not configured",
             "verified": bool(cfg.get("verified")), "governance_env": "missing",
         }
+        if cfg.get("register_via") == "claude_cli":
+            # Claude Code: the shared detection only; its entry's env is not
+            # looked at, so whether ENGRAM_GOVERNANCE is set there is not known.
+            from piia_engram import claude_code_mcp
+
+            try:
+                status = claude_code_mcp.detection_status()
+            except Exception:
+                status = "undetermined"
+            row["status"] = claude_code_mcp.summary_status(status)[0]
+            if status in ("configured", "undetermined"):
+                row["governance_env"] = "unknown"
+            if status == "legacy_only":
+                row["legacy_only"] = True
+            clients.append(row)
+            continue
         for raw_path in cfg.get("config_paths", []):
             path = Path(raw_path)
             if not path.is_file():
@@ -2350,7 +2653,9 @@ def _dock_config_governance_summary() -> dict:
             servers = config.get(server_key, {}) if isinstance(config, dict) else {}
             if not isinstance(servers, dict):
                 continue
-            entry = servers.get("engram") or servers.get("piia-engram")
+            from piia_engram.claude_code_mcp import engram_entry_name
+
+            entry = servers.get(engram_entry_name(servers) or "engram")
             if not isinstance(entry, dict):
                 row["status"] = "missing entry"
                 continue
@@ -3012,6 +3317,7 @@ def _run_dock_search(args: list[str]) -> int:
             filters=None,
             project_folder=None,
             allow_hybrid_index=False,
+            include_pending=True,
         )
     except Exception as exc:  # never crash the Dock spawn — emit a usable error
         if want_json:
@@ -3049,32 +3355,43 @@ def _run_dock_search(args: list[str]) -> int:
         return "\n".join([p for p in parts if p])
 
     results = []
-    for kind in ("lessons", "decisions", "playbooks"):
-        for it in raw.get(kind, []):
-            entry = {
-                "kind": kind[:-1],  # lesson / decision / playbook
-                "title": _title(kind, it),
-                "tier": it.get("tier", ""),
-                "id": it.get("id", ""),
-                "copy": _copy(kind, it),
+    # Reviewed results first, then the items still waiting for review (never
+    # interleaved), each of those flagged pending_untrusted. Per kind the two
+    # together stay within --limit: pending items only fill the slots the
+    # reviewed results left free.
+    pending_group = raw.get("pending") if isinstance(raw.get("pending"), dict) else {}
+    kinds = ("lessons", "decisions", "playbooks")
+    ordered = [(kind, it, False) for kind in kinds for it in raw.get(kind, [])]
+    for kind in kinds:
+        free = max(0, limit - len(raw.get(kind, []) or []))
+        ordered += [(kind, it, True) for it in (pending_group.get(kind) or [])[:free]]
+    for kind, it, is_pending in ordered:
+        entry = {
+            "kind": kind[:-1],  # lesson / decision / playbook
+            "title": _title(kind, it),
+            "tier": it.get("tier", ""),
+            "id": it.get("id", ""),
+            "copy": _copy(kind, it),
+        }
+        if is_pending:
+            entry["pending_untrusted"] = True
+        labeling = _dock_labeling_projection(it)
+        if labeling:
+            entry["labeling"] = labeling
+        # raw editable fields for the dock's inline edit (lesson/decision only)
+        if kind == "lessons":
+            entry["fields"] = {
+                "summary": it.get("summary", "") or "",
+                "detail": it.get("detail", "") or "",
             }
-            labeling = _dock_labeling_projection(it)
-            if labeling:
-                entry["labeling"] = labeling
-            # raw editable fields for the dock's inline edit (lesson/decision only)
-            if kind == "lessons":
-                entry["fields"] = {
-                    "summary": it.get("summary", "") or "",
-                    "detail": it.get("detail", "") or "",
-                }
-            elif kind == "decisions":
-                entry["fields"] = {
-                    # extraction-written decisions keep primary text in `title`
-                    "question": it.get("question") or it.get("title") or "",
-                    "choice": it.get("choice", "") or "",
-                    "reasoning": it.get("reasoning", "") or "",
-                }
-            results.append(entry)
+        elif kind == "decisions":
+            entry["fields"] = {
+                # extraction-written decisions keep primary text in `title`
+                "question": it.get("question") or it.get("title") or "",
+                "choice": it.get("choice", "") or "",
+                "reasoning": it.get("reasoning", "") or "",
+            }
+        results.append(entry)
 
     if want_json:
         print(json.dumps(
@@ -3143,7 +3460,8 @@ def _run_dock_export(args: list[str]) -> int:
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
     try:
         eng = Engram(root=root)
-        path = eng.export_all(output or None)
+        summary = eng.export_all_with_summary(output or None)
+        path = summary["path"]
     except Exception as exc:  # never crash the Dock spawn — emit a usable error
         if want_json:
             print(json.dumps(
@@ -3156,11 +3474,14 @@ def _run_dock_export(args: list[str]) -> int:
 
     if want_json:
         print(json.dumps(
-            {"ok": True, "engram_dir": str(root), "path": str(path)},
+            {"ok": True, "engram_dir": str(root), "path": str(path), "skipped": summary["skipped"]},
             ensure_ascii=False,
         ))
         return 0
     print(f"导出成功: {path}")
+    skipped = summary["skipped"].get("tombstones", 0)
+    if skipped:
+        print(f"跳过格式不对的拒绝记录: {skipped} / Skipped malformed rejection records: {skipped}")
     return 0
 
 
@@ -4846,6 +5167,10 @@ def _run_conflicts_resolve(eng, args: list[str]) -> tuple[int, dict]:
         from piia_engram.governance_store import RelationStore as _RS
 
         relation_added = _RS(eng.root).add_relation(keep, "supersedes", other)
+        # The superseded decision loses its pin first, audited as superseded.
+        from piia_engram import pinning as _pinning
+
+        _pinning.auto_unpin(eng, other, reason="superseded", by=keep)
         archive = eng.update_decision(other, {"status": "outdated"})
         store.record(first, second, action=action, keep=keep, note=str(opts["note"] or ""))
         payload["changed"] = bool(relation_added or archive.get("status") == "outdated")
@@ -4918,18 +5243,88 @@ def run_conflicts(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _run_reconcile(args: list[str]) -> int:
-    """Reconcile proposal + owner-confirmed import-only apply (engram reconcile).
+def _reconcile_apply_payload(
+    result: dict, *, dry_run: bool, confirmed: bool, requires_confirmation: bool,
+) -> dict:
+    """``engram reconcile apply`` keeps its metadata-only payload shape.
 
-    ``engram reconcile`` (no subcommand) scans external AI memory files and
-    prints a metadata-only classification (import / duplicate / conflict / skip),
-    importing nothing. ``engram reconcile apply`` imports ONLY the novel
-    (``import``) candidates via the existing write API: dry-run by default,
-    ``--commit --yes`` to actually import. Duplicates and conflicts are never
-    applied (conflict resolution is deferred); no agent-facing tool is exposed.
+    The work itself is ``engram import-memories --source memories``: same
+    engine, review queue, receipt and audit line. Item text is never echoed.
+    """
+    if requires_confirmation:
+        outcome = "pending_confirmation"
+    elif dry_run:
+        outcome = "planned"
+    else:
+        outcome = "imported"
+    items = [
+        {
+            "candidate_ref": index,
+            "action": "import",
+            "reason": "",
+            "entry_type": "lesson",
+            "best_score": 0.0,
+            "match_id": "",
+            "outcome": outcome,
+            "imported_id": item.get("id", "") if outcome == "imported" else "",
+            "file": item.get("file", ""),
+            "content_sha256": item.get("content_sha256", ""),
+        }
+        for index, item in enumerate(result.get("items") or [])
+    ]
+    if not result.get("enabled", True):
+        status = "disabled"
+    elif result.get("partial"):
+        status = "partial"
+    elif requires_confirmation:
+        status = "confirmation_required"
+    elif dry_run:
+        status = "dry_run"
+    else:
+        status = "applied"
+    payload = {
+        "schema": 1,
+        "action": "reconcile_import_apply",
+        "source": "memory_files",
+        "flow": "import-memories",
+        "dry_run": dry_run,
+        "confirmed": confirmed,
+        "requires_confirmation": requires_confirmation,
+        "changed": int(result.get("imported", 0) or 0) > 0,
+        "status": status,
+        "disabled_by": result.get("disabled_by", ""),
+        "counts": {
+            "import": len(items),
+            "duplicate": int(result.get("duplicates", 0) or 0),
+            "conflict": int((result.get("proposal_counts") or {}).get("conflict", 0) or 0),
+            "skip": int((result.get("proposal_counts") or {}).get("skip", 0) or 0),
+            "imported": int(result.get("imported", 0) or 0),
+            "failed": 0,
+            "queue_full": int(result.get("queue_full", 0) or 0),
+        },
+        "items": items,
+        "receipt": result.get("receipt", ""),
+        "not_written": int(result.get("not_written", 0) or 0),
+        "error": result.get("error", "") or "",
+    }
+    if result.get("overflow_archived_ids"):
+        payload["overflow_archived_ids"] = list(result["overflow_archived_ids"])
+    return payload
+
+
+def _run_reconcile(args: list[str]) -> int:
+    """Reconcile proposal, conflict preview, and the import of memory files.
+
+    ``engram reconcile`` (no subcommand) and ``engram reconcile conflicts`` are
+    metadata-only previews that write nothing. ``engram reconcile apply`` is
+    kept for compatibility and is now the same import as
+    ``engram import-memories --source memories``: dry-run by default,
+    ``--commit --yes`` adds the items to the review queue and writes an import
+    receipt and an audit line. No agent-facing tool is exposed.
     """
     import os as _os
     from piia_engram.core import Engram
+    from piia_engram import memory_import
     from piia_engram.reconcile_apply import (
         apply_reconcile,
         preview_reconcile_conflicts,
@@ -4943,20 +5338,49 @@ def _run_reconcile(args: list[str]) -> int:
             "  engram reconcile [--json]                 Metadata-only import proposal\n"
             "  engram reconcile conflicts [--json]       Metadata-only conflict preview\n"
             "  engram reconcile apply [--commit] [--yes] [--json]\n"
-            "                                            Owner-confirmed import-only apply\n"
-            "                                            (default = dry-run preview; --commit --yes to import)\n"
+            "                                            Import memory files into the review queue\n"
+            "                                            (default = dry-run preview; --commit --yes to import;\n"
+            "                                            same as engram import-memories --source memories)\n"
         )
         return 0
 
     root = Path(_os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
-    eng = Engram(root=root)
-    candidates = eng.collect_memory_candidates()
-
     json_output = "--json" in args
     apply = bool(args) and args[0] == "apply"
     conflicts = bool(args) and args[0] == "conflicts"
     confirm = "--yes" in args
     commit = apply and "--commit" in args
+
+    if apply:
+        # The same classification as `engram reconcile` / `reconcile conflicts`:
+        # near-duplicates and conflicts are counted and never written.
+        reader = Engram(root=root, read_only=True)
+        planned = memory_import.filter_by_proposal(
+            reader, memory_import.plan(reader, ("memories",)), source="memory_files",
+        )
+        if commit and confirm:
+            result = memory_import.write_plan(Engram(root=root), planned, command="engram reconcile apply")
+            payload = _reconcile_apply_payload(
+                result, dry_run=False, confirmed=True, requires_confirmation=False,
+            )
+        else:
+            result = planned
+            payload = _reconcile_apply_payload(
+                result, dry_run=not commit, confirmed=confirm,
+                requires_confirmation=commit and result.get("enabled", True),
+            )
+        if json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(render_reconcile_apply_text(payload))
+            if payload["receipt"]:
+                print(f"  receipt: {payload['receipt']} (review queue; approve with engram review)")
+            if payload["status"] == "disabled":
+                print(f"  reading other AI tools' files is switched off ({payload['disabled_by']})")
+        return 1 if payload["requires_confirmation"] or payload["status"] in {"disabled", "partial"} else 0
+
+    eng = Engram(root=root)
+    candidates = eng.collect_memory_candidates()
 
     if conflicts:
         payload = preview_reconcile_conflicts(
@@ -4973,13 +5397,13 @@ def _run_reconcile(args: list[str]) -> int:
         eng, candidates,
         source="memory_files",
         confirm=confirm,
-        dry_run=not commit,
+        dry_run=True,
     )
     if json_output:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(render_reconcile_apply_text(payload))
-    return 1 if payload.get("requires_confirmation") else 0
+    return 0
 
 
 def _governance_root():
@@ -5103,7 +5527,7 @@ def run_status(argv: list[str] | None = None) -> int:
         print("--output only applies with --html")
         _print_status_usage()
         return 2
-    status = build_status(probe=not no_probe)
+    status = build_status(probe=not no_probe, external_memories=True)
     if html_output:
         path = write_status_html(status, output)
         print(f"Engram status HTML written to: {path}")

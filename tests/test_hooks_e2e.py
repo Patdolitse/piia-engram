@@ -92,7 +92,10 @@ def test_stop_hook_saves_context_snapshot_and_quick_context(tmp_path, project):
     assert not hooks_log.is_file() or hooks_log.read_text(encoding="utf-8") == ""
 
 
-def test_start_hook_bootstraps_and_returns_resume_brief(tmp_path, project):
+def test_start_hook_returns_resume_brief_without_importing(tmp_path, project):
+    # The start hook used to run a one-time import of other AI tools' rule
+    # files (.bootstrap_done marker). It only reads now; importing is the
+    # explicit `engram import-memories` command.
     store = tmp_path / "store"
     store.mkdir()
     # session 1: stop hook writes something recallable
@@ -112,7 +115,10 @@ def test_start_hook_bootstraps_and_returns_resume_brief(tmp_path, project):
     out = json.loads(result.stdout)
     brief = (out.get("hookSpecificOutput") or {}).get("additionalContext", "")
     assert brief, "start hook produced no additionalContext"
-    assert (store / ".bootstrap_done").is_file(), "start hook did not bootstrap"
+    assert not (store / ".bootstrap_done").exists(), "start hook ran the rule-file import"
+    lessons_path = store / "knowledge" / "lessons.json"
+    lessons = json.loads(lessons_path.read_text(encoding="utf-8")) if lessons_path.is_file() else []
+    assert not [row for row in lessons if row.get("source_tool") == "engram_bootstrap"]
 
 
 def test_stop_hook_skips_short_sessions(tmp_path, project):

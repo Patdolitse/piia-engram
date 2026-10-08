@@ -8,13 +8,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import capacity as _capacity
+from . import pinning as _pinning
+from . import tombstones as _tombstones
+from . import write_provenance as _write_provenance
 from .decision_thread import validate_edges
+from .playbooks import PlaybookIdExists, new_playbook_id, playbook_id_key, valid_playbook_id
+from .store_paths import confined_path, valid_file_id
 from .governance_store import RelationStore, ResolutionStore
 from .storage import (
     DEFAULT_TRUST_BOUNDARIES,
@@ -24,12 +30,118 @@ from .storage import (
     _ALLOWED_PROFILE_FIELDS,
     _ALLOWED_QUALITY_FIELDS,
     _ALLOWED_TRUST_FIELDS,
+    _append_jsonl_lines,
     _now_iso,
     _read_json,
     _update_json,
     _write_json,
     hold_directory_lock,
 )
+
+
+# The fields a rejection tombstone carries in a backup: hashes and metadata, never claim text.
+_TOMBSTONE_FIELDS = ("id", "kind", "scope", "h1", "h2", "hv", "rejected_at", "via", "prior_rejection_id")
+
+
+_TOMBSTONE_KINDS = frozenset({"lesson", "decision", "playbook"})
+_TOMBSTONE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_TOMBSTONE_HASH_RE = re.compile(r"[0-9a-f]{64}")
+_TOMBSTONE_SCOPE_MAX = 128
+_TOMBSTONE_TEXT_MAX = 64  # rejected_at, via
+# A backup keeps only the route a rejection came through, never who made it or
+# which client was connected ("owner-veto:<name>" -> "owner-veto").
+_TOMBSTONE_VIA_ROUTES = frozenset({"owner-veto", "cli", "backfill", "mcp", "core", "import"})
+
+
+def _tombstone_via(value: str) -> str:
+    route = value.split(":", 1)[0].strip()
+    return route if route in _TOMBSTONE_VIA_ROUTES else "other"
+
+
+def _short_text(value: Any, limit: int) -> bool:
+    return isinstance(value, str) and len(value) <= limit and value.isprintable()
+
+
+def _clean_tombstone(record: Any) -> dict | None:
+    """One backup-safe tombstone record, or None when any field is malformed."""
+    if not isinstance(record, dict):
+        return None
+    item_id, hv = record.get("id"), record.get("hv")
+    if not (isinstance(item_id, str) and _TOMBSTONE_ID_RE.fullmatch(item_id)):
+        return None
+    kind = record.get("kind")
+    if not isinstance(kind, str) or kind not in _TOMBSTONE_KINDS:  # type first: a list is unhashable
+        return None
+    if isinstance(hv, bool) or not isinstance(hv, int) or hv not in _tombstones.MATCHED_HASH_VERSIONS:
+        return None
+    for key in ("h1", "h2"):
+        value = record.get(key)
+        if not (isinstance(value, str) and _TOMBSTONE_HASH_RE.fullmatch(value)):
+            return None
+    clean: dict[str, Any] = {key: record[key] for key in ("id", "kind", "h1", "h2", "hv")}
+    if "scope" in record:
+        scope = record["scope"]
+        if not (_short_text(scope, _TOMBSTONE_SCOPE_MAX) and scope.strip()):
+            return None
+        clean["scope"] = scope
+    for key in ("rejected_at", "via"):
+        if key in record:
+            if not _short_text(record[key], _TOMBSTONE_TEXT_MAX):
+                return None
+            clean[key] = _tombstone_via(record[key]) if key == "via" else record[key]
+    prior = record.get("prior_rejection_id")
+    if prior not in (None, ""):
+        if not (isinstance(prior, str) and _TOMBSTONE_ID_RE.fullmatch(prior)):
+            return None
+        clean["prior_rejection_id"] = prior
+    return {key: clean[key] for key in _TOMBSTONE_FIELDS if key in clean}
+
+
+def _check_tombstones(records: Any) -> tuple[list[dict], int]:
+    """(backup-safe records, number of malformed records skipped)."""
+    out: list[dict] = []
+    invalid = 0
+    for record in records if isinstance(records, list) else []:
+        clean = _clean_tombstone(record)
+        if clean is None:
+            invalid += 1
+        else:
+            out.append(clean)
+    return out, invalid
+
+
+def _clean_tombstones(records: Any) -> list[dict]:
+    """Backup-safe tombstone records (known, well-formed fields only); drops malformed ones."""
+    return _check_tombstones(records)[0]
+
+
+def _union_key(record: Any) -> tuple | None:
+    """(hash version, scope, h1) of a record whose fields have the right types, else None."""
+    if not isinstance(record, dict):
+        return None
+    hv, scope, h1 = record.get("hv"), record.get("scope", "global"), record.get("h1")
+    if isinstance(hv, bool) or not isinstance(hv, int) or not isinstance(scope, str) or not isinstance(h1, str):
+        return None
+    return (hv, scope, h1)
+
+
+def _new_tombstones(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    """Incoming records not already present by id, nor by (hash version, scope, h1).
+
+    Local records are read as they are: a field of the wrong type never
+    raises; such a record still holds its id (when that is a string).
+    """
+    ids = {r.get("id") for r in existing if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    keys = {key for key in (_union_key(r) for r in existing) if key is not None}
+    out: list[dict] = []
+    for record in incoming:
+        key = (record.get("hv"), record.get("scope", "global"), record.get("h1"))
+        if record["id"] in ids or key in keys:
+            continue
+        ids.add(record["id"])
+        keys.add(key)
+        out.append(record)
+    return out
 
 
 def _metadata_source(input_path: str) -> dict[str, str]:
@@ -384,6 +496,19 @@ class ImportExportMixin:
                 "would_skip": len(incoming_playbooks) - new_count if merge else 0,
                 "conflicts": 0,
             }
+        if isinstance(knowledge.get("tombstones"), list):
+            # Rejections are the Owner's decisions: both modes keep the local ones.
+            incoming_stones, invalid_stones = _check_tombstones(knowledge["tombstones"])
+            existing_stones = _tombstones.load(self.root)
+            new_count = len(_new_tombstones(existing_stones, incoming_stones))
+            summary["tombstones"] = {
+                "incoming": len(incoming_stones),
+                "would_add": new_count,
+                "would_skip": len(incoming_stones) - new_count,
+                "conflicts": 0,
+                "kept": len(existing_stones),
+                "invalid": invalid_stones,
+            }
 
         environment = data.get("environment", {}) if isinstance(data, dict) else {}
         if isinstance(environment.get("tools"), list):
@@ -404,7 +529,7 @@ class ImportExportMixin:
         if isinstance(projects, dict) and projects:
             new_count = 0
             for pid, project_data in projects.items():
-                existing = _read_json(self._projects_dir / f"{pid}.json") or {}
+                existing = _read_json(confined_path(self._projects_dir, f"{pid}.json")) or {}
                 if merge and existing and isinstance(project_data, dict):
                     _, project_summary, project_conflicts = self._merge_dict_preserving_existing(
                         existing,
@@ -425,7 +550,7 @@ class ImportExportMixin:
                 "conflicts": conflict_count,
             }
 
-        return {
+        plan = {
             "status": "preview",
             "mode": "merge" if merge else "overwrite",
             "dry_run": True,
@@ -433,6 +558,105 @@ class ImportExportMixin:
             "conflicts": conflicts,
             "source": _metadata_source(input_path),
         }
+        pinned = self._pinned_import_report(knowledge if isinstance(knowledge, dict) else {}, merge=merge)
+        if pinned is not None:
+            plan["pinned"] = pinned
+        return plan
+
+    @staticmethod
+    def _pinned_import_refusal(kind: str, targets, *, part_way: bool = False) -> dict:
+        if part_way:
+            message = (
+                f"the import stopped part-way: importing the {kind}s would approve a proposal that "
+                "supersedes a pinned entry, so nothing in that section was written. Sections imported "
+                "before it stay, and the unfinished run is recorded by the import marker: run the same "
+                "import again to resume it once the entry is unpinned (engram unpin <id>)."
+            )
+        else:
+            message = (
+                "importing would approve a proposal that supersedes a pinned entry; an import never "
+                "does that (unpin it first, or approve the proposal with engram review). Nothing was imported."
+            )
+        return {
+            "status": "refused",
+            "error": _pinning.ERROR_PINNED_TARGET,
+            "kind": kind,
+            "targets": sorted({str(t) for t in targets}),
+            "part_way": part_way,
+            "message": message,
+        }
+
+    def _pinned_import_report(self, knowledge: dict, *, merge: bool) -> dict | None:
+        """Owner-pinned local entries this import leaves as they are (ids only), or None.
+
+        Merge: pinned entries that an incoming entry matches (same id or same
+        identity text / title); they are skipped. Replace: every pinned lesson
+        and decision (a replace keeps them), plus matched pinned playbooks
+        (playbooks are only ever added).
+        """
+        protected: dict[str, list[str]] = {}
+        for section, kind, key_field in (("lessons", "lesson", "summary"), ("decisions", "decision", "question")):
+            incoming = knowledge.get(section)
+            if not isinstance(incoming, list) or not incoming:
+                continue  # the import does not touch this section
+            filename = "lessons.json" if kind == "lesson" else "decisions.json"
+            local = [r for r in self._read_entries(self._knowledge_dir / filename, kind, migrate=False)
+                     if _pinning.is_pinned(r)]
+            if merge:
+                ids = {str(r.get("id") or "") for r in incoming if isinstance(r, dict)}
+                keys = {str(r.get(key_field) or "") for r in incoming if isinstance(r, dict)}
+                local = [r for r in local
+                         if str(r.get("id") or "") in ids or str(r.get(key_field) or "") in keys]
+            if local:
+                protected[section] = sorted(str(r.get("id") or "") for r in local)
+        matched = {section: list(ids) for section, ids in protected.items()}
+        dropped = self._pinned_edge_drops(knowledge.get("relations"))
+        for edge in dropped:
+            section = edge.pop("_section")
+            ids = protected.setdefault(section, [])
+            if edge["dst"] not in ids:
+                ids.append(edge["dst"])
+                ids.sort()
+        incoming_pbs = knowledge.get("playbooks")
+        if isinstance(incoming_pbs, list) and incoming_pbs:
+            ids = {playbook_id_key(p.get("id")) for p in incoming_pbs if isinstance(p, dict)}
+            titles = {str(p.get("title") or "") for p in incoming_pbs if isinstance(p, dict)}
+            local_pbs = [p for p in self._export_playbooks() if _pinning.is_pinned(p)
+                         and (playbook_id_key(p.get("id")) in ids or str(p.get("title") or "") in titles)]
+            if local_pbs:
+                matched["playbooks"] = sorted(str(p.get("id") or "") for p in local_pbs)
+                protected["playbooks"] = sorted(set(protected.get("playbooks", [])) | set(matched["playbooks"]))
+        if not protected:
+            return None
+        count = sum(len(v) for v in protected.values())
+        report = {
+            "protected": protected,
+            "count": count,
+            "warning": (
+                f"{count} pinned entr{'y' if count == 1 else 'ies'} kept as they are: an import never "
+                "overwrites, replaces, supersedes or archives a pinned entry. Unpin first "
+                "(engram unpin <id>) to let the backup's version in."
+            ),
+        }
+        if matched:
+            report["matched"] = matched
+        if dropped:
+            report["dropped_edges"] = dropped
+        return report
+
+    def _pinned_edge_drops(self, relations: Any) -> list[dict]:
+        """Backup ``supersedes`` edges whose target is a local pinned entry (never imported)."""
+        if not isinstance(relations, list) or not relations:
+            return []
+        by_kind = _pinning.pinned_ids(self)
+        section_of = {item_id: f"{kind}s" for kind, ids in by_kind.items() for item_id in ids}
+        out: list[dict] = []
+        for edge in validate_edges(relations):
+            if edge["rel"] == "supersedes" and edge["dst"] in section_of:
+                item = {"src": edge["src"], "dst": edge["dst"], "_section": section_of[edge["dst"]]}
+                if item not in out:
+                    out.append(item)
+        return out
 
     @staticmethod
     def _import_version_hash(entry: dict, entry_type: str) -> str:
@@ -492,10 +716,13 @@ class ImportExportMixin:
             if not isinstance(row, dict):
                 continue
             item = deepcopy(row)
+            # A pin is the Owner's local decision: an import never brings one in.
+            _pinning.strip(item)
             if not item.get("id"):
                 extra = item.get("choice") if kind == "decision" else item.get("domain")
                 seed = f"import:{kind}:{self._entry_identity_text(item, kind)}\n{extra or ''}"
                 item["id"] = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+            _write_provenance.stamp_imported(item)
             prepared.append(self._ensure_fields(item, kind))
         return prepared
 
@@ -567,6 +794,10 @@ class ImportExportMixin:
         if existing is None:
             item.update(outcome="skipped", reason="existing_not_found")
             return
+        if _pinning.is_pinned(existing):
+            # An import never replaces an Owner-pinned entry.
+            item.update(outcome="skipped", reason="pinned")
+            return
         if existing.get("status") != "active":
             src = next(
                 (
@@ -623,6 +854,7 @@ class ImportExportMixin:
             provenance["import_source"] = source_name
             provenance["supersedes"] = existing_id
             candidate["provenance"] = provenance
+            _write_provenance.stamp_imported(candidate)
             candidate = self._ensure_fields(candidate, kind)
             rows.append(candidate)
         new_id = str(candidate.get("id") or "")
@@ -657,19 +889,31 @@ class ImportExportMixin:
 
         def _mutate(current: list[dict]) -> list[dict]:
             stats["added"] = 0
+            # Owner-pinned local rows are kept as they are in both modes.
+            pinned_local = [row for row in current if _pinning.is_pinned(row)]
+            pinned_ids = {str(row.get("id") or "") for row in pinned_local}
             if not merge:
-                wanted = {self._import_digest(row, kind) for row in incoming}
+                kept_in = [row for row in incoming if str(row.get("id") or "") not in pinned_ids]
+                wanted = {self._import_digest(row, kind) for row in kept_in + pinned_local}
                 wanted_ids = {key[0] for key in wanted}
                 for local in current:
+                    if str(local.get("id") or "") in pinned_ids:
+                        continue
                     key = self._import_digest(local, kind)
                     if key not in wanted and key[0] in wanted_ids:
                         ctx.extra_archive.append((local, _capacity.REASON_IMPORT_REPLACE))
-                stats["added"] = len(incoming)
-                return [deepcopy(row) for row in incoming]
+                stats["added"] = len(kept_in)
+                # Each pinned row keeps its place: it goes back at its old
+                # index (or at the end when the new list is shorter).
+                out = [deepcopy(row) for row in kept_in]
+                for index, row in enumerate(current):
+                    if str(row.get("id") or "") in pinned_ids:
+                        out.insert(min(index, len(out)), deepcopy(row))
+                return out
             seen = {self._import_identity_key(row, kind) for row in current} | archive_keys
             for row in incoming:
                 key = self._import_identity_key(row, kind)
-                if key in seen:
+                if key in seen or str(row.get("id") or "") in pinned_ids:
                     continue
                 current.append(deepcopy(row))
                 seen.add(key)
@@ -744,7 +988,11 @@ class ImportExportMixin:
         except _capacity.CapacityRefused as exc:
             return {"refused": True, "hard_cap": exc.hard_cap, "verified_active": exc.verified_active}
         placed = len(plan.placed_ids)
-        return {"refused": False, "moved_to_archive": len(plan.archive) - placed, "placed_in_archive": placed}
+        preview = {"refused": False, "moved_to_archive": len(plan.archive) - placed, "placed_in_archive": placed}
+        blocked = _pinning.blocked_targets(plan.promoted_supersedes, after, any_origin=True)
+        if blocked:
+            preview["pinned_targets"] = sorted(set(blocked))
+        return preview
 
     def _import_capacity_summary(
         self,
@@ -806,9 +1054,22 @@ class ImportExportMixin:
         new_edges: list[tuple[str, str]],
         *,
         merge: bool,
+        pinned_ids: set[str] | frozenset = frozenset(),
     ) -> str | None:
-        """Merge: local edges plus new file edges. Replace: file edges plus every local edge."""
+        """Merge: local edges plus new file edges. Replace: file edges plus every local edge.
+
+        An incoming ``supersedes`` edge (from the file or materialization) whose
+        target is an Owner-pinned entry is dropped: an import never supersedes
+        a pinned entry. Local edges are kept as they are.
+        """
         counts = {"added": 0}
+        if pinned_ids:
+            if relations_in is not None:
+                relations_in = [
+                    edge for edge in relations_in
+                    if not (edge.get("rel") == "supersedes" and edge.get("dst") in pinned_ids)
+                ]
+            new_edges = [(src, dst) for src, dst in new_edges if dst not in pinned_ids]
 
         def _key(edge: dict) -> tuple:
             return edge.get("src"), edge.get("rel"), edge.get("dst")
@@ -884,6 +1145,8 @@ class ImportExportMixin:
                     items=[i for i in items if i["_kind"] == kind], edges=edges,
                     input_path=input_path, allow_over_cap=allow_over_cap,
                 )
+                if preview.get("pinned_targets"):
+                    return self._pinned_import_refusal(kind, preview["pinned_targets"])
                 if preview["refused"]:
                     return {
                         "status": "refused",
@@ -910,17 +1173,24 @@ class ImportExportMixin:
                 ctx = self._import_context(merge=merge, allow_over_cap=allow_over_cap)
                 stats = {"added": 0}
                 filename = "lessons.json" if kind == "lesson" else "decisions.json"
-                outcome = self._update_entries(
-                    self._knowledge_dir / filename,
-                    kind,
-                    self._import_row_mutator(
-                        kind, rows, merge=merge, ctx=ctx, stats=stats,
-                        archive_keys=archive_keys[kind],
-                        items=[i for i in items if i["_kind"] == kind], edges=edges,
-                        new_edges=new_edges, input_path=input_path,
-                    ),
-                    capacity_ctx=ctx,
-                )
+                try:
+                    outcome = self._update_entries(
+                        self._knowledge_dir / filename,
+                        kind,
+                        self._import_row_mutator(
+                            kind, rows, merge=merge, ctx=ctx, stats=stats,
+                            archive_keys=archive_keys[kind],
+                            items=[i for i in items if i["_kind"] == kind], edges=edges,
+                            new_edges=new_edges, input_path=input_path,
+                        ),
+                        capacity_ctx=ctx,
+                    )
+                except _pinning.PinnedTargetRefused as exc:
+                    # The preview above refuses this first; a race lands here.
+                    # This section wrote nothing; sections before it stay
+                    # written and the pending marker stays, so running the
+                    # import again resumes it.
+                    return self._pinned_import_refusal(kind, exc.targets, part_way=True)
                 note = f", archived {len(outcome.archived_ids)}" if outcome.archived_ids else ""
                 sign = "+" if merge else ""
                 report[section] = f"{section}({sign}{stats['added']}{note})"
@@ -929,7 +1199,10 @@ class ImportExportMixin:
             if merge and resuming:
                 new_edges.extend(self._missing_import_version_edges(edges))
             if relations_in is not None or new_edges:
-                relations_text = self._import_relations_locked(relations_in, new_edges, merge=merge)
+                pinned_all = set().union(*_pinning.pinned_ids(self).values())
+                relations_text = self._import_relations_locked(
+                    relations_in, new_edges, merge=merge, pinned_ids=pinned_all,
+                )
                 if relations_text is not None:
                     report["relations"] = relations_text
             marker.unlink(missing_ok=True)
@@ -950,8 +1223,43 @@ class ImportExportMixin:
                 payload["items"].append(item)
         return report
 
+    def _import_tombstones(self, records: list, *, merge: bool) -> str:
+        """Restore rejection tombstones: append the unseen ones, in merge and replace mode alike.
+
+        A rejection is the Owner's decision, so a replace import keeps the local
+        records (as it keeps pinned rows) and only adds the backup's new ones.
+        """
+        path = self._knowledge_dir / _tombstones.FILENAME
+        with hold_directory_lock(self._knowledge_dir, timeout=30):
+            existing = _tombstones.load(self.root)
+            incoming, invalid = _check_tombstones(records)
+            new = _new_tombstones(existing, incoming)
+            _append_jsonl_lines(path, [json.dumps(r, ensure_ascii=True) for r in new])
+        notes = [f"+{len(new)}"]
+        if not merge:
+            notes.append(f"kept {len(existing)}")
+        if invalid:
+            notes.append(f"invalid {invalid}")
+        return f"tombstones({', '.join(notes)})"
+
     def export_all(self, output_path: str | None = None, *, exclude_pending: bool = False) -> str:
+        """导出整个 Engram 为单一 JSON 文件；返回文件路径。
+
+        The counts of export_all_with_summary are kept on
+        ``self.last_export_summary`` for callers that only take the path.
+        """
+        summary = self.export_all_with_summary(output_path, exclude_pending=exclude_pending)
+        self.last_export_summary = summary
+        return summary["path"]
+
+    def export_all_with_summary(
+        self, output_path: str | None = None, *, exclude_pending: bool = False,
+    ) -> dict:
         """导出整个 Engram 为单一 JSON 文件。
+
+        Returns ``{"path": ..., "skipped": {"tombstones": N}}``: N rejection
+        records failed validation and were left out of the backup (counted
+        only; nothing of them is shown).
 
         包含：identity、knowledge、projects 所有数据。
         用于备份或迁移到另一台机器。
@@ -962,8 +1270,9 @@ class ImportExportMixin:
                 （lesson / decision / playbook 的 tier=staging 行）。本地完整备份不受影响。
 
         Returns:
-            导出文件的完整路径。
+            ``{"path": 导出文件的完整路径, "skipped": {"tombstones": N}}``。
         """
+        export_stones, skipped_stones = _check_tombstones(_tombstones.load(self.root))
         export_data = {
             "schema_version": SCHEMA_VERSION,
             "exported_at": _now_iso(),
@@ -1000,6 +1309,8 @@ class ImportExportMixin:
                 ],
                 "relations": RelationStore(self.root).all_edges(),
                 "conflict_resolutions": ResolutionStore(self.root).all_records(),
+                # Owner reject marks (hashes only), so a restored store still refuses them.
+                "tombstones": export_stones,
             },
             "environment": {
                 "tools": self._export_tools(),
@@ -1033,7 +1344,7 @@ class ImportExportMixin:
         out.parent.mkdir(parents=True, exist_ok=True)
         _write_json(out, export_data)
         self._audit.log("export", "all", detail=f"exported to {out}")
-        return str(out)
+        return {"path": str(out), "skipped": {"tombstones": skipped_stones}}
 
     def import_all(
         self,
@@ -1064,6 +1375,17 @@ class ImportExportMixin:
         data = _read_json(path)
         if not data or "schema_version" not in data:
             return {"error": "不是有效的 Engram 备份文件"}
+
+        projects = data.get("projects", {})
+        if not isinstance(projects, dict):
+            return {"error": "invalid_projects", "changed": False}
+        for pid in projects:
+            if not valid_file_id(pid):
+                return {"error": "invalid_project_id", "changed": False}
+            try:
+                confined_path(self._projects_dir, f"{pid}.json")
+            except ValueError:
+                return {"error": "invalid_project_id", "changed": False}
 
         plan = self._build_import_plan(data, merge=merge, input_path=input_path)
         if dry_run:
@@ -1209,29 +1531,49 @@ class ImportExportMixin:
                 _write_json(self._knowledge_dir / "domains.json", knowledge["domains"])
             imported.append("domains")
 
+        pinned_report = self._pinned_import_report(knowledge if isinstance(knowledge, dict) else {}, merge=merge)
         if knowledge.get("playbooks"):
             new_count = 0
-            new_body_paths: list[Path] = []
-            existing_index = self._read_playbook_index()
-            existing_titles = {e.get("title", "") for e in existing_index}
-            for pb in knowledge["playbooks"]:
-                if pb.get("title") not in existing_titles:
-                    pb = self._ensure_playbook_fields(pb)
-                    body_path = self._playbooks_dir / f"{pb['id']}.json"
-                    self._write_playbook_file(body_path, pb)
-                    new_body_paths.append(body_path)
-                    existing_index.append(self._playbook_index_entry(pb))
-                    existing_titles.add(pb.get("title", ""))
-                    new_count += 1
-            if new_count:
+            with hold_directory_lock(self._playbooks_dir, timeout=30):
+                existing_index = self._read_playbook_index()
+                existing_titles = {e.get("title", "") for e in existing_index}
+                pinned_pb_ids = {playbook_id_key(p.get("id")) for p in self._export_playbooks()
+                                 if _pinning.is_pinned(p)}
+                index_path = self._playbooks_dir / "_index.json"
+                previous_index = index_path.read_bytes() if index_path.exists() else None
+                new_body_paths: list[Path] = []
                 try:
-                    self._write_playbook_index(existing_index)
+                    for incoming in knowledge["playbooks"]:
+                        if not isinstance(incoming, dict) or playbook_id_key(incoming.get("id")) in pinned_pb_ids:
+                            continue
+                        if incoming.get("title") in existing_titles:
+                            continue
+                        pb = _pinning.strip(dict(incoming))
+                        if not valid_playbook_id(pb.get("id")):
+                            pb["id"] = new_playbook_id(str(pb.get("title") or ""))
+                        pb = self._ensure_playbook_fields(pb)
+                        for attempt in range(16):
+                            try:
+                                # The shared writer owns exclusive creation and failure cleanup.
+                                self._write_playbook_and_index(pb, create=True)
+                                break
+                            except PlaybookIdExists:
+                                if attempt == 15:
+                                    raise
+                                pb["id"] = new_playbook_id(str(pb.get("title") or ""))
+                        new_body_paths.append(self._playbook_path(pb["id"]))
+                        existing_titles.add(pb.get("title", ""))
+                        new_count += 1
                 except Exception:
-                    for p in new_body_paths:
-                        try:
+                    if new_body_paths:
+                        # Restore the index before removing our completed inserts. If
+                        # restoration itself fails, leave the indexed bodies readable.
+                        if previous_index is not None:
+                            self._atomic_write_bytes(index_path, previous_index)
+                        else:
+                            index_path.unlink(missing_ok=True)
+                        for p in new_body_paths:
                             p.unlink(missing_ok=True)
-                        except OSError:
-                            pass
                     raise
             imported.append(f"playbooks(+{new_count})" if merge else f"playbooks({len(knowledge['playbooks'])})")
 
@@ -1247,6 +1589,10 @@ class ImportExportMixin:
             else:
                 store.replace_all(incoming_resolutions)
                 imported.append(f"conflict_resolutions({len(store.all_records())})")
+
+        # Older backups have no tombstones section; the store's own are left alone.
+        if isinstance(knowledge.get("tombstones"), list):
+            imported.append(self._import_tombstones(knowledge["tombstones"], merge=merge))
 
         # Environment (tools registry)
         environment = data.get("environment", {})
@@ -1271,7 +1617,7 @@ class ImportExportMixin:
         projects = data.get("projects", {})
         if projects:
             for pid, proj_data in projects.items():
-                proj_path = self._projects_dir / f"{pid}.json"
+                proj_path = confined_path(self._projects_dir, f"{pid}.json")
                 if merge and proj_path.exists():
                     existing = _read_json(proj_path)
                     merged, _, _ = self._merge_dict_preserving_existing(
@@ -1303,4 +1649,6 @@ class ImportExportMixin:
         }
         if version_chain_materialization is not None:
             result["version_chain_materialization"] = version_chain_materialization
+        if pinned_report is not None:
+            result["pinned"] = pinned_report
         return result

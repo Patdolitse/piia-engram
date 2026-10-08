@@ -15,20 +15,21 @@ src/piia_engram/
     core.py            # Core engine: knowledge CRUD, identity, link management
     retrieval.py       # RetrievalMixin — search, ranking, tier promotion
     context.py         # ContextMixin — cold-start context, ingestion helpers
-    reconcile.py       # ReconcileMixin — cross-tool memory/config sync
+    reconcile.py       # ReconcileMixin — import engine behind `engram import-memories` (never runs on its own)
     reports.py         # ReportsMixin — thin hub composing 4 sub-mixins
     mcp_server.py      # MCP tool/resource definitions (the AI-facing API)
     setup_wizard.py    # Interactive setup CLI + doctor diagnostics + instruction injection
     hooks/             # Claude Code lifecycle hooks (Stop/PreCompact/PostCompact/SessionStart)
     crypto.py          # AES-256-GCM encryption for sensitive profile fields
     telemetry.py       # Opt-in anonymous usage statistics (local log first; remote/feedback are separate opt-ins)
+    usage_ping.py      # Daily anonymous usage ping (on by default; DO_NOT_TRACK=1 or engram telemetry off turns it off)
 tests/                 # 3,000+ tests across all modules
 experiments/
     benchmarks/      # Retrieval/injection quality benchmarks
 ```
 
 Key design principles:
-- **100% local by default** — identity and knowledge tools are local; telemetry/feedback remain separate explicit opt-ins
+- **Local by default** — identity and knowledge tools are local; one anonymous usage ping a day is on by default (off with `DO_NOT_TRACK=1`); detailed telemetry/feedback remain separate explicit opt-ins
 - **User-owned data** — all knowledge stored as human-readable JSON files
 - **MCP-native** — every capability exposed as an MCP tool or resource
 - **Privacy by default** — trust boundaries, encryption at rest, safe profile filtering
@@ -78,7 +79,7 @@ python experiments/benchmarks/run_benchmarks.py
 - **Keep changes focused** — one concern per PR
 - **Readable over clever** — three similar lines beat a premature abstraction
 - **Test behavioral changes** — add or update tests when logic changes
-- **No external calls in core operations** — piia-engram must never make network requests in core identity, knowledge, search, review, or governance operations. Local telemetry logging makes no network requests; remote telemetry and feedback reports require separate explicit opt-ins and send metadata-only counts. `read_web_content` is optional and makes outbound HTTP only when explicitly invoked for a URL
+- **No external calls in core operations** — piia-engram must never make network requests in core identity, knowledge, search, review, or governance operations. Local telemetry logging makes no network requests; the daily usage ping lives only in `usage_ping.py`, runs in the background and must never carry memory content; remote telemetry and feedback reports require separate explicit opt-ins and send metadata-only counts. `read_web_content` is optional and makes outbound HTTP only when explicitly invoked for a URL
 - **Bilingual content** — user-facing strings should support both Chinese and English
 
 ## Security Guidelines

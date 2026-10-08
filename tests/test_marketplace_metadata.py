@@ -61,6 +61,32 @@ def test_marketplace_metadata_guard_requires_mcp_console_script(tmp_path):
     assert any("runtimeArguments must run piia-engram-mcp" in p for p in report["problems"])
 
 
+def test_marketplace_metadata_guard_rejects_a_startup_sync_description(tmp_path):
+    """ENGRAM_MCP_STARTUP_SYNC is kept for compatibility and does nothing; the
+    listing must not advertise a startup sync, and the default stays off."""
+    mod = _load()
+    _copy_minimal_repo(tmp_path)
+
+    server_path = tmp_path / ".mcp" / "server.json"
+    server = json.loads(server_path.read_text(encoding="utf-8"))
+    env = server["packages"][0]["environmentVariables"]
+    item = next(e for e in env if e["name"] == "ENGRAM_MCP_STARTUP_SYNC")
+    item["description"] = (
+        "Skip optional local startup reconciliation during validation; set to "
+        "background for local cross-tool sync."
+    )
+    item["default"] = "background"
+    server_path.write_text(json.dumps(server), encoding="utf-8")
+
+    report = mod.check(tmp_path)
+
+    assert report["ok"] is False
+    problems = " ".join(report["problems"])
+    assert "must default to off" in problems
+    assert "kept for compatibility with no effect" in problems
+    assert "must not describe a startup sync" in problems
+
+
 def _copy_minimal_repo(root: Path) -> None:
     files = [
         "pyproject.toml",

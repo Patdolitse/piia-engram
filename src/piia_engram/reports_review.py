@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import quality_eval as _quality_eval
+from . import review_boundary as _review_boundary
 from .storage import SkipWrite, _now_iso
 
 
@@ -529,7 +530,9 @@ function copyResult() {{
         out_path.write_text(html, encoding="utf-8")
         return out_path
 
-    def promote_knowledge(self, item_id: str, *, require_tier: str | None = None) -> dict:
+    def promote_knowledge(
+        self, item_id: str, *, require_tier: str | None = None, expected_version: int | None = None
+    ) -> dict:
         """Promote a staging item to verified tier.
 
         When ``require_tier`` is given, the tier is re-checked atomically inside
@@ -538,7 +541,12 @@ function copyResult() {{
         check-then-write race for callers that must only promote staging items
         (e.g. the Dock quality-action surface) — a concurrent change that moved
         the item out of staging can no longer be silently promoted.
+
+        ``expected_version`` (the version the Owner reviewed) is compared inside
+        the same locked mutator: another version is ``version_conflict``, zero writes.
         """
+        if _review_boundary.mcp_origin():
+            return dict(_review_boundary.refusal(item_id, action="promote"), id=item_id)
         item_type, item = self._find_item_by_id(item_id)
         if item is None or item_type not in {"lesson", "decision"}:
             return {"status": "not_found", "id": item_id}
@@ -552,14 +560,20 @@ function copyResult() {{
 
         ts = _now_iso()
         mismatch = {"hit": False}
+        stale: dict = {}
 
         def _promote(entry: dict) -> dict:
             if require_tier is not None and str(entry.get("tier") or "") != require_tier:
                 mismatch["hit"] = True
                 raise SkipWrite  # abort under the lock: true zero-write, no re-serialize
+            current = int(entry.get("version") or 1)
+            if expected_version is not None and current != expected_version:
+                stale["current"] = current
+                raise SkipWrite
             entry["tier"] = "verified"
             entry["promoted_at"] = ts
             entry["promotion_reason"] = "user_confirmed"
+            entry.pop("duplicate_candidate", None)  # the Owner decided: no longer a candidate
             return self._stamp_validated_entry(
                 entry,
                 item_type,
@@ -578,6 +592,10 @@ function copyResult() {{
         updated = box.get("updated")
         if mismatch["hit"]:
             return {"status": "tier_mismatch", "id": item_id}
+        if stale:
+            return {"status": "version_conflict", "error": "version_conflict", "id": item_id,
+                    "expected_version": expected_version, "current_version": stale["current"],
+                    "changed": False}
         if updated is not None:
             return {"status": "promoted", "id": item_id}
         return {"status": "not_found", "id": item_id}
@@ -592,6 +610,9 @@ function copyResult() {{
         Returns:
             Summary dict with promoted/archived counts and details.
         """
+        if _review_boundary.mcp_origin():
+            # applying review results is the Owner's local review, in every mode
+            return dict(_review_boundary.refusal(action="apply_review"), promoted=0, archived=0)
         items_to_archive: list[dict] = []
         items_to_promote: list[dict] = []
 
@@ -619,6 +640,9 @@ function copyResult() {{
                 result = self.promote_knowledge(item_id)
                 if result.get("status") == "promoted":
                     promoted += 1
+                else:
+                    # e.g. pinned_target, rejected_before, not_found: say why
+                    errors.append(f"promote {item_id}: {result.get('status') or 'not_promoted'}")
             except Exception as exc:
                 errors.append(f"promote {item_id}: {exc}")
 

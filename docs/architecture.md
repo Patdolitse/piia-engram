@@ -72,7 +72,7 @@ After the v3.14.1 refactor, the v3.16.0 reports split, and the v3.55.0 monolith 
 | [`import_export.py`](../src/piia_engram/import_export.py) | ~920 | `ImportExportMixin` — full-store `export_all` / `import_all`, metadata-only dry-run merge planning, same-key divergent knowledge conflict preview, explicit owner-confirmed version-chain materialization, and local backup migration semantics |
 | [`retrieval.py`](../src/piia_engram/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
 | [`search_index.py`](../src/piia_engram/search_index.py) | ~461 | Optional hybrid search — rebuildable SQLite index (FTS5 + optional `[vector]` semantic layer, RRF fusion) over the JSON store. JSON stays the single source of truth; enabled via `ENGRAM_SEARCH=hybrid`. See [hybrid-search.md](hybrid-search.md) |
-| [`context.py`](../src/piia_engram/context.py) | ~811 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` / `ingest_extraction` for LLM-driven extraction |
+| [`context.py`](../src/piia_engram/context.py) | ~811 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` for LLM-driven extraction |
 | [`reconcile.py`](../src/piia_engram/reconcile.py) | ~590 | `ReconcileMixin` — explicit or startup-controlled import from other AI tools: global startup keeps the compatible scan, while project closeout filters Claude memory by exact canonical project identity and confines config scanning to the project root |
 | [`reports.py`](../src/piia_engram/reports.py) | 20 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
 | [`reports_rarity.py`](../src/piia_engram/reports_rarity.py) | ~84 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
@@ -98,6 +98,7 @@ Session Markdown remains the human-readable local record. The digest sidecar is 
 | `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1500 each | All 58 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log first; remote send and weekly feedback are separate, independent opt-ins, count-only/metadata-only), payload validation, HMAC daily ID, preview/status CLI support |
+| [`usage_ping.py`](../src/piia_engram/usage_ping.py) | ~420 | Daily anonymous usage ping (on by default; DO_NOT_TRACK / ENGRAM_TELEMETRY=0 / engram telemetry off; off in CI and in containers) |
 | [`setup_wizard.py`](../src/piia_engram/setup_wizard.py) | ~3049 | `engram setup` wizard + CLI entry — interactive bilingual onboarding with privacy preferences, including the optional one-keystroke hybrid-search step |
 | [`doctor.py`](../src/piia_engram/doctor.py) | ~1078 | `engram doctor` — config integrity report + functional checks (split out of `setup_wizard.py`; helpers stay monkeypatchable via late `W.<name>` lookups) |
 | [`cli_commands.py`](../src/piia_engram/cli_commands.py) | ~2395 | CLI subcommands (sessions / review / telemetry / backup / dashboard / recall / …), split out of `setup_wizard.py` under the same late-binding contract |
@@ -187,7 +188,9 @@ AI:   calls MCP `add_lesson(summary="...", domain="python,testing")`
        └─▶ Engram.add_lesson()    [core.py]
              ├─▶ _read_entries(lessons.json)
              ├─▶ _bigram_similarity vs each existing lesson   [RetrievalMixin]
-             │     └─ if >= 0.55 → return status="duplicate", abort
+             │     ├─ same normalized text → return status="duplicate", abort
+             │     ├─ >= 0.95 → stored pending, duplicate_candidate for review
+             │     └─ >= 0.55 → stored, linked via related_ids
              ├─▶ _ensure_fields() — backfill id, timestamp, tier="verified"
              ├─▶ MAX_KNOWLEDGE_ENTRIES eviction (staging items first)
              ├─▶ _write_json — atomic via tempfile + rename + portalocker
@@ -264,7 +267,7 @@ Every `_write_json` writes to `<file>.tmp`, fsync's, then `os.replace`s. A `port
 | Tier-1 (default) | Why |
 |------------------|-----|
 | `get_user_context` | Cold-start identity + context |
-| `wrap_up_session` | Lightweight session-end save; reconciliation is explicit via `run_reconcile=True`, exact-project scoped when a project folder is present, and globally scoped only by explicit request |
+| `wrap_up_session` | Lightweight session-end save; it never imports other AI tools' memories (`run_reconcile=True` is accepted and imports nothing; use `engram import-memories`) |
 | `memory_store` | Unified write endpoint for lessons, decisions, and playbooks |
 | `add_lesson`, `add_decision`, `add_playbook` | Capture knowledge |
 | `search_knowledge`, `get_relevant_knowledge`, `get_recall` | Retrieve knowledge and one-call recall bundles |
@@ -280,7 +283,7 @@ Set `ENGRAM_TOOLS=all` to expose the full tool surface (review, health, link/unl
 - **stdio** (default) — one piia-engram process per AI tool, isolated FDs, fastest
 - **SSE** (`piia-engram serve --transport sse`) — shared HTTP/SSE instance; binds to `127.0.0.1` by default. Binding to `0.0.0.0` emits a stderr warning and requires `--token` (`secrets.compare_digest` check). `ENGRAM_CORS_ORIGINS` env var configures allowed origins.
 
-Startup reconciliation (`reconcile_memories()` + `reconcile_ai_configs()`) is backgrounded by default for MCP startup, so stdio client initialization is not blocked by local AI config scans. `ENGRAM_MCP_STARTUP_SYNC=eager` restores the old synchronous behavior, `ENGRAM_MCP_STARTUP_SYNC=off` skips the startup reconcile pass, and `ENGRAM_EPHEMERAL=1` forces the same skip for container/ephemeral clients. Stdio `auto_migrate()` remains synchronous because stale client config migration must complete before accepting requests. Reconcile passes use a dedicated process-local lock, while normal MCP writes use their own short-held lock plus atomic storage locks. A slow startup scan therefore cannot hold `wrap_up_session` or another normal write behind it.
+MCP startup does not read other AI tools' memory or config files and writes no memory content; neither do cold start, reads or session closeout. Importing them is the explicit `engram import-memories` command (preview first, then the review queue, with a receipt and an audit line). `ENGRAM_MCP_STARTUP_SYNC` is accepted for compatibility and has no effect. Stdio `auto_migrate()` remains synchronous and config-only: once per installed version it notes legacy client entries in `migration.log` and records an audit line; `ENGRAM_EPHEMERAL=1` skips it for container/ephemeral clients.
 
 ---
 

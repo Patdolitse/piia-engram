@@ -287,6 +287,7 @@ def test_dock_search_uses_shared_service_with_cli_policy(
         "filters": None,
         "project_folder": None,
         "allow_hybrid_index": False,
+        "include_pending": True,
     }
 
 

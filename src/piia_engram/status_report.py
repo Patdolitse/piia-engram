@@ -245,6 +245,14 @@ def _client_summary() -> dict[str, Any]:
             "style": "missing",
             "verified": bool(cfg.get("verified")),
         }
+        if cfg.get("register_via") == "claude_cli":
+            # Claude Code: the shared detection (user config, projects, old
+            # location); the entry is parsed only to find Engram and is not classified.
+            from . import claude_code_mcp
+
+            row["status"], row["style"] = claude_code_mcp.summary_status()
+            tools.append(row)
+            continue
         for raw_path in cfg.get("config_paths", []):
             path = Path(raw_path)
             if not path.is_file():
@@ -253,7 +261,9 @@ def _client_summary() -> dict[str, Any]:
             servers = config.get(server_key, {}) if isinstance(config, dict) else {}
             if not isinstance(servers, dict):
                 continue
-            entry = servers.get("engram") or servers.get("piia-engram")
+            from .claude_code_mcp import engram_entry_name
+
+            entry = servers.get(engram_entry_name(servers) or "engram")
             if not isinstance(entry, dict):
                 row.update({"status": "missing entry", "style": "missing"})
                 continue
@@ -325,12 +335,27 @@ def _resolve_mcp_entry_command() -> str:
     return "piia-engram-mcp"
 
 
-def build_status(*, probe: bool = True, root: Path | None = None) -> dict[str, Any]:
+def _external_memory_summary(root: Path) -> dict[str, Any]:
+    try:
+        from .memory_import import importable_summary
+
+        return importable_summary(root)
+    except Exception as exc:  # a status line must never break `engram status`
+        return {"enabled": None, "count": 0, "error": type(exc).__name__}
+
+
+def build_status(
+    *, probe: bool = True, root: Path | None = None, external_memories: bool = False,
+) -> dict[str, Any]:
     """Build a metadata-only status object. Never includes memory bodies.
 
     ``root`` lets a caller target a specific store (e.g. the Dock GUI server's own
     root) instead of the ambient ``ENGRAM_DIR``; defaults to the env-resolved root so
     existing callers are unchanged.
+
+    ``external_memories=True`` (``engram status``) adds a read-only count of
+    what ``engram import-memories`` would bring in from other AI tools. Nothing
+    is imported; the count reads those files only when that is allowed.
     """
     root = root if root is not None else _engram_root()
     status = {
@@ -350,6 +375,12 @@ def build_status(*, probe: bool = True, root: Path | None = None) -> dict[str, A
     }
     if probe:
         status["mcp_entry"] = _probe_mcp_entry()
+    if external_memories:
+        status["external_memories"] = _external_memory_summary(root)
+        if status["external_memories"].get("count"):
+            from .memory_import import importable_text
+
+            status["warnings"].append(importable_text(status["external_memories"]))
     if status["knowledge"]["staging"]:
         status["warnings"].append(
             f"{status['knowledge']['staging']} staging item(s) need review"
@@ -451,6 +482,15 @@ def render_status_text(status: dict[str, Any], *, redact_paths: bool = False) ->
             f"{telemetry.get('phase')}"
         ),
     ]
+    external = status.get("external_memories")
+    if external is not None:
+        if external.get("error"):
+            lines.append(f"  [!!] Other AI tools' memories: count failed ({external['error']})")
+        else:
+            from .memory_import import importable_text
+
+            external_mark = "--" if external.get("count") or not external.get("enabled") else "ok"
+            lines.append(f"  [{external_mark}] Other AI tools' memories: {importable_text(external)}")
     for item in clients.get("tools", [])[:6]:
         style = item.get("style") or "unknown"
         lines.append(f"       - {item.get('name')}: {item.get('status')} ({style})")

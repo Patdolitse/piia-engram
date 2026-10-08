@@ -65,12 +65,11 @@ class TestBrandedSaveAck:
         assert "brand q" in result and "brand c" in result
 
     def test_add_playbook_ack_branded(self, eng: Engram):
-        result = _run(mcp_server.add_playbook(title="brand pb", triggers="t1,t2", user_confirmed=True))
-        assert result.startswith("[Engram] ")
-        assert "Playbook 已记录" in result
-        assert "· tier=" in result
-        assert "· 可召回: " in result
-        assert "brand pb" in result
+        # An AI-written playbook is a pending proposal in every approval mode: the
+        # reply is the pending payload, as under strict.
+        result = json.loads(_run(mcp_server.add_playbook(title="brand pb", triggers="t1,t2", user_confirmed=True)))
+        assert result["status"] == "pending" and result["tier"] == "staging"
+        assert "engram review" in result["message"]
 
     # ---- dispatcher (memory_store) ----
 
@@ -103,9 +102,8 @@ class TestBrandedSaveAck:
             user_confirmed=True,
         ))
         assert result.startswith("[Engram] ")
-        assert "Playbook 已记录" in result
-        assert "· tier=" in result
-        assert "· 可召回: " in result
+        assert "Playbook 已进待审" in result and "engram review" in result
+        assert "ms pb" in result
 
 
 # ---------------------------------------------------------------------------

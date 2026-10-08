@@ -85,6 +85,10 @@ clashing with Playbook lifecycle `status`.
 | `review_knowledge(knowledge_id)` | `review_staging(action="review_item", knowledge_id=...)` |
 | `apply_review(review_text)` | `review_staging(action="apply_text", review_text=...)` |
 
+Since 4.22.0, applying a batch (`dry_run=false`) and `apply_text` are local only:
+over MCP they answer `local_review_only`; approve, reject or archive pending items
+with `engram review`.
+
 ### Knowledge relations (4 → 1)
 
 | Old call | New call |
@@ -133,8 +137,8 @@ parameters are given, `thread_seed_id` wins.
 |---|---|
 | `export_engram(...)` | unchanged (default `format="native"`) |
 | `export_engram_to_openclaw(output_dir)` | `export_engram(format="openclaw", output_dir=...)` |
-| `import_engram(input_path, merge, dry_run)` | unchanged (default `format="native"`) |
-| `import_engram_from_openclaw(soul_path, memory_path, user_path)` | `import_engram(format="openclaw", soul_path=..., memory_path=..., user_path=...)` |
+| `import_engram(input_path, merge, dry_run)` | same parameters (default `format="native"`); over MCP it only previews now (`dry_run=true`): apply with the local `engram import` |
+| `import_engram_from_openclaw(soul_path, memory_path, user_path)` | `import_engram(format="openclaw", soul_path=..., memory_path=..., user_path=...)`; over MCP it only previews now (`dry_run=true`): import with the local `engram import --format openclaw` |
 
 ### Caller trust (2 → 1)
 

@@ -452,11 +452,17 @@ async def export_engram(
     try:
         # Strict: an agent-triggered export never carries pending proposals;
         # the Owner's full backup is a local export (plan V4 amendment A5).
-        path = S._get_engram().export_all(
+        eng = S._get_engram()
+        eng.last_export_summary = None
+        path = eng.export_all(
             output_path,
-            exclude_pending=S._gov_rt._strict_mode.approval_strict(S._get_engram().root),
+            exclude_pending=S._gov_rt._strict_mode.approval_strict(eng.root),
         )
-        return f"导出成功: {path}"
+        summary = getattr(eng, "last_export_summary", None) or {}
+        skipped = (summary.get("skipped") or {}).get("tombstones", 0)
+        note = (f"（跳过格式不对的拒绝记录 {skipped} 条 / skipped {skipped} malformed rejection record(s)）"
+                if skipped else "")
+        return f"导出成功: {path}{note}"
     except Exception as e:
         return f"导出失败: {S._safe_err(e)}"
 
@@ -471,9 +477,15 @@ async def import_engram(
     memory_path: str = "",
     user_path: str = "",
 ) -> str:
-    """导入 Engram 数据：从备份文件或 OpenClaw 兼容文件。 / Import Engram data: from a backup file, or from OpenClaw-compatible files.
+    """预览 Engram 数据导入：备份文件或 OpenClaw 兼容文件（经 MCP 只能预览）。 / Preview an Engram data import: a backup file or OpenClaw-compatible files (preview only over MCP).
 
-    Owner/admin surface: imports or overwrites local store data and is refused for non-owner callers when governance is enabled.
+    经 MCP 只返回预览（dry_run=true）；真正写入只能由主人在本地执行 `engram import <backup.json> --apply --yes`
+    （覆盖模式加 --overwrite）。不带 dry_run=true 的请求返回 local_only，零写入。
+    Over MCP this only previews (dry_run=true). Applying an import is a local Owner command:
+    `engram import <backup.json> --apply --yes` (add --overwrite for replace). A request without
+    dry_run=true answers local_only and writes nothing.
+
+    Owner/admin surface: refused for non-owner callers when governance is enabled.
 
     用途：format="native"（默认）从 export_engram 生成的备份恢复或跨机迁移；
     format="openclaw" 从 SOUL.md / MEMORY.md / USER.md 迁移进 Engram（只提供
@@ -482,13 +494,13 @@ async def import_engram(
     export_engram backup; format="openclaw" imports SOUL.md / MEMORY.md /
     USER.md files (provide only the paths that exist).
 
-    注意：dry_run=True 只返回元数据预览，不写入数据；merge=False 会覆盖现有数据，使用前要确认风险。
-    Note: dry_run=True returns a metadata-only preview without writing; merge=False overwrites existing data, so confirm the risk first.
+    注意：只有 dry_run=True 会执行（元数据预览，不写入）；merge=False 预览的是覆盖模式下的计划。
+    Note: only dry_run=True runs (a metadata-only preview, nothing written); merge=False previews the replace plan.
 
     Args:
         input_path: 备份文件路径（format=native 必填）。 / Backup file path (required for format=native).
-        merge: True 合并模式（保留已有数据并追加），False 覆盖模式（native）。 / Merge vs overwrite mode (native).
-        dry_run: True 仅预览导入计划，不修改本地数据（native）。 / Preview the import plan without mutating (native).
+        merge: 预览合并模式（True）或覆盖模式（False）的计划（native）。 / Preview the merge (True) or replace (False) plan (native).
+        dry_run: 必须为 True：经 MCP 只能预览；否则返回 local_only 并给出本地命令。 / Must be true: MCP only previews; otherwise the reply is local_only with the local command.
         format: native（默认）| openclaw。
         soul_path: SOUL.md 文件路径（format=openclaw，可选）。 / Path to SOUL.md (openclaw, optional).
         memory_path: MEMORY.md 文件路径（format=openclaw，可选）。 / Path to MEMORY.md (openclaw, optional).
@@ -501,9 +513,22 @@ async def import_engram(
         return refusal
     format = format.strip().lower()
     if format == "openclaw":
+        for raw in (soul_path, memory_path, user_path):
+            err = S._validate_path(raw, allow_empty=True)
+            if err:
+                return S._json({"error": err})
+        if not dry_run:
+            from piia_engram.compat import openclaw_command
+
+            return S._json({
+                "error": "local_only",
+                "format": "openclaw",
+                "changed": False,
+                "hint": f"run `{openclaw_command(soul_path, memory_path, user_path)}` locally; "
+                        "over MCP, dry_run=true previews what the files hold",
+            })
         try:
-            result = S.import_from_openclaw(S._get_engram(), soul_path, memory_path, user_path)
-            return S._json(result)
+            return S._json(_openclaw_preview(soul_path, memory_path, user_path))
         except Exception as e:
             return f"从 OpenClaw 兼容格式导入失败: {S._safe_err(e)}"
     if format != "native":
@@ -518,8 +543,27 @@ async def import_engram(
     err = S._validate_path(input_path)
     if err:
         return S._json({"error": err})
-    result = S._get_engram().import_all(input_path, merge=merge, dry_run=dry_run)
+    if not dry_run:
+        # Applying an import is a local command only; MCP previews.
+        command = "engram import <path> --apply --yes" + ("" if merge else " --overwrite")
+        return S._json({
+            "error": "local_only",
+            "format": "native",
+            "changed": False,
+            "hint": f"run `{command}` locally; over MCP, dry_run=true previews the import",
+        })
+    result = S._locked_engram_call(S._get_engram().import_all, input_path, merge=merge, dry_run=True)
     return S._json(result)
+
+
+def _openclaw_preview(soul_path: str, memory_path: str, user_path: str) -> dict:
+    """Metadata-only look at OpenClaw files (shared with ``engram import --format openclaw``)."""
+    from piia_engram.compat import openclaw_command, preview_openclaw
+
+    preview = preview_openclaw(S._get_engram(), soul_path, memory_path, user_path)
+    if preview.get("status") == "preview":
+        preview["note"] = (preview["note"] + f"; apply locally: {openclaw_command(soul_path, memory_path, user_path)}")
+    return preview
 
 
 @S.mcp.tool()
@@ -562,9 +606,13 @@ async def get_audit_log(limit: int = 50) -> str:
         if not line:
             continue
         try:
-            entries.append(json.loads(line))
+            entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(entry, dict):
+            # The Owner's reject notes from `engram review` stay in the local log only.
+            entry.pop("reject_reasons", None)
+        entries.append(entry)
         if len(entries) >= limit:
             break
 
@@ -617,8 +665,9 @@ async def wrap_up_session(
         project_title: 项目名称（可选，仅在首次保存快照时需要）。 / Project title (optional; mainly needed when first saving a snapshot).
         tech_stack: 技术栈（可选，逗号分隔）。 / Tech stack (optional, comma-separated).
         known_issues: 已知问题（可选，逗号分隔）。 / Known issues (optional, comma-separated).
+        run_reconcile: 兼容保留，不再导入任何内容；其它 AI 工具的记忆只能由用户在终端运行 `engram import-memories` 导入。 / Kept for compatibility and imports nothing; memories in other AI tools are imported only by the user running `engram import-memories` in a terminal.
         idempotency_key: 可选幂等键；重试同一键只返回既有 operation 状态，不重复写入。 / Optional idempotency key; retrying the same key returns the existing operation status without duplicate writes.
-        reconcile_scope: "project"（有项目路径时默认精确项目隔离）或显式 "global"。 / "project" for exact project isolation when a project path is present, or explicit "global".
+        reconcile_scope: 兼容保留（只回显在 maintenance.reconcile_scope）。 / Kept for compatibility (echoed in maintenance.reconcile_scope only).
     """
     # a4: write-path governance gate — wrap_up_session fans out into many writes
     # (extract insights/playbook, save snapshot, daily log, evaluate_tiers), so
@@ -757,12 +806,21 @@ async def wrap_up_session(
                 project_folder=project_folder,
             )
             results["insights"] = insights
+            skipped_by_reason: dict = {}
             if isinstance(insights, dict):
+                # Skips sit next to the saves, so "snapshot saved" is never read as
+                # "knowledge saved".
                 insight_counts = {
                     "saved_lessons": _count_value(insights.get("saved_lessons")),
                     "saved_decisions": _count_value(insights.get("saved_decisions")),
+                    "duplicates": _count_value(insights.get("duplicates")),
+                    "skipped": _count_value(insights.get("skipped")),
                 }
-            maintenance["extract_session_insights"] = {"status": "ok", **insight_counts}
+                if isinstance(insights.get("skipped_by_reason"), dict):
+                    skipped_by_reason = dict(insights["skipped_by_reason"])
+            maintenance["extract_session_insights"] = {
+                "status": "ok", **insight_counts, "skipped_by_reason": skipped_by_reason,
+            }
         except Exception as exc:
             S.logger.warning("extract_session_insights failed: %s", exc)
             stage_status = "error"
@@ -777,7 +835,7 @@ async def wrap_up_session(
                 stage_start,
                 error=stage_error,
                 counts=insight_counts,
-                committed=insight_counts,
+                committed={k: v for k, v in insight_counts.items() if k.startswith("saved_")},
             )
 
     # Step 1.5: Auto-extract Playbook if session looks like a procedure
@@ -798,7 +856,16 @@ async def wrap_up_session(
                 source_tool=source_tool,
                 project_folder=project_folder,
             )
-        if playbook:
+        if playbook and playbook.get("status") == "queue_full":
+            results["playbook_draft"] = {
+                "status": "queue_full",
+                "message": "The pending playbook queue is full; no draft was saved. "
+                           "The Owner reviews the queue with engram review.",
+            }
+            maintenance["extract_playbook_from_session"] = {
+                "status": "ok", "draft": False, "reason": "queue_full",
+            }
+        elif playbook:
             pb_confidence = playbook.get("confidence", "medium")
             _zh = S._user_lang() == "zh"
             if pb_confidence == "high":
@@ -977,130 +1044,31 @@ async def wrap_up_session(
             committed={"daily_log": daily_stage_status == "ok"},
         )
 
-    # Step 3: Auto-reconcile external AI memories and configs
-    _reconcile_imported = 0
+    # Step 3: external AI memories and configs are never imported here. Only
+    # the Owner's explicit `engram import-memories` command reads them;
+    # run_reconcile=True is accepted for compatibility and points there.
+    skip_reason = "explicit_import_only" if run_reconcile else "default_session_end_budget"
     if run_reconcile:
-        stage_start = _stage_start("reconcile_memories")
-        reconcile_stage_status = "ok"
-        reconcile_stage_error = ""
-        try:
-            reconcile_kwargs = (
-                {"project_folder": project_folder}
-                if effective_reconcile_scope == "project"
-                else {}
-            )
-            reconcile = S._locked_reconcile_call(
-                S._get_engram().reconcile_memories,
-                **reconcile_kwargs,
-            )
-            imported = int(reconcile.get("imported", 0) or 0)
-            maintenance["reconcile_memories"] = {
-                "status": "ok",
-                "imported": imported,
-                "scope": reconcile.get("scope", {}),
-            }
-            if imported > 0:
-                results["memory_sync"] = reconcile
-                _reconcile_imported += imported
-        except Exception as exc:
-            reconcile_stage_status = "error"
-            reconcile_stage_error = S._safe_err(exc)
-            S.logger.warning("reconcile_memories failed: %s", exc)
-            maintenance["reconcile_memories"] = {
-                "status": "error",
-                "error": reconcile_stage_error,
-            }
-        finally:
-            timing["reconcile_memories_ms"] = _elapsed_ms(stage_start)
-            _stage_finish(
-                "reconcile_memories",
-                reconcile_stage_status,
-                stage_start,
-                error=reconcile_stage_error,
-                counts={"imported": _reconcile_imported},
-            )
-
-        stage_start = _stage_start("reconcile_ai_configs")
-        cfg_stage_status = "ok"
-        cfg_stage_error = ""
-        try:
-            config_kwargs = (
-                {
-                    "search_roots": [project_folder],
-                    "project_folder": project_folder,
-                }
-                if effective_reconcile_scope == "project"
-                else {}
-            )
-            cfg_sync = S._locked_reconcile_call(
-                S._get_engram().reconcile_ai_configs,
-                **config_kwargs,
-            )
-            imported = int(cfg_sync.get("imported", 0) or 0)
-            config_budget_exhausted = bool(cfg_sync.get("budget_exhausted"))
-            if config_budget_exhausted:
-                cfg_stage_status = "partial"
-                cfg_stage_reason = "import_budget_exhausted"
-            else:
-                cfg_stage_reason = ""
-            maintenance["reconcile_ai_configs"] = {
-                "status": "partial" if config_budget_exhausted else "ok",
-                "imported": imported,
-                "scanned_files": int(cfg_sync.get("scanned_files", 0) or 0),
-                "budget_exhausted": config_budget_exhausted,
-                "scope": cfg_sync.get("scope", {}),
-            }
-            if imported > 0:
-                results["config_sync"] = cfg_sync
-                _reconcile_imported += imported
-        except Exception as exc:
-            cfg_stage_status = "error"
-            cfg_stage_reason = ""
-            cfg_stage_error = S._safe_err(exc)
-            S.logger.warning("reconcile_ai_configs failed: %s", exc)
-            maintenance["reconcile_ai_configs"] = {
-                "status": "error",
-                "error": cfg_stage_error,
-            }
-        finally:
-            timing["reconcile_ai_configs_ms"] = _elapsed_ms(stage_start)
-            _stage_finish(
-                "reconcile_ai_configs",
-                cfg_stage_status,
-                stage_start,
-                reason=cfg_stage_reason,
-                error=cfg_stage_error,
-            )
-    else:
-        maintenance["reconcile_memories"] = {
-            "status": "skipped",
-            "reason": "default_session_end_budget",
+        results["memory_import"] = {
+            "status": "explicit_only",
+            "command": "engram import-memories",
+            "note": (
+                "Memories in other AI tools are imported only when the user runs "
+                "`engram import-memories` in a terminal (preview first, then the "
+                "review queue)."
+            ),
         }
-        maintenance["reconcile_ai_configs"] = {
-            "status": "skipped",
-            "reason": "default_session_end_budget",
-        }
-        timing["reconcile_memories_ms"] = 0
-        timing["reconcile_ai_configs_ms"] = 0
+    for stage in ("reconcile_memories", "reconcile_ai_configs"):
+        maintenance[stage] = {"status": "skipped", "reason": skip_reason}
+        timing[f"{stage}_ms"] = 0
         _mark_wrap_up_stage(
             S._get_engram().root,
             operation_id,
-            "reconcile_memories",
+            stage,
             "skipped",
             timing_ms=0,
-            reason="default_session_end_budget",
+            reason=skip_reason,
         )
-        _mark_wrap_up_stage(
-            S._get_engram().root,
-            operation_id,
-            "reconcile_ai_configs",
-            "skipped",
-            timing_ms=0,
-            reason="default_session_end_budget",
-        )
-
-    if _reconcile_imported > 0:
-        S._beta("reconcile", imported=_reconcile_imported)
 
     # Step 4: Evaluate staging items and surface promotion suggestions.
     if closeout_mode == "fast" or _budget_exhausted(

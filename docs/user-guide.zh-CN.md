@@ -55,10 +55,9 @@ MCP 连接前请你一键确认**。每次外部写入都先备份，选"否"则
 首个价值、日常召回、会话收尾。进阶工具集（审查队列、导入导出、治理、迁移、
 Playbook 管理）默认关闭，需要时用 `ENGRAM_TOOLS=all` 开启。
 
-连接一次之后，**自动引导（auto-bootstrap）** 会处理剩下的事：你的 AI 工具第一次
-调 Engram（`get_user_context` 或 `get_resume_brief`）时，会**只读**扫描你已有的
-规则文件（`CLAUDE.md`、`AGENTS.md`、`.cursorrules` 等），自动导入你的偏好和项目
-规则——不需要单独的导入步骤。
+Engram 不会自己读取其它 AI 工具的文件。想把它们已有的记忆（记忆文件、`CLAUDE.md`、
+`AGENTS.md`、`.cursorrules` 等）带进来，运行 `engram import-memories`：先列出条目，
+确认后写入待审区（用 `engram review` 审核）。
 
 - 按工具的安装说明：[Claude Code](integrations/claude-code.md) ·
   [Codex](integrations/codex.md) · [Cursor](integrations/cursor.md) ·
@@ -98,9 +97,8 @@ Engram 的价值出现在你*第二次*跟 AI 说话时——它已经知道你�
    上次活动、下一步动作，以及一条信任提示。
 3. AI 先读这段交接，再决定是否需要让你重复上下文。
 
-`wrap_up_session` 默认只做轻量收尾，不执行完整 reconcile。只有 Owner 明确同意时
-才使用 `run_reconcile=True`；传入项目目录后默认按 canonical project identity
-精确隔离，只有显式设置 `reconcile_scope="global"` 才执行全局维护扫描。
+`wrap_up_session` 默认只做轻量收尾，不执行完整 reconcile。`run_reconcile=True`
+仍被接受，但不再导入任何内容；其它 AI 工具的记忆只能通过 `engram import-memories` 导入。
 
 三档恢复，由快到慢：
 
@@ -136,9 +134,94 @@ staged 条目始终在你掌控之中：
 
 - `review_staging(action="list")`——查看待审内容（冷启动 `get_resume_brief` 也会带出
   待审数量，含高风险项）。
-- 在审查界面里批准、编辑、归档或拒绝。
+- 决定待审条目（批准、拒绝、归档、恢复）由你在本地 `engram review` 中完成，任何审批模式都一样。
+  AI 经 MCP 只能列出和预览（`review_staging` 且 `dry_run=true`），不能决定：落盘的批量审核、
+  `apply_text`、改待审条目的 tier 或 status、归档或确认它、批准/拒绝/删除/恢复待审 playbook，
+  以及 `onboard_accept`，都返回 `local_review_only`，不写入任何内容（onboard 候选请在本地用
+  `engram onboard-accept` 接受）。
+- 读取知识只累加访问次数，不刷新 `last_reviewed`；它只由你的确认和复习操作更新，
+  因此 `get_stale_knowledge` 仍会列出你还没复习的条目。
+- 在终端里运行 `engram review interactive`（或 `engram review -i`），逐条显示待审
+  提案（类型、内容、风险、来源、可能的重复及差异、取代关系），输入一个字母加回车：
+  `a` 批准、`r` 拒绝（可写理由，只记在回执里，经 MCP 的 `get_audit_log` 读不到）、`s` 取代一条已批准条目（输入其 id）、`k` 跳过、
+  `v` 查看全文、`q` 结束。确认汇总时输入 `y` 才写入；`n`、输入结束或 Ctrl+C 都不写入。
+  它与 `engram review apply` 走同一条应用路径，回执相同。没有终端时改用
+  `engram review export --out <目录>` 和 `engram review apply <marks.json>`。
+- 导出会生成 `review.md`（每条提案一张卡片，含版本号）、`ids.json`（id 列表）和
+  `marks-template.json`（每条提案一项，填好后另存为 `marks.json`）：
+  `{"id": "...", "mark": "approve", "expected_version": 2}`。`mark` 可取 `approve`、
+  `reject`、`edit-type:<类型>`、`supersede:<id>`（批准它，作为已批准条目 `<id>` 的替代，
+  须同种类、同作用域）、`retire`、`restore` 或 `skip`（保持待审）。可选字段：拒绝时的
+  `reason`（你的备注，只记在本次回执里，不写入拒绝记录）和 `expected_version`（只对
+  approve、reject、supersede 生效；条目在此之后被改动则跳过）。同一个 id 只能有 approve /
+  reject / supersede / skip 中的一个，一次运行里同一条目只能被取代一次（否则文件在写入任何
+  内容之前就会被拒绝）。执行顺序：普通的批准与拒绝 → 带取代关系的 mark → edit-type →
+  retire / restore。因此可以在一次运行里同时批准某条目和取代它的提案；你拒绝的取代目标只让
+  指向它的那一条失败。取代链请按从旧到新的顺序排列；如果某条的取代目标在同一次运行里被批准，
+  它也会自动排在目标之后执行（交互审核依赖这一点）。取代的"同类型"检查按本次 edit-type 执行后两条的
+  `type:` 标签判断：同一文件里把提案的类型改成与目标相同可以成功，改成别的类型会被拒绝。已归档的
+  playbook，或本次被取代而归档的 playbook，其 edit-type 会被跳过（记为跳过，不算失败），所以检查按它
+  现有的标签判断。检查按计划中的类型进行：如果决策或经验的 edit-type 随后失败，同一次运行里已经完成的
+  取代不会回滚。每条 edit-type 的回执项记录原标签（`from`，原本没有则为 null）和新标签（`to`）。演练按同样的顺序模拟，显示的就是实际
+  执行的结果；回执的每一项注明所在阶段，并按执行顺序列出 id。文件里所有 mark 都失败时，
+  `engram review apply` 以非零码退出。
+- AI 经 MCP 写入的 playbook（`add_playbook`、`kind="playbook"` 的 `memory_store`、从会话
+  起草的手册）在任何审批模式下都是提案：进入待审区，等你用 `engram review` 批准，批准前
+  不进入自动召回。AI 对已批准手册的改写（经 `manage_playbook` update 或 `update_knowledge`
+  改步骤、标题、触发词等）也是提案：在你批准新版本之前，已批准的版本照常可用、不被改动。待审手册也不能被执行：`playbook_execution` 返回 `not_approved`，`get_playbooks`
+  列出时标上 `pending_untrusted`。你在本地添加的手册（例如 `engram playbook install`）不受影响。
+- AI 新增的决策如果与一条已审核决策问题相同、选择不同，在任何审批模式下都是取代它的提案
+  （`pending_supersedes`）：你批准新决策之前，已审核的那条照常使用。你在本地添加的决策仍会立即
+  建立取代关系。
+- Playbook 的 id 由 Engram 生成：AI 随新 playbook 发来的 id 会被忽略，新增也不会占用已有的 id。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
+
+AI 拿到什么，各个入口规则一致：
+
+- AI 不用开口就拿到的上下文（冷启动、接续简报、会话开始钩子、`get_recall`、
+  `get_relevant_knowledge`）只含已审核且当前有效的条目；待审、被新版本取代、
+  已归档的条目都不出现。召回只认明确标为已审核的条目：未知的 tier、缺少 status、
+  被拒绝或已弃用的标记，都会让条目被排除。
+- `search_knowledge` 把待审条目单独列在 `pending` 分组里（每条标
+  `pending_untrusted`），不和结果混排；被取代的条目默认不返回，传
+  `include_superseded=true` 时单独分组返回。`{"tier": "archived"}` 过滤返回空；
+  `engram dock-search` 每类合计最多显示 `--limit` 条。
+- 按 id 读取（`get_knowledge_history`、`explore_knowledge`）仍会返回被取代的条目，
+  并注明取代它的条目（`superseded_by`）。
+- 内容超出 token 预算时，返回里会说明省略了什么（`omitted`：条数、id、段名），
+  文本形态的上下文末尾加一行，例如 `已省略 3 项（预算）：lessons, decisions`（冷启动）或
+  `Omitted 3 items (budget): lessons, decisions`（接续简报与钩子）。
+  `engram preview` 会显示被裁掉条目的摘要。
+
+### 钉住必须保留的条目
+
+`engram pin <id>` 钉住一条已审核的 lesson、decision 或 playbook（id 有歧义时用
+`--kind` 指定类型；`engram pin --list` 列出已钉住的条目；`engram unpin <id>` 解钉）。
+钉住的意思是"保留并优先展示"，不是"永远正确"：
+
+- 只有本地命令能钉住或解钉，且只能钉住已审核、当前有效的条目（待审、已归档、
+  已被取代的会被拒绝并说明原因）。钉住会记入审计日志，条目版本号不变。
+- 钉住的条目不受生命周期归档、容量规则和导入影响（本地导入与经 MCP 导入都一样）：合并
+  导入跳过它，替换导入把它留在原位，备份里指向它的 supersedes 关系会被丢弃，这些都在预览和
+  结果里列出；会批准取代它的提案的导入被拒绝（`pinned_target`）。备份导入永远不会带入钉住状态。
+- 经 MCP 不能修改、归档、合并或删除钉住的条目：工具返回 `pinned_entry`，不写入任何内容。
+  AI 仍可用 `add_lesson` / `add_decision` / `add_playbook` 加 `supersedes=<id>`
+  （以及 `supersedes_expected_version`）提交修订提案；无论哪种审批模式，这类提案都
+  等待你的本地审核（`engram review apply` / `engram review interactive`）。AI 经 MCP
+  无论走哪条路径都不能批准它：批量批准、审查页的 promote 列表、改 tier 返回
+  `local_review_only`，导入返回 `pinned_target`，`onboard_accept` 也返回 `local_review_only`；都不写入。
+  审核卡会提示目标是钉住条目。提案只能取代同一作用域内的有效条目：其它项目的条目、项目提案
+  取代全局条目（或反过来）、已归档的条目都会被拒绝，返回 `supersedes_target_not_applicable`
+  与 `reason`（`different_project`、`scope_mismatch`、`archived`）。你批准后旧条目被取代并自动解钉（记入审计）。
+  你自己归档它也会解钉。
+- 合并另外两条条目（`merge_knowledge`）时，钉住条目完全不变，包括 `related_ids`。
+  它与被合并掉那条的链接保留，被合并掉的条目仍能按 id 读取。经 MCP 合并时，所有第三条目
+  都不变，不论是否钉住；只修改你提供了版本号的两个操作数。本地本人合并仍会将未钉住条目的
+  链接改为指向保留下来的条目。
+- AI 拿到的上下文里，钉住的条目在各自分组（lessons、decisions、playbooks）内排在最前，
+  条数上限或预算裁剪时先舍弃未钉住的条目。`search_knowledge` 里钉住只在相关度相同时
+  决定先后，不会出现在无关的搜索结果里。`engram preview` 会标出钉住的条目。
 
 每条记录都带生命周期元数据（`memory_state`、`approval_status`、
 `risk_level`/`risk_flags`、`provenance`、`approval_required`），状态始终可见。
@@ -155,13 +238,11 @@ staged 条目始终在你掌控之中：
 目录）里，以纯 JSON/Markdown 形式：身份、知识、Playbook、项目快照、近期上下文、
 每日日志。
 
-**默认绝不发生的事：**
+**默认行为：**
 
 - 没有托管账号、不强制订阅、默认不做云同步。
-- 遥测**默认关闭**。开启本地遥测时它先写本地日志；任何远程发送
-  （`engram telemetry remote on`）和每周反馈报告（`engram telemetry feedback on`）
-  都是**单独的显式 opt-in**。知识内容、提示词、AI 回复、文件路径、邮箱、IP 地址
-  从不被采集。
+- Engram 每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期）。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`；CI 和容器环境中自动不发。
+- 详细使用统计默认关闭，开启后先写本地日志；远程发送（`engram telemetry remote on`）和每周反馈报告（`engram telemetry feedback on`）都是**单独的显式 opt-in**。知识内容、提示词、AI 回复、文件路径、邮箱、IP 地址从不被采集。
 - 审计日志**默认开启**；它把读写操作记录到本地 `~/.engram/audit.log`（纯 JSON-lines，绝不外传）。可用 `ENGRAM_AUDIT=0` 关闭。
 - 按调用方治理层**默认关闭**；用 `ENGRAM_GOVERNANCE=1` 开启。当同一份记忆同时接给多个 AI 工具、自动化流程或远程桥接时建议开启；`engram status` 和 `engram doctor` 会显示它当前是否启用。
 - `engram setup` 不会在未经你确认（或显式 `--apply-external-config` 标志）的
@@ -177,7 +258,12 @@ staged 条目始终在你掌控之中：
   开启可选的字段级加密。
 
 **迁移或备份数据：** 复制整个 `~/.engram/` 文件夹即可。那就是你全部的记忆——
-没有云端副本需要对账。
+没有云端副本需要对账。JSON 备份（`export_engram`）用本地命令 `engram import <backup.json>`
+导回（默认只预览；`--apply --yes` 才写入，`--overwrite` 为替换）。经 MCP，`import_engram`
+只能预览导入（`dry_run=true`）；要求真正导入时返回 `local_only`，不写入任何内容。OpenClaw
+文件用 `engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
+导入（默认只预览；`--apply --yes` 才写入）：经验进入待审区并留下回执，USER.md / SOUL.md
+合并进身份资料、偏好和质量标准。
 
 **什么不该存。** Engram 是个人 AI 上下文，不是密钥管理器。**不要**存密码、
 API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经验需要敏感上下文，
@@ -195,7 +281,7 @@ API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经
 - **让 AI 记住：** *"记住这个……"* 或 *"把这条存成经验。"*
 - **让 AI 回忆：** *"我之前关于……怎么说的？"* 或 *"按我一贯的风格来。"*
 - **定期审查 staging 队列**（比如每周一次）用 `review_staging(action="list")`——尤其
-  当你开了 `ENGRAM_APPROVAL=strict`。
+  当你开了 `ENGRAM_APPROVAL=strict`；在终端里用 `engram review interactive` 逐条审核。
 - **检查健康**用 `engram doctor`（身份完整度、知识量、过期项、近重复、决策冲突、
   编码健康、健康分）。它是本地诊断——分享前先审。
 - **保持整洁：** 知识按类型衰减（偏好约 90 天、调试技巧约 15 天），每类都有
@@ -210,7 +296,8 @@ API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经
 ## 7. 常见问题
 
 **Engram 会上传我的数据吗？**
-不会。一切都在 `~/.engram/`。遥测默认关闭，即便开启也只在单独 opt-in 后发送
+不会。你的记忆都在 `~/.engram/`。Engram 每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），
+可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭。详细使用统计默认关闭，即便开启也只在单独 opt-in 后发送
 匿名计数——绝不发你的内容。
 
 **我换了 AI 工具，记忆还在吗？**
@@ -255,4 +342,4 @@ AI 可能只把它存进了自己的私有记忆，没存进 Engram。用 `searc
 
 `wrap_up_session` 是轻量的会话结束保存。默认不会运行完整 reconcile，也不会默认执行外部 AI 记忆或配置的 full reconciliation。
 
-需要维护型同步时，必须由用户明确同意，并显式使用 `run_reconcile=True`。这一路径适合 owner-approved maintenance reconciliation；普通会话收尾继续保持 lightweight session-end save。
+`run_reconcile=True` 仍被接受，但不再导入任何内容。需要导入其它 AI 工具的记忆时，由用户在终端运行 `engram import-memories`（先预览，确认后进入待审区）；普通会话收尾继续保持 lightweight session-end save。

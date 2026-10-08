@@ -70,6 +70,36 @@ Ordinary agent-facing writes strip these fields. Existing owner/internal paths
 such as review/promote/confirm/onboard/anchor checking may still write them
 when their own gates allow it.
 
+### Write origin and MCP client (stamped by Engram)
+
+Every new lesson, decision and playbook is stamped once, when it is written.
+Callers cannot set these fields: a value sent in a payload is replaced.
+
+| Field | Meaning |
+|-------|---------|
+| `origin` | How the entry was written: `mcp` (an AI client over MCP), `cli` (the local `engram` command), `import` (an import), `local` (another program using the library). |
+| `client_name` / `client_version` | MCP only: the `clientInfo.name` / `clientInfo.version` the client sent at connection time, as sent (control characters removed, at most 128 characters). |
+| `client` | MCP only: a normalized label for the client (`claude_code`, `claude_desktop`, `codex`, `cursor`, `windsurf`, `vscode`, `cline`, `zed`, `gemini`, `opencode`, `other`, or `unknown` when nothing was sent). |
+
+The client fields are **self-reported by the client**. Any MCP client can send
+any name, so they are a label for the person reviewing the entry, not a trust or
+authorization signal: risk level, tier, the approval gate and recall do not read
+them. When an MCP write gives no `source_tool`, Engram fills it with the `client`
+label; that value only affects labeling and display, never the review tier, risk
+or recall eligibility. The client is read from the request that makes the write;
+a write outside any request records `unknown`.
+
+`origin` and the client fields do not change after the write, and
+`update_knowledge` refuses an update that names `provenance` or `source_tool`
+(`provenance_immutable`). Restoring from your own backup keeps the provenance
+stored in the file as it is, except that client fields are cleaned and capped,
+the `client` label is derived again from `client_name`, and only `mcp` rows keep
+client fields; a row without an origin is marked `import`.
+
+Reserved: `observed_at` and `effective_from` are kept for a later "when was this
+observed / since when does it hold" contract. Engram does not read them yet, and
+values sent by a caller are dropped.
+
 ### Type / safety rules
 
 - `source_agent`, `run_id` are short identifiers: trimmed, capped at 120 chars,

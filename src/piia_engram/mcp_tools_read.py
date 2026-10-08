@@ -7,11 +7,34 @@ import json
 try:
     from . import mcp_server as S
     from .knowledge_search_service import search_knowledge as _search_knowledge_service
+    from . import version_guard as _version_guard
 except ImportError:  # plain-script mode (no package context)
     import mcp_server as S  # type: ignore[no-redef]
     from knowledge_search_service import (  # type: ignore[no-redef]
         search_knowledge as _search_knowledge_service,
     )
+    import version_guard as _version_guard  # type: ignore[no-redef]
+
+# Shown on cold start while the store holds no lessons or decisions. Importing
+# other AI tools' memories is an explicit Owner command, never automatic.
+IMPORT_HINT = (
+    "其它 AI 工具里已有的记忆不会自动导入。如需导入，请用户在终端运行 "
+    "`engram import-memories`（先列清单，确认后才写入待审区）。 / "
+    "Memories in other AI tools are never imported automatically. To bring them in, "
+    "the user runs `engram import-memories` in a terminal (it lists them first and "
+    "writes to the review queue only after confirmation)."
+)
+
+
+def _store_has_no_knowledge(engram) -> bool:
+    try:
+        return not (
+            engram.get_lessons(limit=1, _update_access=False, _migrate_fields=False)
+            or engram.get_decisions(limit=1, _update_access=False, _migrate_fields=False)
+        )
+    except Exception:
+        return False
+
 
 @S.mcp.tool()
 async def get_user_context(
@@ -31,10 +54,13 @@ async def get_user_context(
     分层说明 / Tiered behaviour:
     - "quick": 仅身份画像 + 工作偏好（纯 JSON 读取，无文件扫描，最低延迟）。
       Profile + preferences only — pure JSON reads, no filesystem scans. Lowest latency.
-    - "standard"（默认）: 加上质量标准、经验领域、相关教训/决策、项目快照。跳过昂贵的 reconcile。
-      Default. Adds quality, domains, top lessons/decisions, project snapshot. Skips expensive reconciliation.
-    - "full": 完整上下文，含冲突检测、过期/暂存提醒、自动同步副作用。仅在用户明确要求"全量回顾"时使用。
-      Full context including conflict detection, stale/staging warnings, auto-sync side effects. Use only when the user explicitly asks for a comprehensive memory review.
+    - "standard"（默认）: 加上质量标准、经验领域、相关教训/决策、项目快照。
+      Default. Adds quality, domains, top lessons/decisions, project snapshot.
+    - "full": 完整上下文，含冲突检测、过期/暂存提醒。仅在用户明确要求"全量回顾"时使用。
+      Full context including conflict detection and stale/staging warnings. Use only when the user explicitly asks for a comprehensive memory review.
+
+    任何级别都只读：不扫描、不导入其它 AI 工具的文件（那是用户在终端运行的 `engram import-memories`）。
+    Every level only reads: other AI tools' files are never scanned or imported here (that is the user's `engram import-memories` command in a terminal).
 
     注意：默认 "standard" 已覆盖绝大多数冷启动需求；只有用户问"我们之前所有决定/经验"或要做记忆健康检查时才用 "full"。
     Note: "standard" covers most cold-start needs. Use "full" only when the user asks for a comprehensive memory review.
@@ -42,8 +68,9 @@ async def get_user_context(
     Args:
         project_folder: 当前项目文件夹路径（可选）。 / Current project folder path (optional).
         level: "quick" | "standard" | "full"，默认 "standard"。 / Tier — defaults to "standard".
-        token_budget: 上下文 token 预算（可选）。设定后按优先级裁剪 section，低优先级 section 先丢弃。不设则返回全量。
-            Optional token budget. When set, sections are included by priority until budget is exhausted.
+        token_budget: 上下文 token 预算（可选）。设定后按优先级裁剪 section，低优先级 section 先丢弃，末尾一行注明省略了什么。不设则返回全量。
+            Optional token budget. When set, sections are included by priority until budget is exhausted;
+            a cut ends the context with one line naming what was left out.
         user_prompt: 用户当前提问（可选）。传入后会追加到上下文末尾，并与已存 Playbook 的
             triggers 关键词匹配，命中时浮现「相关 Playbook」小节（标题 + ID；用 get_playbooks(mode="get") 查看完整步骤）。
             Optional current user prompt. Appended to the context and matched against stored
@@ -64,39 +91,48 @@ async def get_user_context(
         return S._gov_rt.maybe_govern_owner_only(
             S._get_engram().root, "", tool="get_user_context"
         )
-    # Auto-bootstrap on first call to an empty store: import discoverable rule
-    # files (CLAUDE.md / AGENTS.md / .cursorrules) so cold-start delivers "it
-    # already knows me" without a manual `engram setup`. Mirrors get_resume_brief.
-    # Runs AFTER the owner gate above (bootstrap writes lessons, so a non-owner
-    # caller is refused first) but BEFORE generate_context so the imported data is
-    # reflected. It must NOT be gated on `if not context`: generate_context
-    # returns a non-empty "identity not set" scaffold for an empty store, which
-    # previously shadowed this trigger (bootstrap only fired via get_resume_brief
-    # — a brand-new user calling get_user_context got the scaffold instead of
-    # their auto-imported rules).
-    from piia_engram.bootstrap import needs_bootstrap, run_bootstrap
-
-    imported_rules = 0
-    if needs_bootstrap(S._get_engram()):
-        boot = run_bootstrap(S._get_engram())
-        imported_rules = (
-            boot.get("user_rules_imported", 0) + boot.get("project_rules_imported", 0)
-        )
+    # Cold start only reads the store. It never scans other AI tools' rule or
+    # memory files and never imports them: that is the Owner's explicit
+    # `engram import-memories` command, which an empty store points to.
+    eng = S._get_engram()
     try:
-        context = S._get_engram().generate_context(
-            project_folder, level=level, max_tokens=token_budget,
-        )
+        report = getattr(eng, "generate_context_report", None)
+        if callable(report):
+            # (text, omitted) come back together, so a concurrent call can
+            # never read another call's omission off the shared attribute.
+            context, omitted = report(
+                project_folder, max_tokens=token_budget, level=level,
+            )
+        else:
+            # Stand-in engines (test doubles, older embeddings) only have
+            # generate_context; they report the omission on the attribute.
+            try:
+                eng.last_context_omitted = None  # this call's report only
+            except Exception:
+                pass
+            context = eng.generate_context(
+                project_folder, level=level, max_tokens=token_budget,
+            )
+            omitted = getattr(eng, "last_context_omitted", None)
         S._track("get_user_context", success=True)
         S._beta("cold_start", level=level)
     except Exception as exc:
         S._track("get_user_context", success=False)
         S.logger.warning("generate_context failed: %s", exc)
         return f"Engram 上下文加载失败: {S._safe_err(exc)}"
-    if imported_rules and context:
-        context = (
-            f"[首次连接自动导入 {imported_rules} 条规则 from "
-            f"CLAUDE.md/AGENTS.md]\n\n{context}"
-        )
+    # Budget omissions: the core context ends with one omission line; take it
+    # off here and restate it (merged with anything cut below) as the very
+    # last line of the whole response.
+    omitted = omitted if isinstance(omitted, dict) else None
+    core_line = S._recall_policy.omission_line(omitted)
+    if core_line and isinstance(context, str) and context.endswith(core_line):
+        context = context[: -len(core_line)].rstrip("\n")
+    if (
+        context
+        and (token_budget is None or (len(context) + len(IMPORT_HINT)) // 3 <= token_budget)
+        and _store_has_no_knowledge(S._get_engram())
+    ):
+        context = f"{context}\n\n{IMPORT_HINT}"
     if not context:
         return (
             "Engram 为空——这是新用户。请帮助他们建立身份：\n"
@@ -106,7 +142,8 @@ async def get_user_context(
             "4. 问有没有 AI 总是忘记的规则 → 调用 add_lesson(...)\n"
             "5. 完成后调用 refresh_quick_context() 持久化\n\n"
             "这只需要 30 秒，之后所有 AI 工具都能从第一条消息开始了解这位用户。\n"
-            "或者建议用户在终端运行 `piia-engram` 完成引导式设置。"
+            "或者建议用户在终端运行 `piia-engram` 完成引导式设置。\n"
+            + IMPORT_HINT
         )
     if user_prompt:
         suffix = f"\n\n## 当前用户提问\n{user_prompt}"
@@ -140,6 +177,12 @@ async def get_user_context(
                 project_folder=project_folder or S._session.project_folder or None,
                 _update_access=False,
             )
+            # cold start is auto-injected: a pending playbook never surfaces here
+            index_of = getattr(S._get_engram(), "_recall_supersede_index", None)
+            candidates = S._recall_policy.trusted_only(
+                candidates or [],
+                index_of() if callable(index_of) else S._recall_policy.EMPTY_INDEX,
+            )
             matches = match_playbooks(user_prompt, candidates, limit=2)
             section = render_matched_section(matches, lang=S._user_lang())
             # Lowest-priority section: drop it entirely rather than crowd out
@@ -149,6 +192,18 @@ async def get_user_context(
                 or (len(context) + len(section)) // 3 <= token_budget
             ):
                 context += section
+            elif section:
+                match_ids = []
+                for match in matches or []:
+                    if isinstance(match, dict) and match.get("playbook_id"):
+                        match_ids.append(match["playbook_id"])
+                omitted = S._recall_policy.merge_omitted(
+                    omitted,
+                    S._recall_policy.omitted_info(
+                        ids=match_ids, sections=["matched_playbooks"],
+                        extra=0 if match_ids else 1,
+                    ),
+                )
         except Exception as exc:
             S.logger.warning("playbook trigger matching failed: %s", exc)
 
@@ -156,8 +211,21 @@ async def get_user_context(
     # from the first message. The section is appended BEFORE the governance
     # gate so owner callers see it in the full context; non-owner callers
     # get the gate's refusal string (they can use get_permission_profile).
+    # The omission line is paid for inside the token budget, measured on the
+    # content (the permissions note has always been outside it) with the
+    # core's estimator. When it does not fit, it is left out, as in the core.
+    omission = S._recall_policy.omission_line(omitted)
+    if omission and token_budget is not None:
+        estimate = getattr(eng, "_estimate_tokens", None)
+        if not callable(estimate):
+            def estimate(text: str) -> int:
+                return len(text) // 3
+        if estimate(f"{context}\n\n{omission}") > token_budget:
+            omission = ""
     perms = S._gov_rt.describe_caller_permissions(S._get_engram().root)
     context += S._format_permissions_section(perms)
+    if omission:
+        context += "\n\n" + omission
 
     # Cold-start context is a rendered string bundling identity + top
     # lessons/decisions + snapshot — unfilterable by field. Gate owner-only.
@@ -313,7 +381,7 @@ async def get_lessons(
     lessons = S._gov_rt.maybe_govern_list(S._get_engram().root, lessons, tool="get_lessons")
     if not lessons:
         return "尚无经验教训记录。"
-    return S._json(lessons)
+    return S._json(_version_guard.with_versions(lessons))
 
 
 @S.mcp.tool()
@@ -379,7 +447,7 @@ async def get_decisions(
     decisions = S._gov_rt.maybe_govern_list(S._get_engram().root, decisions, tool="get_decisions")
     if not decisions:
         return "尚无决策记录。"
-    return S._json(decisions)
+    return S._json(_version_guard.with_versions(decisions))
 
 
 @S.mcp.tool()
@@ -438,8 +506,8 @@ async def get_relevant_knowledge(
     用途：你知道当前项目路径但不知道该搜什么词时调用，Engram 根据项目技术栈自动筛选。
     Purpose: Call when you know the current project path but not the right search terms; Engram filters by project tech stack.
 
-    注意：如果用户给了明确搜索词，用 search_knowledge 更直接。
-    Note: If the user provides explicit search keywords, search_knowledge is more direct.
+    注意：如果用户给了明确搜索词，用 search_knowledge 更直接。只返回已审核且当前有效的经验（待审、被取代、已归档的不返回）。
+    Note: If the user provides explicit search keywords, search_knowledge is more direct. Returns reviewed, current lessons only (no pending, superseded or archived items).
 
     Args:
         project_folder: 当前项目文件夹路径。 / Current project folder path.
@@ -468,7 +536,7 @@ async def get_relevant_knowledge(
     if not lessons:
         return S._json({"items": [], "_caller_permissions": perms,
                        "note": "尚无相关经验教训。"})
-    return S._json({"items": lessons, "_caller_permissions": perms})
+    return S._json({"items": _version_guard.with_versions(lessons), "_caller_permissions": perms})
 
 
 @S.mcp.tool()
@@ -494,6 +562,7 @@ async def get_knowledge_inheritance(description: str, limit: int = 10) -> str:
 
 
 _DEFAULT_MAX_FIELD_CHARS = 400
+_SEARCH_BUCKETS = ("lessons", "decisions", "playbooks")
 
 
 def _truncate_long_strings(obj, max_chars):
@@ -521,7 +590,8 @@ def _truncate_long_strings(obj, max_chars):
 async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
                            filters_json: str = "", project_folder: str = "",
                            include_freshness: bool = False,
-                           max_field_chars: int = _DEFAULT_MAX_FIELD_CHARS) -> str:
+                           max_field_chars: int = _DEFAULT_MAX_FIELD_CHARS,
+                           include_superseded: bool = False) -> str:
     r"""搜索知识库（lessons/decisions/playbooks）。 / Search lessons, decisions, and playbooks by keyword.
 
     **Lifecycle: retrieval** — 在对话中需要检索历史知识时调用。
@@ -529,6 +599,13 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
 
     Call when the user asks to find knowledge about a specific topic,
     or recalls a procedure ('X how to' / 'X steps').
+
+    Result groups: "lessons" / "decisions" / "playbooks" hold reviewed, current
+    items only. Items still waiting for the user's review come back separately
+    under "pending" (same three lists, each item flagged pending_untrusted=true):
+    treat them as unconfirmed proposals, not as the user's rules. Items replaced
+    by a newer version are left out unless include_superseded=true, which adds a
+    separate "superseded" group (each item names superseded_by).
 
     If you only have a project path and no query, use get_relevant_knowledge;
     if you have an existing knowledge ID, use explore_knowledge(mode="similar").
@@ -549,6 +626,8 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             clipped with a "[+N chars truncated]" marker so a few large bodies
             cannot blow up the client. Item shape, ids, and headlines are kept.
             Set 0 for full untruncated bodies (default 400).
+        include_superseded: Also return items replaced by a newer version, in a
+            separate "superseded" group (default False).
     """
     filters = None
     if filters_json:
@@ -583,37 +662,78 @@ async def search_knowledge(query: str, scope: str = "all", limit: int = 10,
             query=query, scope=scope, limit=limit, filters=filters,
             allow_hybrid_index=allow_index,
             project_folder=effective_project,
+            include_pending=True,
+            include_superseded=include_superseded,
         )
+        # Recall eligibility: trusted items stay in the three lists; pending
+        # (and, on request, superseded) items ride in their own groups. Every
+        # list goes through the same governance call, so a group can never
+        # carry an item the caller's ceiling withholds.
+        group_names = ("pending", "superseded") if include_superseded else ("pending",)
+        groups: dict = {}
+        flat = result
+        if isinstance(result, dict):
+            for name in group_names:
+                raw_group = result.pop(name, None)
+                raw_group = raw_group if isinstance(raw_group, dict) else {}
+                groups[name] = {
+                    bucket: list(raw_group.get(bucket) or [])
+                    if isinstance(raw_group.get(bucket), list) else []
+                    for bucket in _SEARCH_BUCKETS
+                }
+            flat = dict(result)
+            for name, group in groups.items():
+                for bucket, items in group.items():
+                    flat[f"{name}.{bucket}"] = items
         # governance gate (opt-in; OFF => byte-identical to the line above).
-        result = S._gov_rt.maybe_govern_buckets(S._get_engram().root, result, tool="search_knowledge")
+        flat = S._gov_rt.maybe_govern_buckets(S._get_engram().root, flat, tool="search_knowledge")
+        if isinstance(flat, dict) and groups:
+            result = {
+                key: value for key, value in flat.items()
+                if not any(key.startswith(f"{name}.") for name in groups)
+            }
+            for name, group in groups.items():
+                for bucket in _SEARCH_BUCKETS:
+                    group[bucket] = flat.get(f"{name}.{bucket}", [])
+        else:
+            result = flat
+        views = ([result] + list(groups.values())) if isinstance(result, dict) else []
         # Opt-in freshness annotation, applied AFTER governance filtering so it
         # only ever annotates items the caller may already see (Provenance &
         # Freshness Contract v1, follow-up B). Pure/non-destructive; default OFF
         # keeps the response byte-identical.
-        if include_freshness and isinstance(result, dict):
-            for _bucket in ("lessons", "decisions", "playbooks"):
-                items = result.get(_bucket)
-                if isinstance(items, list):
-                    result[_bucket] = S._provenance.annotate_freshness(items)
+        if include_freshness:
+            for view in views:
+                for _bucket in _SEARCH_BUCKETS:
+                    items = view.get(_bucket)
+                    if isinstance(items, list):
+                        view[_bucket] = S._provenance.annotate_freshness(items)
         # Result-size discipline: a few large knowledge bodies must not blow up
         # the MCP client. Bound each item's string fields HERE, at the MCP
         # boundary, BEFORE usage_policy / _caller_permissions are injected so
         # that policy and permission metadata are never clipped regardless of
         # the cap. Engram.search_knowledge (reused by the CLI and recall_service)
         # is untouched, so internal consumers keep full fidelity.
-        if isinstance(result, dict) and max_field_chars > 0:
-            for _bucket in ("lessons", "decisions", "playbooks"):
-                items = result.get(_bucket)
+        if max_field_chars > 0:
+            for view in views:
+                for _bucket in _SEARCH_BUCKETS:
+                    items = view.get(_bucket)
+                    if isinstance(items, list):
+                        view[_bucket] = [
+                            _truncate_long_strings(item, max_field_chars)
+                            for item in items
+                        ]
+        for view in views:
+            for _bucket in _SEARCH_BUCKETS:
+                items = view.get(_bucket)
                 if isinstance(items, list):
-                    result[_bucket] = [
-                        _truncate_long_strings(item, max_field_chars)
-                        for item in items
-                    ]
-        if isinstance(result, dict):
-            playbooks = result.get("playbooks")
+                    view[_bucket] = _version_guard.with_versions(items)
+            playbooks = view.get("playbooks")
             if isinstance(playbooks, list):
                 for item in playbooks:
                     S._inject_usage_policy(item)
+        if isinstance(result, dict):
+            result.update(groups)
         S._track("search_knowledge", success=True)
     except Exception as exc:
         S._track("search_knowledge", success=False)

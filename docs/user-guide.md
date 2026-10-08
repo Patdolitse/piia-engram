@@ -62,11 +62,10 @@ install, first value, daily recall, and session wrap-up. The advanced set
 (review queues, import/export, governance, migration, Playbook management) stays
 off until you opt in with `ENGRAM_TOOLS=all`.
 
-After connecting once, **auto-bootstrap** does the rest: the first time your AI
-tool calls Engram (`get_user_context` or `get_resume_brief`), it scans your
-existing rule files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, …) **read-only**
-and imports your preferences and project rules automatically — no separate
-import step.
+Engram does not read your other AI tools' files on its own. To bring in what
+they already know (memory files, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, …),
+run `engram import-memories`: it lists the items first, then adds them to the
+review queue after you confirm (`engram review` to approve them).
 
 - Host-specific setup: [Claude Code](integrations/claude-code.md) ·
   [Codex](integrations/codex.md) · [Cursor](integrations/cursor.md) ·
@@ -111,10 +110,9 @@ work:
 3. The agent reads the handoff before asking you to repeat context.
 
 `wrap_up_session` is a lightweight session-end save. It does not run full
-reconciliation by default. Use `run_reconcile=True` only for owner-approved
-maintenance reconciliation. When a project folder is supplied, that explicit
-reconcile is exact-project scoped by default; global maintenance requires
-`reconcile_scope="global"`.
+reconciliation by default. `run_reconcile=True` is still accepted but imports
+nothing; memories from other AI tools come in only through
+`engram import-memories`.
 
 Three levels of recovery, fastest first:
 
@@ -155,10 +153,138 @@ You stay in control of staged items at any time:
 
 - `review_staging(action="list")` — see what is waiting for review (cold-start
   `get_resume_brief` also surfaces the pending count, including high-risk items).
-- Approve, edit, archive, or reject from the review surface.
+- Deciding a pending item (approve, reject, archive, restore) is yours, in the
+  local `engram review`, in every approval mode. Over MCP an AI can list and
+  preview (`review_staging` with `dry_run=true`) but not decide: an applying
+  batch, `apply_text`, changing a pending item's tier or status, archiving or
+  confirming it, approving, rejecting, deleting or restoring a pending playbook,
+  and `onboard_accept` all answer `local_review_only` and write nothing
+  (accept onboard candidates locally with `engram onboard-accept`).
+- Reading knowledge only counts an access: it never refreshes `last_reviewed`,
+  which only your confirm and review actions set, so `get_stale_knowledge`
+  keeps showing what you have not reviewed.
+- In a terminal, `engram review interactive` (or `engram review -i`) shows one
+  pending proposal at a time (type, text, risk, where it came from, a possible
+  duplicate with its diff, what it replaces) and takes one letter plus Enter:
+  `a` approve, `r` reject (optional reason, kept in the receipt only and not returned by
+  `get_audit_log` over MCP), `s` supersede an approved entry
+  (you type its id), `k` skip, `v` full text, `q` stop. Nothing is written until
+  you confirm the summary with `y`; `n`, end of input or Ctrl+C write nothing.
+  It applies through the same path as `engram review apply` and leaves the same
+  receipt. Without a terminal, use `engram review export --out <dir>` and
+  `engram review apply <marks.json>`.
+- The export writes `review.md` (one card per proposal, with its version),
+  `ids.json` (the ids) and `marks-template.json`, one entry per proposal to fill
+  in and save as `marks.json`:
+  `{"id": "...", "mark": "approve", "expected_version": 2}`. `mark` is
+  `approve`, `reject`, `edit-type:<type>`, `supersede:<id>` (approve it as the
+  replacement of the approved entry `<id>`, same kind and scope), `retire`,
+  `restore` or `skip` (leave it pending). Optional fields: `reason` on a reject
+  (your note, kept in that run's receipt only, never on the rejection record)
+  and `expected_version` (approve, reject and supersede only; the item is
+  skipped if it changed since). An id takes one of approve / reject /
+  supersede / skip, and a run may replace each entry once (otherwise the file
+  is refused before anything is written). Order: plain approvals and
+  rejections; then the marks that replace an entry; then edit-type; then retire
+  / restore. So you can approve an entry and its replacement in one run, and a
+  target you reject fails only the mark that names it. List a chain of
+  replacements from oldest to newest; a replacement whose target is approved in
+  the same run is applied after it anyway (the interactive review relies on
+  this). The "same type" check of a supersede uses the `type:` labels both
+  entries have after the run's edit-type marks, so relabeling a proposal to its
+  target's type in the same file works and relabeling it to another type is
+  refused. A playbook that is archived, or that a replacement in the same run
+  archives, is judged by the label it has now, because its edit-type is skipped
+  (skipped, not failed). The check goes by the planned types: if the edit-type of
+  a decision or a lesson then fails, a replacement of the same run that already
+  went through is not rolled back. Each edit-type item names the label it came
+  from (`from`, null if it had none) and the one it sets (`to`). The dry run follows the same order and
+  shows what the applying run will do; each receipt item names its phase and the receipt lists the ids in
+  the order they were applied. `engram review apply` exits non-zero when every
+  mark in the file failed.
+- A playbook an AI writes over MCP (`add_playbook`, `memory_store` with
+  `kind="playbook"`, a playbook drafted from a session) is a proposal in every
+  approval mode: it waits in the review queue until you approve it with
+  `engram review`, and automatic recall leaves it out until then. An AI's
+  rewrite of an approved playbook (its steps, title, triggers and so on,
+  through `manage_playbook` update or `update_knowledge`) is a proposal too:
+  the approved version stays in
+  use, unchanged, until you approve the new one. A pending playbook does not
+  run before that either: `playbook_execution` answers `not_approved`, and
+  `get_playbooks` lists it marked `pending_untrusted`. Playbooks you add locally
+  (for example `engram playbook install`) are unchanged.
+- A decision an AI adds that answers the same question as a reviewed decision
+  with a different choice is a proposal to replace it (`pending_supersedes`),
+  in every approval mode: the reviewed decision stays in use until you approve
+  the new one. Decisions you add locally keep linking the replacement at once.
+- Playbook ids are chosen by Engram: an id an AI sends with a new playbook is
+  ignored, and an insert never takes over an existing id.
 - Playbooks always require explicit review before trusted use; Engram never
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.
+
+What your AI receives follows the same rule everywhere:
+
+- Context it gets without asking (cold start, the resume brief, the
+  session-start hooks, `get_recall`, `get_relevant_knowledge`) holds reviewed,
+  current items only. Items waiting for review, items replaced by a newer
+  version and archived items are left out. Recall only trusts items that are
+  clearly marked reviewed: an unknown tier, a missing status or a rejected or
+  deprecated label keeps an item out.
+- `search_knowledge` lists items waiting for review in a separate `pending`
+  group (each marked `pending_untrusted`), never mixed into the results.
+  Replaced items are left out unless you pass `include_superseded=true`.
+  A `{"tier": "archived"}` filter returns nothing, and `engram dock-search`
+  shows at most `--limit` items per kind in total.
+- Reading one item by id (`get_knowledge_history`, `explore_knowledge`) still
+  returns a replaced item and names the item that replaced it (`superseded_by`).
+- When a token budget cuts content, the response says what was left out
+  (`omitted`: count, ids and section names), and text context ends with one
+  line such as `已省略 3 项（预算）：lessons, decisions` (cold start) or
+  `Omitted 3 items (budget): lessons, decisions` (resume brief and hooks). `engram preview` shows
+  the trimmed items' summaries.
+
+### Pinning what must stay
+
+`engram pin <id>` pins a reviewed lesson, decision or playbook (`--kind` picks
+the type when an id is ambiguous; `engram pin --list` lists pins;
+`engram unpin <id>` removes one). A pin means "keep this and show it first", not
+"this is always right":
+
+- Only the local command sets or clears a pin, and only a reviewed, current
+  entry can be pinned (a pending, archived or replaced one is refused with the
+  reason). The pin is recorded in the audit log; the entry's version does not change.
+- A pinned entry is left alone by the lifecycle archive, the capacity rules and
+  imports, local or over MCP: a merge import skips it, a replace import keeps it
+  in its place, a backup's "supersedes" link that points at it is dropped, and
+  the preview and the result list all of these. An import that would approve a
+  proposal replacing it is refused (`pinned_target`). A backup never brings a
+  pin in.
+- Over MCP a pinned entry cannot be edited, archived, merged or deleted: the
+  tool answers `pinned_entry` and writes nothing. An AI can still propose a
+  revision with `add_lesson` / `add_decision` / `add_playbook` and
+  `supersedes=<id>` (plus `supersedes_expected_version`); in every approval
+  mode that proposal waits for your local review (`engram review apply` /
+  `engram review interactive`). An AI cannot approve it over MCP by any route:
+  batch approval, the outline review's promote list and changing its tier
+  answer `local_review_only`, an import answers `pinned_target`, and
+  `onboard_accept` answers `local_review_only` too; none of them writes anything. The review card
+  says the target is pinned. A proposal may only supersede an active entry of
+  the same scope: one in another project, a global entry from a project
+  proposal (or the other way round) and an archived entry are refused with
+  `supersedes_target_not_applicable` and a `reason` (`different_project`,
+  `scope_mismatch`, `archived`). When you approve it, the old entry is replaced and its pin
+  is removed (audited). Archiving it yourself also removes the pin.
+- Merging two other entries (`merge_knowledge`) leaves a pinned entry completely
+  unchanged, including its `related_ids`. Its link to the merged-away entry stays;
+  that entry remains readable by id. Over MCP, all third entries are left unchanged,
+  pinned or not: only the two entries you supply versions for are modified.
+  Owner-local merges still retarget links on unpinned entries to the surviving entry.
+- In what your AI receives, pinned entries come first within their section
+  (lessons, decisions, playbooks), so a cap or a budget cut drops unpinned
+  entries first. In `search_knowledge` a pin only decides between equally
+  relevant results, so it never shows up for an unrelated query. `engram preview`
+  marks pinned entries.
 
 Each entry carries lifecycle metadata (`memory_state`, `approval_status`,
 `risk_level`/`risk_flags`, `provenance`, `approval_required`) so the state is
@@ -176,14 +302,17 @@ This is the heart of why Engram is local-first.
 folder you point `ENGRAM_DIR` at) as plain JSON/Markdown: identity, knowledge,
 playbooks, project snapshots, recent contexts, and daily logs.
 
-**What never happens by default:**
+**Defaults:**
 
 - No hosted account, no required subscription, no default cloud sync.
-- Telemetry is **off**. When you turn on local telemetry it writes a local log
-  first; sending anything remote (`engram telemetry remote on`) and weekly
-  feedback reports (`engram telemetry feedback on`) are **separate explicit
-  opt-ins**. Knowledge content, prompts, AI responses, file paths, emails, and
-  IP addresses are never collected.
+- Engram sends one anonymous usage ping a day (random install ID, version, OS,
+  Python version, AI client name, date). Turn it off with `engram telemetry off`,
+  `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers.
+- Detailed usage statistics stay off unless you turn them on and write a local
+  log first; remote sending (`engram telemetry remote on`) and weekly feedback
+  reports (`engram telemetry feedback on`) are **separate explicit opt-ins**.
+  Knowledge content, prompts, AI responses, file paths, emails, and IP addresses
+  are never collected.
 - Audit logging is **on by default**; it records read/write operations to a
   local `~/.engram/audit.log` (plain JSON-lines, never sent anywhere). Opt out
   with `ENGRAM_AUDIT=0`.
@@ -205,7 +334,15 @@ playbooks, project snapshots, recent contexts, and daily logs.
   `pip install "piia-engram[secure]"` and `ENGRAM_SECRET`.
 
 **Moving or backing up your data:** copy the entire `~/.engram/` folder. That is
-your whole memory — there is no cloud copy to reconcile.
+your whole memory — there is no cloud copy to reconcile. A JSON backup
+(`export_engram`) goes back in with the local `engram import <backup.json>`
+(a preview by default; `--apply --yes` writes, `--overwrite` replaces). Over MCP,
+`import_engram` only previews an import (`dry_run=true`); a request to apply one
+answers `local_only` and writes nothing. OpenClaw files come in with
+`engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
+(a preview by default; `--apply --yes` writes): lessons go to the review queue
+with a receipt, while USER.md / SOUL.md merge into your profile, preferences and
+quality standards.
 
 **What not to store.** Engram is for personal AI context, not secret management.
 Do **not** store passwords, API keys, OAuth tokens, private keys, customer PII,
@@ -227,7 +364,8 @@ Full data-flow detail is in [Trust model](trust.md) and
 - **Make the AI recall:** *"What did I say before about…"* or *"follow my usual
   style."*
 - **Review the staging queue** periodically (e.g. weekly) with
-  `review_staging(action="list")` — especially if you run `ENGRAM_APPROVAL=strict`.
+  `review_staging(action="list")` — especially if you run `ENGRAM_APPROVAL=strict`;
+  decide it in a terminal with `engram review interactive`.
 - **Check health** with `engram doctor` (identity completeness, knowledge
   volume, stale items, near-duplicates, decision conflicts, encoding health,
   and a health score). It is local diagnostics — review before sharing.
@@ -245,9 +383,11 @@ Full data-flow detail is in [Trust model](trust.md) and
 ## 7. FAQ
 
 **Will Engram upload my data?**
-No. Everything is in `~/.engram/`. Telemetry is off by default and, even when
-enabled, only ever sends anonymous counts after a separate opt-in — never your
-content.
+No. Your memories stay in `~/.engram/`. Engram sends one anonymous usage ping a
+day (random install ID, version, OS, Python version, AI client name, date); turn
+it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`.
+Detailed usage statistics stay off unless you turn them on and, even then, only
+ever send anonymous counts after a separate opt-in — never your content.
 
 **I switched AI tools — is my memory still there?**
 Yes. All tools connected to the Engram MCP read the same local store.

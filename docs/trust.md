@@ -21,6 +21,7 @@ By default, Engram stores its core data under `~/.engram/`:
 | Project snapshots | `~/.engram/projects/` | Project-specific context |
 | Recent contexts and daily logs | `~/.engram/contexts/`, `~/.engram/daily/` | Cross-session continuity |
 | Optional telemetry log | `~/.engram/telemetry.log` | Local opt-in usage counts; remote sending is a separate opt-in |
+| Usage ping install ID | `piia-engram` folder under your user config directory | Random ID for the daily usage ping; `engram telemetry reset-id` makes a new one |
 
 The files are plain JSON or Markdown unless you explicitly enable optional field-level encryption for supported sensitive fields.
 
@@ -31,8 +32,8 @@ Core identity and knowledge tools do not upload your memory to a hosted Engram s
 By default:
 
 - No hosted account is required.
-- Telemetry is off.
-- Local telemetry, when enabled, writes a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
+- Engram sends one anonymous usage ping a day (random install ID, version, OS, Python version, AI client name, date). Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers.
+- Detailed usage statistics are off unless you turn them on and write a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
 - Knowledge content, prompts, AI responses, file paths, email addresses, and IP addresses are not collected by telemetry.
 - High-risk AI-suggested knowledge (credentials, executable commands, permission or MCP-config changes) is staged for your review before becoming verified, and unsupervised background writeback is always staged. Low/medium-risk items are auto-verified unless you set `ENGRAM_APPROVAL=strict`, which stages every write. See the risk-gated workflow below.
 - `engram setup` lists the external MCP client config files it would touch and asks for a one-keystroke confirm before writing; declining leaves every external config untouched. `engram setup --apply-external-config` skips the prompt for non-interactive/CI runs.
@@ -82,7 +83,7 @@ AI tools may call functions such as `add_lesson`, `add_decision`, `add_playbook`
 - **High risk** (credential values, executable commands, permission or MCP-config changes) is routed to staging for your review before it becomes active.
 - Unsupervised background writeback paths force staging regardless of risk, and LLM-extracted suggestions cannot self-label themselves as verified.
 
-You can review, edit, archive, or reject staged knowledge anytime via `review_staging`; playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
+Your AI can list and preview staged knowledge with `review_staging`; approving, rejecting or archiving it is yours, in the local `engram review`, in every approval mode (over MCP those requests answer `local_review_only` and write nothing). Playbook review remains explicit before trusted use. Cold-start `get_resume_brief` surfaces the pending-review count (including high-risk items) so nothing sensitive slips in silently.
 
 ### What "verified" means
 
@@ -100,11 +101,17 @@ Each knowledge entry can carry trust-mode metadata:
 |---|---|
 | `memory_state` | Canonical lifecycle state: `staging`, `verified`, `rejected`, or `deprecated` |
 | `approval_status` | User-facing approval state derived from the memory state |
-| `provenance` | Metadata such as `source_tool`, `entry_type`, `created_at`, `domain`, and `project` |
+| `provenance` | Metadata such as `source_tool`, `entry_type`, `created_at`, `domain`, and `project`, plus how the entry was written (`origin`: `mcp`, `cli`, `import` or `local`) and, for MCP writes, the client name and version the client reported |
 | `risk_level` / `risk_flags` | A conservative local signal for risky memory text, such as credentials, executable commands, MCP config, permissions, or external URLs |
 | `approval_required` | True when the entry is staged or high-risk |
 
 These fields are additive. Existing `tier` and `status` values remain supported for backward compatibility.
+
+The client name and version are what the MCP client says about itself. Engram records them so you can see which tool proposed an entry, but they are self-reported, not verified.
+
+- The `origin` and client fields do not change after the entry is written, and `update_knowledge` refuses to change `provenance` or `source_tool`.
+- When an MCP write gives no `source_tool`, Engram fills it with the client label. That value only affects how the entry is labeled and shown; it does not affect the review tier, risk level or whether the entry can be recalled.
+- Restoring from your own backup keeps the provenance stored in the backup file as it is. Only the client fields are tidied: control characters are removed, the length is capped and the client label is derived again from the client name. Rows without an origin are marked `import`.
 
 ## Recovery and retention dry-runs
 

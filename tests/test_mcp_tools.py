@@ -391,6 +391,8 @@ class TestSearchTools:
             "filters": None,
             "allow_hybrid_index": True,
             "project_folder": None,
+            "include_pending": True,
+            "include_superseded": False,
         }
 
     @pytest.mark.parametrize(
@@ -621,7 +623,7 @@ class TestSearchTools:
             user_confirmed=True,
         ))
 
-        assert "Playbook 已记录" in result
+        assert json.loads(result)["status"] == "pending"  # AI-written playbooks wait for review
         stored = isolated_engram.get_playbooks()[0]
         assert stored["required_tools"] == [
             {
@@ -654,14 +656,19 @@ class TestSearchTools:
             pb["id"],
             required_tools_json='[{"name": "mcp-publisher"}]',
             tool_refs="gh",
+            expected_version=1,
         ))
 
-        assert "Playbook 已更新" in result
-        stored = isolated_engram.get_playbook(pb["id"], _update_access=False)
-        assert [tool["name"] for tool in stored["required_tools"]] == [
+        # an AI's content update of an approved playbook is a pending proposal
+        # that carries the new tools; the approved playbook is unchanged
+        reply = json.loads(result)
+        assert reply["status"] == "pending"
+        proposal = isolated_engram.get_playbook(reply["id"], _update_access=False)
+        assert [tool["name"] for tool in proposal["required_tools"]] == [
             "mcp-publisher",
             "gh",
         ]
+        assert "required_tools" not in isolated_engram.get_playbook(pb["id"], _update_access=False)
 
 
 class TestSearchKnowledgeResultSize:
@@ -826,7 +833,7 @@ class TestErrorHandling:
         def explode(*args, **kwargs):
             raise RuntimeError("synthetic failure")
 
-        monkeypatch.setattr(isolated_engram, "generate_context", explode)
+        monkeypatch.setattr(isolated_engram, "generate_context_report", explode)
         result = _run(mcp_server.get_user_context())
         assert "失败" in result or "synthetic failure" in result
 
@@ -1177,8 +1184,10 @@ class TestEmptyContextReturns:
     def test_get_user_context_returns_empty_sentinel(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
     ):
-        """Line 223: generate_context returns '' -> 'Engram 为空' message."""
-        monkeypatch.setattr(isolated_engram, "generate_context", lambda *a, **kw: "")
+        """Line 223: the context report is empty -> 'Engram 为空' message."""
+        monkeypatch.setattr(
+            isolated_engram, "generate_context_report", lambda *a, **kw: ("", None)
+        )
         result = _run(mcp_server.get_user_context())
         assert "Engram 为空" in result
 
@@ -1314,13 +1323,14 @@ class TestExportImportExceptions:
     def test_import_openclaw_exception(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
     ):
-        """Lines 1093-1094: import_from_openclaw raises -> error message."""
+        """An error while previewing OpenClaw files -> error message (MCP only previews them)."""
+        from piia_engram import mcp_tools_admin
 
         def explode(*a, **kw):
             raise RuntimeError("import boom")
 
-        monkeypatch.setattr(mcp_server, "import_from_openclaw", explode)
-        result = _run(mcp_server.import_engram(format="openclaw"))
+        monkeypatch.setattr(mcp_tools_admin, "_openclaw_preview", explode)
+        result = _run(mcp_server.import_engram(format="openclaw", dry_run=True))
         assert "OpenClaw 兼容格式导入失败" in result
 
     def test_export_openclaw_non_success_status(
@@ -1843,8 +1853,11 @@ def test_mcp_search_knowledge_filters_json_passes_filters(isolated_engram: Engra
         query="caching", filters_json='{"tier": "staging"}',
     ))
     parsed = json.loads(result)
-    assert len(parsed["lessons"]) >= 1
-    assert all(l.get("tier") == "staging" for l in parsed["lessons"])
+    # pending (staging) items come back in their own group, never mixed in
+    assert parsed["lessons"] == []
+    pending = parsed["pending"]["lessons"]
+    assert len(pending) >= 1
+    assert all(l.get("tier") == "staging" and l["pending_untrusted"] is True for l in pending)
 
 
 def test_mcp_search_knowledge_invalid_filters_json(isolated_engram: Engram):
@@ -1953,15 +1966,15 @@ def test_review_staging_batch_still_write_gated_for_external(
 def test_get_user_context_passes_token_budget(
     isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch,
 ):
-    """MCP get_user_context 的 token_budget 应传为 generate_context(max_tokens=...)。"""
+    """MCP get_user_context 的 token_budget 应传为 generate_context_report(max_tokens=...)。"""
     captured = {}
-    original = isolated_engram.generate_context
+    original = isolated_engram.generate_context_report
 
     def spy(project_folder=None, max_tokens=None, level="full"):
         captured["max_tokens"] = max_tokens
         return original(project_folder, max_tokens=max_tokens, level=level)
 
-    monkeypatch.setattr(isolated_engram, "generate_context", spy)
+    monkeypatch.setattr(isolated_engram, "generate_context_report", spy)
     _run(mcp_server.get_user_context(token_budget=42))
     assert captured.get("max_tokens") == 42
 
@@ -1980,8 +1993,10 @@ def test_get_user_context_truncates_user_prompt_to_token_budget(
     """user_prompt 过长且设置 token_budget 时应裁剪追加内容。"""
     monkeypatch.setattr(
         isolated_engram,
-        "generate_context",
-        lambda project_folder=None, level="standard", max_tokens=None: "context-body-" * 3,
+        "generate_context_report",
+        lambda project_folder=None, level="standard", max_tokens=None: (
+            "context-body-" * 3, None,
+        ),
     )
     prompt = "这是一个很长的问题" * 30
 
@@ -2189,36 +2204,45 @@ class TestResumeBriefWrapper:
 
 
 class TestColdStartBootstrap:
-    """Cold-start regression: bootstrap must be REACHABLE via get_user_context,
-    not just unit-tested in isolation. The bug: bootstrap was gated behind
-    ``if not context``, but generate_context returns a non-empty "identity not
-    set" scaffold for an empty store, so a brand-new user with a discoverable
-    CLAUDE.md got the scaffold instead of their auto-imported rules ("it already
-    knows me"). Only get_resume_brief ran bootstrap unconditionally."""
+    """Cold start never imports other AI tools' rule files.
 
-    def test_get_user_context_imports_rule_files_on_cold_start(
-        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ):
-        # Re-enable bootstrap (the fixture disables it) + feed a synthetic rule
-        # file so the scan never touches the real home dir.
-        (isolated_engram.root / ".bootstrap_done").unlink()
+    Earlier versions ran a one-time bootstrap from get_user_context and
+    get_resume_brief on an empty store (auto-verified lessons plus a profile
+    language). Importing is now the Owner's explicit `engram import-memories`
+    command; cold start only points to it."""
+
+    @staticmethod
+    def _spy_scan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
         fake = tmp_path / "fake_CLAUDE.md"
         fake.write_text(
             "# Rules\n所有沟通使用中文。\n我是一名独立开发者。\n这个 repo 用 pytest 测试。\n",
             encoding="utf-8",
         )
+        calls: list[str] = []
         import piia_engram.bootstrap as bs
-        monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
-            {"path": fake, "scope": "global",
-             "lines": fake.read_text(encoding="utf-8").splitlines()},
-        ])
+
+        def scan():
+            calls.append("scan")
+            return [{"path": fake, "scope": "global",
+                     "lines": fake.read_text(encoding="utf-8").splitlines()}]
+
+        monkeypatch.setattr(bs, "_scan_rule_files", scan)
+        return calls
+
+    def test_get_user_context_never_imports_rule_files_on_cold_start(
+        self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        (isolated_engram.root / ".bootstrap_done").unlink()
+        calls = self._spy_scan(monkeypatch, tmp_path)
 
         result = _run(mcp_server.get_user_context())
 
-        # The new user must see imported content, NOT the generic scaffold.
-        assert "身份画像未设置" not in result
-        assert "首次连接自动导入" in result
-        assert "zh-CN" in result or "沟通语言" in result
+        assert calls == []
+        assert "首次连接自动导入" not in result
+        assert "engram import-memories" in result
+        assert isolated_engram.get_lessons(limit=10, _update_access=False) == []
+        assert "language" not in isolated_engram.get_profile()
+        assert not (isolated_engram.root / ".bootstrap_done").exists()
 
     def test_get_user_context_no_rule_files_still_gives_guidance(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch
@@ -2238,32 +2262,20 @@ class TestColdStartBootstrap:
             or "身份画像未设置" in result
         )
 
-    def test_get_resume_brief_imports_rule_files_on_cold_start(
+    def test_get_resume_brief_never_imports_rule_files_on_cold_start(
         self, isolated_engram: Engram, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
-        # get_resume_brief is the OTHER cold-start entry. The original bug was the
-        # two entries behaving inconsistently (get_user_context unreachable while
-        # get_resume_brief reached bootstrap); lock that this entry keeps surfacing
-        # the import so it can't silently regress to an empty brief.
+        # get_resume_brief is the other cold-start entry; it must behave the
+        # same way: a read, no import.
         (isolated_engram.root / ".bootstrap_done").unlink()
-        fake = tmp_path / "fake_CLAUDE.md"
-        fake.write_text(
-            "# Rules\n所有沟通使用中文。\n我是一名独立开发者。\n这个 repo 用 pytest 测试。\n",
-            encoding="utf-8",
-        )
-        import piia_engram.bootstrap as bs
-        monkeypatch.setattr(bs, "_scan_rule_files", lambda: [
-            {"path": fake, "scope": "global",
-             "lines": fake.read_text(encoding="utf-8").splitlines()},
-        ])
+        calls = self._spy_scan(monkeypatch, tmp_path)
 
         result = _run(mcp_server.get_resume_brief())
 
-        # Real entry must trigger bootstrap: detected language surfaces in the brief…
-        assert "zh-CN" in result
-        # …and the store actually received the imported rules (reachability proof).
-        lessons = isolated_engram.get_lessons(limit=10, _update_access=False)
-        assert any("首次连接自动导入" in l.get("summary", "") for l in lessons)
+        assert calls == []
+        assert "zh-CN" not in result
+        assert isolated_engram.get_lessons(limit=10, _update_access=False) == []
+        assert not (isolated_engram.root / ".bootstrap_done").exists()
 
 
 class TestRecallWrapper:

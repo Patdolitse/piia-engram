@@ -110,7 +110,7 @@ pip install piia-engram && engram setup
 
 | | 当前仓库 / 开发事实 |
 |---|---|
-| 版本口径 | **v4.21.2**（2026-09-26 已核验；最新公开包以 PyPI badge / GitHub Releases 为准）|
+| 版本口径 | **v4.22.0**（2026-10-07 已核验；最新公开包以 PyPI badge / GitHub Releases 为准）|
 | 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
 | MCP 工具 | **19 个核心**（默认加载）+ **40 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|
@@ -119,7 +119,7 @@ pip install piia-engram && engram setup
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | 支持字段级 AES-256-GCM（可选）；本地文件默认是明文 JSON / Markdown |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 默认网络调用 | 身份与知识工具默认 **0** —— 除可选的 `read_web_content` 外；远程 telemetry 与反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
+| 默认网络调用 | 每天一次匿名使用信号（`engram telemetry off` 或 `DO_NOT_TRACK=1` 可关闭）；`engram` 命令在交互式终端中每天最多向 PyPI 查询一次新版本，`engram doctor` 每次运行都会查询（`ENGRAM_NO_UPDATE_CHECK=1` 可关闭）；身份与知识工具不联网，可选的 `read_web_content` 除外；远程 telemetry 和每周反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
 
 客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0/L1 表示安装或协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
 
@@ -216,8 +216,8 @@ engram setup
 2. 检测你的 AI 工具（Claude Code、Cursor、Claude Desktop、Codex），列出将要修改的配置文件并请你一键确认后才写入（写入前备份；选择"否"则一字不改）
 3. **注入 AI 指令**到每个工具的原生配置（`CLAUDE.md`、`.cursorrules`、`AGENTS.md`），确保 AI 主动调用 Engram
 4. 引导你录入种子知识（角色、技术栈、语言）
-5. 智能导入你已有的 `CLAUDE.md` / `.cursorrules` 规则文件
-6. 高级模式（`engram setup --advanced`）可设置隐私偏好（跨工具同步、匿名使用统计，均可选）
+5. 询问是否导入其它 AI 工具已有的规则和记忆——`CLAUDE.md`、`.cursorrules`、记忆文件（默认否；先列清单，确认后进入待审区，用 `engram review` 批准）
+6. 高级模式（`engram setup --advanced`）可设置隐私偏好（匿名使用统计，可选）
 7. **预览你的 AI 身份卡**——安装即见效
 
 如果 MCP 客户端已经配置好，setup 完成后重启 AI 工具即可。若还没有配置，请手动添加 MCP 条目，或运行下面显式授权的自动写入命令。第一次成功连接后的对话会自动调用 `get_user_context`——AI 已经认识你了。
@@ -231,6 +231,7 @@ engram continuity    # 仅用元数据证明跨工具接续已就绪
 engram management    # 脱敏的审查 / Playbook 管理视图
 engram doctor        # 诊断所有工具
 engram doctor --fix  # 自动修复 + 注入缺失的 AI 指令
+engram doctor --days 7 --json  # 哪些 AI 客户端已配置、最近是否调用过 Engram（只读）
 engram repair-encoding        # dry-run 扫描乱码 / mojibake
 engram repair-encoding --apply  # 备份后修复可逆乱码
 ```
@@ -323,6 +324,9 @@ $ engram doctor
 
 ### 各工具配置方法
 
+下面的片段统一使用服务器名 `engram`，与 `engram setup` 写入的名称一致。按早先说明配置的
+`piia-engram` 条目仍会被识别；setup 会先备份文件，再把它迁移为 `engram`，不会另加一个服务器。
+
 <details open>
 <summary><strong>Claude Code</strong></summary>
 
@@ -331,9 +335,17 @@ $ engram doctor
 engram setup
 # 如果希望 Engram 自动写入客户端 MCP 配置并创建备份，显式运行：
 engram setup --apply-external-config
-# 或手动添加：
-claude mcp add piia-engram -- piia-engram-mcp
+# 或手动添加（用户级，所有项目可用）：
+claude mcp add --scope user engram -- piia-engram-mcp
 ```
+
+setup 通过 `claude` 命令把 Engram 注册到 Claude Code 的用户级配置
+（`~/.claude.json`，设置了 `CLAUDE_CONFIG_DIR` 时为 `$CLAUDE_CONFIG_DIR/.claude.json`），
+自己从不改写这个文件。`claude` 不在 `PATH` 上时，setup 会打印要运行的完整命令。
+用 `-e` 传入的环境变量值在 `claude` 运行期间会出现在其进程命令行里。
+Engram 也识别早先说明里使用的 `piia-engram` 名称。修复前的 setup 写的是
+`~/.claude/.mcp.json`，Claude Code 并不读取它：重新运行 `engram setup` 即可注册到
+正确位置（它会询问是否移除旧条目）。
 
 </details>
 
@@ -344,7 +356,7 @@ claude mcp add piia-engram -- piia-engram-mcp
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "piia-engram-mcp",
       "args": ["--transport", "stdio"]
     }
@@ -365,16 +377,11 @@ claude mcp add piia-engram -- piia-engram-mcp
 <details>
 <summary><strong>Codex (OpenAI)</strong></summary>
 
-添加到 `~/.codex/mcp.json`：
-```json
-{
-  "mcpServers": {
-    "piia-engram": {
-      "command": "python",
-      "args": ["-m", "piia_engram.mcp_server"]
-    }
-  }
-}
+添加到 `~/.codex/config.toml`（`engram setup` 为 Codex 写入的就是这个文件）：
+```toml
+[mcp_servers.engram]
+command = "python"
+args = ["-m", "piia_engram.mcp_server"]
 ```
 
 </details>
@@ -382,11 +389,11 @@ claude mcp add piia-engram -- piia-engram-mcp
 <details>
 <summary><strong>Claude Desktop</strong></summary>
 
-添加到 `claude_desktop_config.json`：
+添加到 `claude_desktop_config.json`（Windows：`%APPDATA%\Claude\`；macOS：`~/Library/Application Support/Claude/`）：
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -403,7 +410,7 @@ claude mcp add piia-engram -- piia-engram-mcp
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -424,7 +431,7 @@ claude mcp add piia-engram -- piia-engram-mcp
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -474,7 +481,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://你的服务器:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -489,7 +496,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://你的服务器:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -527,7 +534,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ### Tier-1 核心工具（19 个 — 日常工作流）
 
-核心工具表示“日常高频入口”，不表示“只读安全集合”。其中部分工具会写入本地记忆或生成 owner-gated 导出文件；治理层仍会在运行时拦截非 owner 的写入、导出和授权变更。
+核心工具表示“日常高频入口”，不表示“只读安全集合”。其中部分工具会写入本地记忆或生成 owner-gated 导出文件；治理层仍会在运行时拦截非 owner 的写入、导出和授权变更。每个工具还带有标准的 MCP 标注（只读、破坏性、幂等、开放世界），只是给客户端的提示，不是权限控制；权限由严格模式与治理负责。
 
 | 工具 | 功能 |
 |------|------|
@@ -554,7 +561,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 也可以按需暴露可组合 capability modes（如知识库管理、治理、管理、集成）；详见 [capability modes 指南](docs/operator-mcp-cheatsheet.md#能力模式)。
 
-**启动同步：** Engram 会在 MCP server 启动时对账本地 AI 工具中的记忆/配置片段。默认改为后台执行，避免 stdio 客户端在 initialize 阶段被同步扫描阻塞。设置 `ENGRAM_MCP_STARTUP_SYNC=eager` 可恢复旧版同步启动行为；设置 `ENGRAM_MCP_STARTUP_SYNC=off` 可在延迟敏感测试臂中跳过启动同步。`ENGRAM_EPHEMERAL=1` 也会在容器/临时客户端中跳过启动同步和迁移工作。
+**从其它 AI 工具导入：** Engram 不会自己读取其它 AI 工具的记忆或规则文件：MCP server 启动、冷启动、会话收尾都不会。需要时运行 `engram import-memories`：先列出找到的条目（`--dry-run` 只列不写），确认后写入待审区，并在存储目录的 `import_receipts/` 留下导入回执。`ENGRAM_MCP_STARTUP_SYNC` 仍被接受，但已不起作用；`ENGRAM_RECONCILE=0` 会彻底关闭对其它 AI 工具文件的读取。`ENGRAM_EPHEMERAL=1` 会在容器/临时客户端中跳过启动时的配置检查。
 
 ### Tier-2 高级工具（40 个 — 知识管理、审查、导入导出）
 
@@ -575,7 +582,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `user_portrait` | 按 `action` 操作 AI 维护的用户画像：get / save / compare |
 | `preview_context_governance` | advanced owner-gated 预览：生成 safe-context、freshness/conflict、replay 或 evidence 提案，不自动应用 |
 | `get_playbooks` | 按 `mode` 读取操作手册：list、get（完整内容）、recent、management（含归档/删除元数据） |
-| `manage_playbook` | 按 `action` 管理操作手册生命周期：update、archive、delete、restore（变更仍需确认） |
+| `manage_playbook` | 按 `action` 管理操作手册生命周期：update、archive、delete、restore（变更仍需确认，并需带 `expected_version`） |
 | `playbook_execution` | 按 `action` 引导执行：prepare 生成步骤计划、update_step 标记进度、status 查看结果汇总（被动参考，不自动执行） |
 | `get_lessons` | 列出经验教训 |
 | `get_decisions` | 列出关键决策；`thread_seed_id` / `history_question` 可重建决策链与修订历史 |
@@ -583,20 +590,20 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `list_projects` | 列出所有项目快照 |
 | `extract_session_insights` | 从文本中提取经验和决策 |
 | `ingest_notes` | 从自由文本笔记提取结构化知识 |
-| `update_knowledge` | 更新一条知识（自动检测类型） |
-| `archive_knowledge` | 归档一条知识 |
-| `merge_knowledge` | 合并重复知识条目 |
+| `update_knowledge` | 更新一条知识（自动检测类型；需带 `expected_version`） |
+| `archive_knowledge` | 归档一条知识（需带 `expected_version`） |
+| `merge_knowledge` | 合并重复知识条目（需带两个条目的版本号） |
 | `manage_relation` | 按 `action` 管理知识间类型化关系：link / unlink（决策链） |
 | `explore_knowledge` | 按 `mode` 探索知识图谱：related（关联）、similar（相似）、merge_candidates（近似重复扫描） |
 | `get_knowledge_overview` | 知识概览（摘要 + 健康度 + 过期检查） |
 | `get_stale_knowledge` | 列出需要复习的过期知识 |
-| `review_staging` | 按 `action` 审查暂存区：list 列出待审、batch 批量决定、review_item 标记已复习、apply_text 应用审查结果 |
+| `review_staging` | 按 `action` 审查暂存区：list 列出待审、batch 预览（`dry_run=true`）、review_item 标记已复习。批准、拒绝、归档待审条目只能在本地 `engram review` 完成；经 MCP 返回 `local_review_only` |
 | `export_knowledge_report` | owner-gated 导出：写出 Markdown 知识报告 |
 | `request_outline_review` | owner-gated 导出：生成本地交互式 HTML 知识审查页面 |
 | `onboard_repo` | owner-only 仓库扫描：从 anchor 生成 staging repo-fact 候选 |
-| `onboard_accept` | owner-only 接受：校验 anchor 并升级为 verified |
+| `onboard_accept` | 仅限本地：接受 onboard 候选请用 `engram onboard-accept <id>`；经 MCP 返回 `local_review_only`，不写入 |
 | `export_engram` | owner-gated 导出：写出完整备份（`format="openclaw"` 可导出 OpenClaw 格式文件） |
-| `import_engram` | owner/admin 导入：先用 `dry_run=True` 做元数据级合并/冲突预览（支持 `format="openclaw"`）；CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
+| `import_engram` | owner/admin 导入预览（只能 `dry_run=True`）：元数据级合并/冲突计划（支持 `format="openclaw"`）；真正导入只能在本地运行 `engram import <backup.json> --apply --yes`（OpenClaw 用 `engram import --format openclaw ... --apply --yes`），CLI 需显式 `--materialize-version-chain` 才会把同 key 分歧落成版本链 |
 | `read_web_content` | 读取用户提供的 URL：本地边车运行时优先用边车，否则用包内自足的内置 reader（`pip install "piia-engram[reader]"`） |
 | `get_audit_log` | 查询审计日志 |
 | `start_project` | 新项目启动（继承知识 + 建档） |
@@ -761,7 +768,7 @@ engram setup
 在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。
 
 **piia-engram 会把数据发到云端吗？**
-默认不会。身份与知识工具使用本地文件，telemetry **默认关闭**。可选的匿名使用统计可作为本地日志开启；远程 telemetry 和每周反馈报告必须单独显式开启，只发送计数，绝不发送知识正文。随时用 `engram telemetry preview` 查看下一次 payload，用 `engram telemetry off` 关闭统计，用 `engram telemetry remote off` 关闭远程发送。详见 **[PRIVACY.md](PRIVACY.md)**。
+你的记忆不会离开你的电脑。Engram 每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），用来了解有多少安装在使用；不包含任何记忆内容、文件路径、账号信息或命令参数，服务器也不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`（CI 和容器环境中自动不发）；`engram telemetry preview` 可查看实际发送内容。详细统计和反馈报告需单独开启。详见 **[PRIVACY.md](PRIVACY.md)**。
 
 **piia-engram 有多少个 MCP 工具？**
 两层设计，大多数用户只会看到 19 个工具：
@@ -849,6 +856,7 @@ piia-engram doctor --fix     # 自动修复所有问题
 piia-engram sessions         # 列出跨工具保存的 AI 会话
 piia-engram sessions show <id>  # 打印单个保存会话
 piia-engram review           # 列出待审查的暂存知识
+piia-engram review interactive  # 逐条审核待审提案（a/r/s/k/v/q，最后输入 y 确认）
 piia-engram review show <id> # 查看单条待审知识
 piia-engram review approve <id> --yes  # 将暂存条目提升为已确认
 piia-engram review archive <id> --yes  # 归档待审条目

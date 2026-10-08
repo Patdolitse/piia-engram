@@ -715,6 +715,12 @@ def test_dashboard_reconcile_report_counts_an_archived_row_as_present(_full_stor
 
     root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
     monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    # Never fall back to the real home's memory files (e.g. if another test
+    # reloaded piia_engram.core and the class patch below misses).
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+    monkeypatch.setenv("HOME", str(empty_home))
+    monkeypatch.setenv("USERPROFILE", str(empty_home))
     oldest = engram.get_lessons(limit=None, _update_access=False)[0]
     assert oldest["id"] == seeded[0]
     mem_dir = tmp_path / "fake_claude" / "projects" / "p" / "memory"
@@ -742,7 +748,15 @@ def test_reconcile_apply_digest_mentions_rows_moved_to_the_archive(_full_stores,
     assert "overflow archive" not in render_reconcile_apply_text(quiet)
 
 
-def test_startup_sync_message_counts_rows_moved_to_the_archive(_full_stores, tmp_path, monkeypatch, capsys):
+def test_import_memories_stops_at_a_full_queue_instead_of_archiving(_full_stores, tmp_path, monkeypatch):
+    # Formerly the startup sync imported into the full queue and each capture
+    # pushed one queued row into the overflow archive. `engram import-memories`
+    # stops at a full review queue instead: nothing queued is pushed out, and
+    # the receipt counts what was not written. (The engine's library call,
+    # Engram.reconcile_memories(), keeps the archive behaviour; see the
+    # recapture tests above.)
+    from piia_engram import memory_import
+
     root, seeded, engram = _copy_store(_full_stores, "lesson", tmp_path, monkeypatch)
     monkeypatch.setenv("ENGRAM_RECONCILE", "1")
     mem_dir = tmp_path / "fake_claude" / "projects" / "p" / "memory"
@@ -759,15 +773,23 @@ def test_startup_sync_message_counts_rows_moved_to_the_archive(_full_stores, tmp
         encoding="utf-8")
     engram._discover_project_roots = lambda: [project]
     engram._AI_GLOBAL_CONFIGS = []
-    server = _serve(engram, monkeypatch)
-    capsys.readouterr()
-    server._run_startup_sync()
-    err = capsys.readouterr().err
-    configs = int(err.split("configs=")[1].split(",")[0])
-    assert "memories=2" in err and configs >= 1
-    # the queue is full, so each unreviewed capture moves exactly one row
-    assert f"moved to overflow archive={2 + configs}" in err
-    assert len(_archive_lines(root, "lesson")) == 2 + configs
+
+    archived_before = len(_archive_lines(root, "lesson"))
+    preview = memory_import.plan(engram)
+    planned = preview["count"]
+    assert planned >= 3
+
+    payload = memory_import.write_plan(engram, preview)
+
+    assert payload["imported"] == 0
+    assert payload["queue_full"] == payload["not_written"] == planned
+    assert not payload.get("overflow_archived_ids")
+    assert len(_archive_lines(root, "lesson")) == archived_before
+    text = memory_import.render_result(payload)
+    assert str(planned) in text
+    receipt = json.loads((root / payload["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["status"] == "partial" and receipt["imported"] == 0
+    assert receipt["skipped"]["queue_full"] == receipt["not_written"] == planned
 
 
 # -- MCP replies -----------------------------------------------------------------------

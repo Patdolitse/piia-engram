@@ -543,3 +543,53 @@ def test_source_digests_are_line_ending_normalized():
         lf.write_bytes(body)
         crlf.write_bytes(body.replace(b"\n", b"\r\n"))
         assert _normalized_source_bytes(lf) == _normalized_source_bytes(crlf) == body
+
+
+# --------------------------------------------------------------------------
+# trust gate: the same whitelist every recall surface uses
+# --------------------------------------------------------------------------
+
+
+def _row(**over):
+    row = {
+        "id": "l-1", "summary": "bounded reads", "status": "active", "tier": "verified",
+        "project_folder": "/work/proj",
+    }
+    row.update(over)
+    return row
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"tier": "unheard-of"},          # unknown tier
+        {"tier": "active"},              # not a review label
+        {"status": None},                # missing status
+        {"tier": "staging"},             # pending
+        {"status": "archived"},
+        {"memory_state": "rejected"},
+    ],
+)
+def test_untrusted_rows_are_excluded_by_the_shared_whitelist(changes):
+    from piia_engram.embedded.snapshot import _exclude_reason
+
+    row = _row(**changes)
+    for key, value in changes.items():
+        if value is None:
+            row.pop(key)
+    reason = _exclude_reason(
+        "lesson", row, project_folder="/work/proj", accepted_project_ids=set(),
+        task_class="software_development",
+    )
+    assert reason == "untrusted_or_inactive", changes
+
+
+@pytest.mark.parametrize("changes", [{}, {"tier": "Verified"}, {"tier": ""}])
+def test_reviewed_rows_stay_in(changes):
+    from piia_engram.embedded.snapshot import _exclude_reason
+
+    reason = _exclude_reason(
+        "lesson", _row(**changes), project_folder="/work/proj", accepted_project_ids=set(),
+        task_class="software_development",
+    )
+    assert reason is None, changes

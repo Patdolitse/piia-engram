@@ -22,6 +22,7 @@ REVIEW_ITEM_KEYS = frozenset(
         "quality_signal_count",
         "quality_flag_count",
         "created_at",
+        "scope",
     }
 )
 PLAYBOOK_ITEM_KEYS = frozenset(
@@ -34,6 +35,7 @@ PLAYBOOK_ITEM_KEYS = frozenset(
         "project_count",
         "needs_scope_review",
         "version",
+        "pinned",
         "created_at",
         "last_updated",
     }
@@ -80,7 +82,7 @@ def _closed_entry(entry: dict[str, Any], expected_keys: frozenset[str]) -> dict[
     return entry
 
 
-def _review_entry(kind: str, item: dict[str, Any]) -> dict[str, Any]:
+def _review_entry(kind: str, item: dict[str, Any], scope: str = "global") -> dict[str, Any]:
     score = _quality_score(item)
     return _closed_entry({
         "id": str(item.get("id") or ""),
@@ -92,6 +94,7 @@ def _review_entry(kind: str, item: dict[str, Any]) -> dict[str, Any]:
         "quality_signal_count": _quality_list_count(item, "quality_signals"),
         "quality_flag_count": _quality_list_count(item, "quality_flags"),
         "created_at": _created_at(item),
+        "scope": scope,
     }, REVIEW_ITEM_KEYS)
 
 
@@ -110,20 +113,28 @@ def _review_items_filtered(
     limit: int,
     review_kind: str,
     quality_status: str,
+    scope_type: str = "all",
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     kind_filter = str(review_kind or "all").strip().lower()
     quality_filter = str(quality_status or "all").strip().lower()
-    for lesson in eng.get_lessons(limit=None, _update_access=False):
-        if lesson.get("tier") == "staging":
-            rows.append(_review_entry("lesson", lesson))
-    for decision in eng.get_decisions(limit=None, _update_access=False):
-        if decision.get("tier") == "staging":
-            rows.append(_review_entry("decision", decision))
+    from .review_cli import active_rows, scope_label
+
+    # Every project's proposals, like the Owner's review list: the scope is a
+    # project name or id (``project:<name>``), never a path.
+    for kind in ("lesson", "decision"):
+        for item in active_rows(eng, kind):
+            if item.get("tier") == "staging":
+                rows.append(_review_entry(kind, item, scope_label(eng, kind, item)))
     if kind_filter in {"lesson", "decision"}:
         rows = [item for item in rows if item.get("kind") == kind_filter]
     if quality_filter in {"low", "ok", "missing"}:
         rows = [item for item in rows if item.get("quality_status") == quality_filter]
+    scope_filter = str(scope_type or "all").strip().lower()
+    if scope_filter == "global":
+        rows = [item for item in rows if item.get("scope") == "global"]
+    elif scope_filter in {"project", "shared"}:
+        rows = [item for item in rows if str(item.get("scope") or "").startswith(f"{scope_filter}:")]
     rows.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
     return rows[: max(0, int(limit))]
 
@@ -155,6 +166,7 @@ def _playbook_entry(item: dict[str, Any]) -> dict[str, Any]:
         "project_count": project_count,
         "needs_scope_review": str(item.get("scope_review_status") or "") == "unresolved",
         "version": int(item.get("version") or 1),
+        "pinned": item.get("pinned") is True,
         "created_at": str(item.get("created_at") or ""),
         "last_updated": str(item.get("last_updated") or item.get("last_reviewed") or ""),
     }, PLAYBOOK_ITEM_KEYS)
@@ -227,6 +239,7 @@ def build_management_view(
         limit=review_limit,
         review_kind=review_kind,
         quality_status=quality_status,
+        scope_type=scope_type,
     )
     playbooks, scope_review_pending = _playbook_items(
         eng,
@@ -423,13 +436,15 @@ def render_management_text(view: dict[str, Any]) -> str:
     review = view.get("review_queue") or {}
     playbooks = view.get("playbooks") or {}
     continuity = view.get("continuity") or {}
+    pinned = sum(1 for item in playbooks.get("items") or [] if isinstance(item, dict) and item.get("pinned"))
     lines = [
         "Engram management view",
         f"  Review queue: {review.get('pending_count', 0)} pending "
         f"({review.get('low_quality_count', 0)} low/missing quality)",
         f"  Playbooks: {playbooks.get('active_count', 0)} active, "
         f"{playbooks.get('archived_count', 0)} archived, "
-        f"{playbooks.get('deleted_count', 0)} deleted",
+        f"{playbooks.get('deleted_count', 0)} deleted"
+        + (f", {pinned} pinned" if pinned else ""),
         f"  Scope review: {playbooks.get('scope_review_pending_count', 0)} pending",
         f"  Continuity readiness: {continuity.get('readiness_level', 'not_ready')}",
     ]

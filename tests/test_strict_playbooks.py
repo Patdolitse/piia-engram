@@ -163,7 +163,7 @@ def _route_memory_store(m, root, old):
 
 
 def _route_update(m, root, old):
-    _run(m.manage_playbook(action="update", playbook_id=old["id"], description="a better why"))
+    _run(m.manage_playbook(action="update", playbook_id=old["id"], description="a better why", expected_version=1))
 
 
 def _route_session_draft(m, root, old):
@@ -221,7 +221,8 @@ def test_strict_update_is_a_full_merged_proposal_and_the_old_row_stays(env, monk
     old_bytes = (root / "playbooks" / f"{old['id']}.json").read_bytes()
     _strict(monkeypatch)
 
-    _run(m.manage_playbook(action="update", playbook_id=old["id"], description=f"new why {TOKEN}"))
+    _run(m.manage_playbook(action="update", playbook_id=old["id"], description=f"new why {TOKEN}",
+                           expected_version=1))
 
     assert (root / "playbooks" / f"{old['id']}.json").read_bytes() == old_bytes
     (proposal,) = [r for r in _pb_rows(root).values() if r.get("pending_supersedes") == old["id"]]
@@ -300,7 +301,7 @@ def test_strict_old_id_runs_the_old_content_after_an_update_proposal(env, monkey
     old = _seed_verified(m)
     _strict(monkeypatch)
     _run(m.manage_playbook(action="update", playbook_id=old["id"],
-                           steps_json=json.dumps([f"new step {TOKEN}", "b", "c"])))
+                           steps_json=json.dumps([f"new step {TOKEN}", "b", "c"]), expected_version=1))
 
     text = _run(m.playbook_execution(action="prepare", playbook_id=old["id"]))
 
@@ -451,7 +452,7 @@ def test_cli_approving_an_update_proposal_retires_the_old_row(env, monkeypatch, 
     m, root = env
     old = _seed_verified(m)
     _strict(monkeypatch)
-    _run(m.manage_playbook(action="update", playbook_id=old["id"], description="better"))
+    _run(m.manage_playbook(action="update", playbook_id=old["id"], description="better", expected_version=1))
     (proposal,) = [r for r in _pb_rows(root).values() if r.get("pending_supersedes") == old["id"]]
 
     _cli(monkeypatch, capsys, "review", "apply", str(_marks(tmp_path, [{"id": proposal["id"], "mark": "approve"}])),
@@ -538,21 +539,23 @@ def test_cli_playbook_list_staging_is_read_only(env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_unset_add_playbook_writes_verified(env):
+def test_unset_add_playbook_over_mcp_is_a_pending_proposal(env):
+    """An AI-written playbook waits for review in every approval mode."""
     m, root = env
 
     result = _add_mcp(m)
 
-    assert _pb_rows(root)[_pid(result)]["tier"] == "verified"
+    row = _pb_rows(root)[_pid(result)]
+    assert row["tier"] == "staging" and row["approval_status"] == "pending"
 
 
-def test_unset_staging_draft_stays_visible_and_executable(env):
+def test_unset_staging_draft_stays_visible_but_does_not_run(env):
     m, root = env
     draft = m._engram.add_playbook({"title": "Draft procedure", "steps": ["a", "b", "c"], "tier": "staging"})
 
     assert draft["id"] in {p["id"] for p in m._engram.get_playbooks(limit=None)}
     result = json.loads(_run(m.playbook_execution(action="prepare", playbook_id=draft["id"])))
-    assert result.get("status") != "pending_not_executable"
+    assert result.get("status") == "not_approved"
 
 
 @pytest.mark.parametrize("mode", ["strict", None])

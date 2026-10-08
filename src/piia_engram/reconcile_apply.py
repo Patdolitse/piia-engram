@@ -211,26 +211,45 @@ def apply_reconcile(
             items=items, source=source,
         )
 
-    # 3) Confirmed apply: import ONLY the import-classified candidates.
-    changed_any = False
-    for it in planned:
-        candidate = candidates[it["candidate_ref"]]
-        new_id = _import_one(eng, candidate, it["entry_type"], source)
-        if new_id:
-            it["outcome"] = OUTCOME_IMPORTED
-            it["imported_id"] = new_id
-            counts["imported"] += 1
-            changed_any = True
-        else:
-            # add_* declined (e.g. its own dedup caught it) - a no-op, not a write.
-            it["outcome"] = OUTCOME_NOOP
-            it["reason"] = "import_declined"
+    # 3) Confirmed apply: import ONLY the import-classified candidates. The
+    # shared import record writes a receipt and an audit line on the way out,
+    # also if the loop fails part-way (then marked partial).
+    from .memory_import import recording
 
-    return _payload(
+    changed_any = False
+    with recording(
+        eng, sources=[source or "memory_files"], command="reconcile_apply.apply_reconcile",
+        resource="knowledge/reconcile_apply", source_tool=source or "reconcile_apply",
+    ) as record:
+        for it in planned:
+            candidate = candidates[it["candidate_ref"]]
+            new_id = _import_one(eng, candidate, it["entry_type"], source)
+            if new_id:
+                it["outcome"] = OUTCOME_IMPORTED
+                it["imported_id"] = new_id
+                counts["imported"] += 1
+                changed_any = True
+                record.add_written(
+                    new_id,
+                    source=source or "memory_files",
+                    file=str(candidate.get("source") or ""),
+                    summary=str(candidate.get("summary") or candidate.get("question") or ""),
+                    detail=str(candidate.get("detail") or candidate.get("choice") or ""),
+                    kind=it["entry_type"],
+                )
+            else:
+                # add_* declined (e.g. its own dedup caught it) - a no-op, not a write.
+                it["outcome"] = OUTCOME_NOOP
+                it["reason"] = "import_declined"
+                record.duplicates += 1  # _import_one does not tell a full queue apart
+
+    payload = _payload(
         dry_run=False, confirmed=True, requires_confirmation=False,
         changed=changed_any, status="applied", counts=counts, items=items,
         source=source,
     )
+    payload["receipt"] = record.receipt
+    return payload
 
 
 def preview_reconcile_conflicts(

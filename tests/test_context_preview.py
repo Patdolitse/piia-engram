@@ -40,10 +40,21 @@ class FakeEngram:
         return self._recent[:limit]
 
     def get_relevant_lessons(self, project_folder=None, limit=8, _update_access=True):
-        return list(self._relevant)[:limit]
+        return [_stored(r) for r in list(self._relevant)[:limit]]
 
     def search_knowledge(self, query, scope="all", limit=8):
-        return self._search
+        return _stored_hits(self._search)
+
+
+def _stored(row):
+    """A stored row always carries a status; recall trusts only active rows."""
+    return {"status": "active", **row} if isinstance(row, dict) else row
+
+
+def _stored_hits(hits):
+    if not isinstance(hits, dict):
+        return hits
+    return {k: [_stored(r) for r in v] if isinstance(v, list) else v for k, v in hits.items()}
 
 
 def _lesson(summary, *, sensitivity=None, tier="verified", item_id=None):
@@ -117,8 +128,12 @@ def test_staging_excluded_for_non_owner_but_not_owner():
     assistant = build_context_preview(eng, role="assistant")
     assert assistant["knowledge"]["withheld_count"] == 1
     assert assistant["knowledge"]["withheld"][0]["withheld_reason"] == "staging_excluded"
+    # A pending row is never injected, for the owner either; the owner's
+    # preview names it with the review reason instead of exposing it.
     owner = build_context_preview(eng, role="owner")
-    assert owner["knowledge"]["withheld_count"] == 0
+    assert owner["knowledge"]["exposed_count"] == 0
+    assert owner["knowledge"]["withheld_count"] == 1
+    assert owner["knowledge"]["withheld"][0]["withheld_reason"] == "pending_review"
 
 
 def test_query_knowledge_is_merged_in():

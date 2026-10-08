@@ -19,7 +19,6 @@ from piia_engram.setup_wizard import (
     _configure_utf8_stdio,
     _find_mcp_server,
     _find_python,
-    _import_with_split,
     _build_feedback_report,
     _inject_claude_code_hook,
     _inject_instruction_snippet,
@@ -1323,7 +1322,13 @@ def test_seed_onboarding_saves_profile_and_lessons(tmp_path: Path, monkeypatch, 
 
 
 def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
-    """检测到 CLAUDE.md 且用户确认时，应通过 ingest_notes 导入规则。"""
+    """检测到 CLAUDE.md 且用户两次确认时，规则进入待审区（不再直接 verified）。
+
+    The seed step used to fold every rule line into two auto-written lessons
+    (source_tool=engram_setup) and copy the language into the profile. It now
+    runs the `engram import-memories` flow: list, confirm, review queue,
+    receipt; the profile is not touched by imported text.
+    """
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -1333,11 +1338,13 @@ def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
         lambda cwd=None: {},
     )
     (tmp_path / "CLAUDE.md").write_text(
+        "## Workflow\n"
         "remember to run tests before claiming completion\n"
         "decided to keep project memory local first\n",
         encoding="utf-8",
     )
-    answers = iter(["", "", "", "", "y"])
+    # role, tech stack, language, first lesson, import now?, import these?
+    answers = iter(["", "", "", "", "y", "y"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
     summary = _run_seed_knowledge_onboarding(str(tmp_path), cwd=tmp_path)
@@ -1347,28 +1354,19 @@ def test_seed_onboarding_imports_claude_rules(tmp_path: Path, monkeypatch):
     engram = Engram(root=tmp_path)
     lessons = engram.get_lessons(limit=None, _update_access=False)
 
-    assert summary["imported_files"] == [str(tmp_path / "CLAUDE.md")]
-
-    # ── A2 去碎片化的强校验（不只是"文本出现在某处"）──────────────
-    setup_lessons = engram.get_lessons(
-        source_tool="engram_setup", limit=None, _update_access=False
-    )
-    assert setup_lessons, "规则应被导入并标记 source_tool=engram_setup"
-    # 1) 归到分组 domain，而不是旧的逐行 "setup" 碎片
-    for les in setup_lessons:
-        assert les.get("domain") in {"user_preference", "project_rules"}, (
-            f"导入 lesson 落到了意外的 domain: {les.get('domain')!r}"
-        )
-        # 2) 原始规则行不应被直接当作 summary（那正是旧的逐行碎片行为）
-        assert les.get("summary") not in (
-            "remember to run tests before claiming completion",
-            "decided to keep project memory local first",
-        ), "规则行不应成为 lesson summary —— 说明仍在逐行碎片化"
-    # 3) provenance：原文按来源文件分节保留在 detail 里
-    detail_blob = "\n".join(les.get("detail", "") for les in setup_lessons)
-    assert f"## {tmp_path.name}/CLAUDE.md" in detail_blob, "detail 应保留来源文件分节标题"
-    assert "remember to run tests" in detail_blob
-    assert "decided to keep project memory" in detail_blob
+    assert summary["imported_files"] == [(tmp_path / "CLAUDE.md").as_posix()]
+    assert summary["imported_to_review"] == 1
+    assert (tmp_path / summary["import_receipt"]).is_file()
+    imported = [row for row in lessons if row.get("source_tool") == "config_scan"]
+    assert len(imported) == 1
+    assert (imported[0].get("tier") or imported[0].get("memory_state")) == "staging"
+    # provenance: the section keeps its source file name and full text
+    assert imported[0]["summary"].startswith("[CLAUDE.md] Workflow:")
+    assert "remember to run tests" in imported[0]["detail"]
+    assert "decided to keep project memory" in imported[0]["detail"]
+    # nothing from the rule file is written as trusted memory or into the profile
+    assert not engram.get_lessons(source_tool="engram_setup", limit=None, _update_access=False)
+    assert "language" not in engram.get_profile()
 
 
 def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch, capsys):
@@ -1381,7 +1379,7 @@ def test_seed_onboarding_allows_skipping_everything(tmp_path: Path, monkeypatch,
         "piia_engram.setup_wizard._probe_environment",
         lambda cwd=None: {},
     )
-    answers = iter(["", "", "", ""])
+    answers = iter(["", "", "", "", ""])  # ... and no to "import now?"
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
     summary = _run_seed_knowledge_onboarding(str(tmp_path), cwd=tmp_path)
@@ -2025,8 +2023,20 @@ def test_scan_rule_files_skips_tiny_files(tmp_path: Path):
 
 
 class TestPrivacyPreferences:
+    @pytest.fixture(autouse=True)
+    def _empty_home(self, tmp_path, monkeypatch):
+        # The import question reads other AI tools' files under HOME on a yes.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
     def test_both_defaults(self, tmp_path, monkeypatch, capsys):
-        """Pressing Enter twice should keep defaults: reconcile=Yes, telemetry=No."""
+        """Pressing Enter twice keeps defaults: no import now, telemetry=No.
+
+        Setup used to store reconcile_authorized=true here (automatic import on
+        every start). It now only offers a one-time import and stores no switch.
+        """
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
@@ -2038,8 +2048,9 @@ class TestPrivacyPreferences:
         cfg_path = tmp_path / "telemetry_config.json"
         assert cfg_path.is_file()
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        assert cfg["reconcile_authorized"] is True
+        assert "reconcile_authorized" not in cfg
         assert cfg["enabled"] is False
+        assert "engram import-memories" in capsys.readouterr().out
 
     def test_opt_in_telemetry(self, tmp_path, monkeypatch, capsys):
         """Answering 'y' to telemetry should enable it."""
@@ -2056,18 +2067,119 @@ class TestPrivacyPreferences:
         assert cfg["enabled"] is True
         assert "opted_in_at" in cfg
 
-    def test_opt_out_reconcile(self, tmp_path, monkeypatch, capsys):
-        """Answering 'n' to reconcile should disable it."""
+    def test_declining_the_import_stores_no_switch(self, tmp_path, monkeypatch, capsys):
+        """'n' to "import once now?" imports nothing and stores no switch.
+
+        This used to store reconcile_authorized=false. A "not now" is not a
+        standing refusal; `engram import-memories` stays available.
+        """
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
-        answers = iter(["n", ""])  # reconcile no, telemetry default
+        answers = iter(["n", ""])  # import no, telemetry default
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
         _run_privacy_preferences(str(tmp_path))
 
         cfg = json.loads((tmp_path / "telemetry_config.json").read_text(encoding="utf-8"))
-        assert cfg["reconcile_authorized"] is False
+        assert "reconcile_authorized" not in cfg
+        assert not (tmp_path / "import_receipts").exists()
+
+
+class TestPrivacyCopyMentionsTheDailyPing:
+    """Setup's privacy text must not contradict the default-on daily usage ping."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        for var in ("ENGRAM_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY", "ENGRAM_RECONCILE"):
+            monkeypatch.delenv(var, raising=False)
+        # A "y" to every question includes "import once now?", which reads
+        # other AI tools' files under HOME: keep that in an empty temp home.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+    @pytest.mark.parametrize("lang,needles", [
+        ("en", ("Your memories stay on this machine",
+                "Engram sends one anonymous usage ping a day",
+                "also turns it off")),
+        ("zh", ("你的记忆只留在本机",
+                "Engram 每天发送一次匿名使用信号",
+                "也会关闭它")),
+    ])
+    def test_advanced_privacy_text(self, tmp_path, monkeypatch, capsys, lang, needles):
+        from piia_engram import i18n
+
+        monkeypatch.setattr(i18n, "_runtime_lang", lang)
+        answers = iter(["", ""])
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        _run_privacy_preferences(str(tmp_path))
+        out = capsys.readouterr().out
+        for needle in needles:
+            assert needle in out
+        assert "Your data stays local by default" not in out
+        assert "你的数据默认只留在本机" not in out
+
+    @pytest.mark.parametrize("lang,needles", [
+        ("en", ("Engram also sends one anonymous usage ping a day",
+                "answering no here also turns it off")),
+        ("zh", ("Engram 另外每天发送一次匿名使用信号",
+                "这里选择“否”也会关闭它")),
+    ])
+    def test_default_statistics_question(self, tmp_path, monkeypatch, capsys, lang, needles):
+        from piia_engram import i18n
+        from piia_engram.setup_wizard import _run_privacy_defaults
+
+        monkeypatch.setattr(i18n, "_runtime_lang", lang)
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        _run_privacy_defaults(str(tmp_path))
+        out = capsys.readouterr().out
+        for needle in needles:
+            assert needle in out
+
+    @pytest.mark.parametrize("flow", ["defaults", "preferences"])
+    def test_a_no_turns_the_ping_off_even_after_an_explicit_on(self, tmp_path, monkeypatch, capsys, flow):
+        from piia_engram import usage_ping
+        from piia_engram.setup_wizard import _run_privacy_defaults
+
+        usage_ping.set_enabled(True)  # an earlier `engram telemetry on`
+        if flow == "defaults":
+            monkeypatch.setattr("builtins.input", lambda _: "n")
+            _run_privacy_defaults(str(tmp_path))
+        else:
+            answers = iter(["", "n"])
+            monkeypatch.setattr("builtins.input", lambda _: next(answers))
+            _run_privacy_preferences(str(tmp_path))
+        assert usage_ping.decision() == (False, "settings")
+
+    def test_local_yes_and_remote_no_turns_the_ping_off(self, tmp_path, monkeypatch, capsys):
+        from piia_engram import i18n, usage_ping
+
+        monkeypatch.setattr(i18n, "_runtime_lang", "en")
+        usage_ping.set_enabled(True)  # an earlier `engram telemetry on`
+        answers = iter(["", "y", "n"])  # reconcile default, local statistics yes, remote no
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        _run_privacy_preferences(str(tmp_path))
+        assert usage_ping.decision() == (False, "settings")
+        assert "daily usage ping is off too" in capsys.readouterr().out
+
+    def test_local_yes_and_remote_yes_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
+        from piia_engram import usage_ping
+
+        answers = iter(["", "y", "y"])
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        _run_privacy_preferences(str(tmp_path))
+        assert not (usage_ping.state_dir() / "usage_ping.json").exists()
+
+    def test_a_yes_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
+        from piia_engram import usage_ping
+        from piia_engram.setup_wizard import _run_privacy_defaults
+
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        _run_privacy_defaults(str(tmp_path))
+        assert not (usage_ping.state_dir() / "usage_ping.json").exists()
 
 
 # ── Telemetry CLI tests ─────────────────────────────────────────────
@@ -2081,7 +2193,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "OFF" in out
+        assert "Anonymous usage statistics: OFF" in out
 
     def test_on_then_status(self, tmp_path, monkeypatch, capsys):
         """engram telemetry on, then status should show ON."""
@@ -2093,7 +2205,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "ON" in out
+        assert "Anonymous usage statistics: ON" in out
 
     def test_off_disables(self, tmp_path, monkeypatch, capsys):
         """engram telemetry off should disable."""
@@ -2106,7 +2218,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "OFF" in out
+        assert "Anonymous usage statistics: OFF" in out
 
     def test_preview_returns_json(self, tmp_path, monkeypatch, capsys):
         """engram telemetry preview should output valid JSON."""
@@ -2131,6 +2243,27 @@ class TestTelemetryCLI:
 
 
 class TestPrivacyReport:
+    @pytest.fixture(autouse=True)
+    def _empty_home(self, tmp_path, monkeypatch):
+        # The report counts importable memories under HOME (read-only).
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+    def test_report_describes_import_truthfully(self, tmp_path, monkeypatch, capsys):
+        """No "cross-tool sync ON / Scans": nothing is scanned automatically."""
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "[SYNC]" not in out and "Cross-tool sync" not in out
+        assert "Automatic scanning: never" in out
+        assert "engram import-memories" in out
+        assert "Importable now:" in out
+        assert "ENGRAM_RECONCILE=0" in out
+
     def test_report_runs_without_error(self, tmp_path, monkeypatch, capsys):
         """engram privacy should print report without error."""
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
@@ -2143,6 +2276,43 @@ class TestPrivacyReport:
         assert "[DIR]" in out
         assert "[STAT]" in out
         assert "[NET]" in out
+
+    def test_report_describes_the_daily_usage_ping(self, tmp_path, monkeypatch, capsys):
+        """The report has a block for the daily ping and tells the truth about the network."""
+        from piia_engram import usage_ping
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        for var in ("DO_NOT_TRACK", "NO_TELEMETRY", "ENGRAM_TELEMETRY", "ENGRAM_EPHEMERAL",
+                    *usage_ping._CI_VARS):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(usage_ping, "_legacy_opted_out", lambda: False)
+        monkeypatch.setattr(usage_ping, "_in_container", lambda: False)
+
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "[PING] Daily usage ping:" in out
+        assert "Status: OFF (decided by: test)" in out  # the suite runs with the ping off
+        assert "Install ID: (not created yet)" in out
+        assert "Last sent: (never)" in out
+        assert "Endpoint: https://telemetry.piia-engram.com/v1/ping" in out
+        assert "Turn off: engram telemetry off" in out
+        assert "identity and knowledge tools: no network requests" in out
+        assert "the daily usage ping and the CLI update check" in out
+        assert "ENGRAM_NO_UPDATE_CHECK=1" in out
+        assert "ZERO network" not in out
+
+    def test_report_shows_an_active_ping(self, tmp_path, monkeypatch, capsys):
+        """When the ping is on, the report shows who decided and the install ID prefix."""
+        from piia_engram import usage_ping
+
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
+        monkeypatch.setattr(usage_ping, "decision", lambda: (True, "default"))
+        install_id = usage_ping.install_id()  # in the suite's throwaway ping state dir
+        _run_privacy_report()
+        out = capsys.readouterr().out
+        assert "Status: ON (decided by: default)" in out
+        assert f"Install ID: {install_id[:8]}…" in out
+        assert install_id not in out  # only the prefix
 
     def test_report_shows_data_dir(self, tmp_path, monkeypatch, capsys):
         """Report should show the ENGRAM_DIR path."""
@@ -3542,7 +3712,7 @@ class TestTelemetryCLIExtended:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "ON" in out
+        assert "Anonymous usage statistics: ON" in out
 
     def test_disable_alias(self, tmp_path, monkeypatch, capsys):
         """'disable' should work same as 'off'."""
@@ -3555,7 +3725,7 @@ class TestTelemetryCLIExtended:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "OFF" in out
+        assert "Anonymous usage statistics: OFF" in out
 
     def test_empty_args_defaults_to_status(self, tmp_path, monkeypatch, capsys):
         """No subcommand should default to status."""
@@ -3901,250 +4071,6 @@ class TestClassifyLineEdgeCases:
         """同时含用户和项目关键词时，project scope 应返回 project。"""
         result = _classify_line("- use English language for all test cases", "project")
         assert result == "project"
-
-
-class TestImportWithSplit:
-    """_import_with_split 分流导入测试。"""
-
-    def test_language_detection_chinese(self, tmp_path):
-        """中文语言偏好应写入 profile。"""
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        rule_files = [{
-            "path": tmp_path / "rules.md",
-            "scope": "global",
-            "lines": ["所有沟通使用中文"],
-        }]
-        result = _import_with_split(rule_files, engram)
-        profile = engram.get_profile()
-        assert profile.get("language") == "中文"
-
-    def test_language_detection_english(self, tmp_path):
-        """English 语言偏好应写入 profile。"""
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        rule_files = [{
-            "path": tmp_path / "rules.md",
-            "scope": "global",
-            "lines": ["Use English language for all communication"],
-        }]
-        result = _import_with_split(rule_files, engram)
-        profile = engram.get_profile()
-        assert profile.get("language") == "English"
-
-    def test_user_lines_grouped_into_one_lesson(self, tmp_path):
-        """A2: 多条 user 规则应汇成 *一条* user_preference lesson，而非逐行碎片。"""
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        rule_files = [{
-            "path": tmp_path / "CLAUDE.md",
-            "scope": "global",
-            "lines": [
-                "I prefer concise answers in all conversations",
-                "Always communicate using my preferred style",
-                "My role is a non-technical founder learning to build",
-            ],
-        }]
-        result = _import_with_split(rule_files, engram)
-
-        assert result["user_lessons"] == 1
-        assert result["user_count"] == 3  # 行计数契约保留
-        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
-        assert len(lessons) == 1
-
-    def test_project_lines_grouped_into_one_lesson(self, tmp_path):
-        """A2: 多条 project 规则应汇成 *一条* project_rules lesson。"""
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        rule_files = [{
-            "path": tmp_path / ".cursorrules",
-            "scope": "project",
-            "lines": [
-                "Run the test suite before every commit to this repo",
-                "Keep the build green; do not merge failing pipelines",
-            ],
-        }]
-        result = _import_with_split(rule_files, engram)
-
-        assert result["project_lessons"] == 1
-        lessons = engram.get_lessons(domain="project_rules", _update_access=False)
-        assert len(lessons) == 1
-
-    def test_provenance_kept_in_detail(self, tmp_path):
-        """A2: detail 应按来源文件分节（## 标签）保留出处，且用相对标签不存绝对路径。"""
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        rule_files = [{
-            "path": tmp_path / "CLAUDE.md",
-            "scope": "global",
-            "lines": [
-                "I prefer concise answers in all conversations",
-                "Always communicate using my preferred style",
-            ],
-        }]
-        _import_with_split(rule_files, engram)
-
-        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
-        detail = lessons[0].get("detail", "")
-        # 分节标题在（父目录名/文件名）
-        assert f"## {tmp_path.name}/CLAUDE.md" in detail
-        # 规则正文进入 detail
-        assert "I prefer concise answers" in detail
-        # 不应泄漏绝对路径
-        assert str(tmp_path) + "/CLAUDE.md" not in detail
-
-    def test_imported_lessons_tagged_with_setup_source(self, tmp_path):
-        """A3: 导入的 lesson 应带 source_tool=engram_setup，doctor 才能统计/引导复核。"""
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        rule_files = [{
-            "path": tmp_path / "CLAUDE.md",
-            "scope": "global",
-            "lines": [
-                "I prefer concise answers in all conversations",
-                "My role is a non-technical founder learning to build",
-            ],
-        }]
-        _import_with_split(rule_files, engram)
-
-        tagged = engram.get_lessons(
-            source_tool="engram_setup", limit=None, _update_access=False
-        )
-        assert len(tagged) >= 1
-
-    def test_multiple_files_merge_into_one_lesson_with_sections(self, tmp_path):
-        """A2: 同类(user)多个来源文件应合并为 *一条* lesson，detail 各自分节。
-
-        同时覆盖「同名文件不同目录」的边界：父目录名用于区分，两个分节都要在。
-        """
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        dir_a = tmp_path / "projA"
-        dir_b = tmp_path / "projB"
-        dir_a.mkdir()
-        dir_b.mkdir()
-        rule_files = [
-            {"path": dir_a / "CLAUDE.md", "scope": "global",
-             "lines": ["I prefer concise answers in all conversations",
-                       "Explain trade-offs before deciding anything"]},
-            {"path": dir_b / "CLAUDE.md", "scope": "global",
-             "lines": ["I am a non-technical founder learning to build",
-                       "Use plain language and avoid heavy jargon"]},
-        ]
-        result = _import_with_split(rule_files, engram)
-
-        assert result["user_lessons"] == 1          # 合并成一条
-        assert result["user_count"] == 4            # 行计数契约：4 行
-        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
-        assert len(lessons) == 1
-        detail = lessons[0].get("detail", "")
-        # 同名文件不同目录 → 用父目录名区分，两个分节都要在
-        assert "## projA/CLAUDE.md" in detail
-        assert "## projB/CLAUDE.md" in detail
-        assert "Explain trade-offs before deciding" in detail
-        assert "Use plain language and avoid heavy jargon" in detail
-
-    def test_reimport_refreshes_lesson_not_dropped_by_dedup(self, tmp_path):
-        """#1 真 bug 防回归：第二次 setup 应 upsert 刷新同一条，而非被去重丢弃。
-
-        分组 lesson 用固定模板 summary；add_lesson 的 summary 相似度去重会把第二
-        次导入判为重复 → 规则更新无法落地。upsert 修复后：仍是一条，detail 反映新内容。
-        """
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        v1 = [{
-            "path": tmp_path / "CLAUDE.md", "scope": "global",
-            "lines": ["I prefer very concise answers always",
-                      "My role is a non-technical founder"],
-        }]
-        _import_with_split(v1, engram)
-        first = engram.get_lessons(domain="user_preference", _update_access=False)
-        assert len(first) == 1
-        assert "always cite the source files" not in first[0].get("detail", "")
-
-        # 用户更新了规则文件后重新跑 setup
-        v2 = [{
-            "path": tmp_path / "CLAUDE.md", "scope": "global",
-            "lines": ["I prefer very concise answers always",
-                      "My role is a non-technical founder",
-                      "New rule: always cite the source files"],
-        }]
-        result2 = _import_with_split(v2, engram)
-
-        assert result2["user_lessons"] == 1
-        lessons = engram.get_lessons(domain="user_preference", _update_access=False)
-        # 关键：仍是一条 —— 既没被去重丢弃，也没新增重复条
-        assert len(lessons) == 1
-        # 关键：detail 反映了第二次的新增规则（证明是刷新而非丢弃）
-        assert "New rule: always cite the source files" in lessons[0].get("detail", "")
-
-    def test_reimport_archives_legacy_line_by_line_fragments(self, tmp_path):
-        """M1 迁移防回归：早期逐行导入留下的多条 engram_setup 碎片，
-
-        重新跑 setup 后应只剩一条 active（canonical 被刷新），其余碎片被归档
-        （status != active → get_lessons 不再返回），避免新旧并存污染。
-        """
-        from piia_engram.core import Engram
-        engram = Engram(root=tmp_path)
-
-        # 模拟旧版逐行导入：同 domain 下多条 engram_setup lesson（不同 summary 才不会被去重）
-        engram.add_lesson("Old fragment one about concise answers",
-                          domain="user_preference", detail="frag1",
-                          source_tool="engram_setup")
-        engram.add_lesson("Old fragment two about plain language",
-                          domain="user_preference", detail="frag2",
-                          source_tool="engram_setup")
-        engram.add_lesson("Old fragment three about founder role",
-                          domain="user_preference", detail="frag3",
-                          source_tool="engram_setup")
-        before = engram.get_lessons(domain="user_preference",
-                                    source_tool="engram_setup",
-                                    limit=None, _update_access=False)
-        assert len(before) == 3  # 旧碎片确实并存
-
-        # 重新跑 setup（升级后的合并导入）
-        rule_files = [{
-            "path": tmp_path / "CLAUDE.md", "scope": "global",
-            "lines": ["I prefer very concise answers always",
-                      "Use plain language and avoid jargon"],
-        }]
-        result = _import_with_split(rule_files, engram)
-
-        assert result["user_lessons"] == 1
-        active = engram.get_lessons(domain="user_preference",
-                                    source_tool="engram_setup",
-                                    limit=None, _update_access=False)
-        # 关键：碎片被归整为一条 active，其余旧碎片已归档不再返回
-        assert len(active) == 1
-        # 关键：canonical 那条被刷新成最新合并内容（不再是旧 frag1 文本）
-        assert "Use plain language and avoid jargon" in active[0].get("detail", "")
-
-    def test_detail_truncation_happens_at_line_boundary(self, tmp_path):
-        """M2：detail 超过上限时在行边界截断，不把某条规则切成半行。"""
-        from piia_engram.setup_wizard import _build_grouped_detail, _MAX_DETAIL_CHARS
-
-        # 造一批等长规则行，总长远超上限，强制触发截断
-        rule = "x" * 80
-        n = (_MAX_DETAIL_CHARS // 81) + 50  # 每行约 "- " + 80 + "\n"
-        sections = {"dir/CLAUDE.md": [rule for _ in range(n)]}
-        detail = _build_grouped_detail(sections)
-
-        assert detail.endswith("…(truncated)")
-        body = detail[: -len("\n\n…(truncated)")]
-        # 关键：截断后正文每一行要么是分节标题，要么是完整的 "- <80个x>"，
-        # 不能出现被切半的残缺行
-        for line in body.splitlines():
-            if line.startswith("## "):
-                continue
-            assert line == f"- {rule}", f"出现被截断的半行规则: {line!r}"
 
 
 class TestReadRuleFile:

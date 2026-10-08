@@ -1,8 +1,13 @@
-"""Engram reconcile layer - sync external AI memory and config files into Engram.
+"""Import engine for other AI tools' memory and config files.
+
+Nothing here runs on its own: the Owner's ``engram import-memories`` command
+(see ``memory_import``) is the only caller, and every item lands in the review
+queue (staging tier).
 
 ReconcileMixin provides:
 - reconcile_memories: scan ~/.claude/projects/*/memory/*.md and import unique items
 - reconcile_ai_configs: scan CLAUDE.md / .cursorrules / AGENT.md etc. and import rules
+- both take dry_run=True for a zero-write plan of the same items
 - helpers: _decode_claude_project_name, _discover_project_roots, _parse_config_sections
 """
 
@@ -11,6 +16,9 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from .storage import SIMILARITY_THRESHOLD, _project_id, overflow_batch
 
@@ -24,10 +32,16 @@ def _reconcile_env() -> str:
     return ""
 
 
-def _reconcile_config_value():
-    """``reconcile_authorized`` from telemetry_config.json, or None when absent."""
-    cfg_path = Path(os.environ.get("ENGRAM_DIR", "").strip() or
-                    Path.home() / ".engram") / "telemetry_config.json"
+def _reconcile_config_value(root=None):
+    """``reconcile_authorized`` from ``<root>/telemetry_config.json``, or None.
+
+    ``root`` is the store being imported into; without it the ENGRAM_DIR /
+    ``~/.engram`` store is used.
+    """
+    base = Path(root) if root is not None else Path(
+        os.environ.get("ENGRAM_DIR", "").strip() or Path.home() / ".engram"
+    )
+    cfg_path = base / "telemetry_config.json"
     if not cfg_path.is_file():
         return None
     try:
@@ -134,9 +148,25 @@ _NOT_IMPORTED = frozenset({"duplicate", "rejected_before", "duplicate_retired"})
 RECONCILE_ENV_OVERRIDDEN = "reconcile_env_overridden_by_config"
 
 
-def reconcile_env_conflict_note() -> str:
+# Set while the Owner has just asked for an import in `engram setup` but the
+# store still carries an earlier reconcile_authorized=false: the list may be
+# shown, and the stored "no" is lifted only when they confirm that list.
+# ENGRAM_RECONCILE=0 is never overridden.
+_OWNER_PREVIEW_CONSENT: ContextVar[bool] = ContextVar("engram_owner_preview_consent", default=False)
+
+
+@contextmanager
+def owner_preview_consent():
+    token = _OWNER_PREVIEW_CONSENT.set(True)
+    try:
+        yield
+    finally:
+        _OWNER_PREVIEW_CONSENT.reset(token)
+
+
+def reconcile_env_conflict_note(root=None) -> str:
     """Non-empty when ENGRAM_RECONCILE=1 is set but the config keeps reconcile off."""
-    if _reconcile_env() == "on" and _reconcile_config_value() is False:
+    if _reconcile_env() == "on" and _reconcile_config_value(root) is False:
         return (
             "ENGRAM_RECONCILE=1 is set, but reconcile_authorized=false in "
             "telemetry_config.json wins: reconcile stays off. Remove the variable, "
@@ -145,8 +175,84 @@ def reconcile_env_conflict_note() -> str:
     return ""
 
 
+def _display_path(path: Path) -> str:
+    """``~/...`` for files under the home directory, else the full path."""
+    try:
+        return "~/" + Path(path).resolve().relative_to(Path.home().resolve()).as_posix()
+    except (ValueError, OSError):
+        return Path(path).as_posix()
+
+
+def _file_sha256(path: Path) -> str:
+    import hashlib
+
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _import_item(
+    source: str,
+    path: Path,
+    summary: str,
+    detail: str,
+    *,
+    domain: str = "",
+    source_tool: str = "",
+    project_folder: str = "",
+    label: str = "",
+) -> dict:
+    """One planned import: the exact row to write, where it comes from, and hashes.
+
+    ``content_sha256`` hashes the text that will be written; ``source_sha256``
+    the source file as it was when the plan was made, so the writer can tell
+    (and the receipt can record) that the file changed after the Owner
+    confirmed the list. The writer always writes the confirmed text.
+    """
+    import hashlib
+
+    digest = hashlib.sha256(f"{summary}\n\n{detail}".encode("utf-8")).hexdigest()
+    return {
+        "source": source,
+        "file": _display_path(path),
+        "label": label or Path(path).name,
+        "summary": summary,
+        "content_sha256": digest,
+        "status": "planned",
+        "id": "",
+        "path": str(path),
+        "source_sha256": _file_sha256(path),
+        "detail": detail,
+        "domain": domain,
+        "source_tool": source_tool,
+        "project_folder": project_folder,
+    }
+
+
+_ITEM_METADATA_FIELDS = ("id", "source", "file", "content_sha256", "status")
+
+
+def _item_metadata(item: dict) -> dict:
+    """An import item without its text: id, source file, hash and status."""
+    return {key: item.get(key, "") for key in _ITEM_METADATA_FIELDS}
+
+
+def _insert_outcome(result) -> tuple[str, str]:
+    """("imported", id) when add_lesson stored a row, else (its status, "")."""
+    from .storage import NOT_ADDED_STATUSES
+
+    if not isinstance(result, dict):
+        return "declined", ""
+    status = str(result.get("status") or "")
+    new_id = result.get("id")
+    if status in NOT_ADDED_STATUSES or not (isinstance(new_id, str) and new_id):
+        return status or "declined", ""
+    return "imported", new_id
+
+
 class ReconcileMixin:
-    """Auto-reconcile external AI memory & configs into Engram."""
+    """Import other AI tools' memory and config files on explicit request."""
 
     # ------------------------------------------------------------------
     # Configuration
@@ -183,6 +289,7 @@ class ReconcileMixin:
     # Global config paths to scan (in addition to per-project files)
     _AI_GLOBAL_CONFIGS = [
         "~/.claude/CLAUDE.md",
+        "~/.codex/AGENTS.md",
         "~/.cursor/rules",
         "~/.trae/rules",
         "~/.codeium/windsurf/rules",
@@ -194,15 +301,19 @@ class ReconcileMixin:
 
     def _note_reconcile_env_conflict(self) -> None:
         """Receipt for an ignored ENGRAM_RECONCILE=1, so the override is never silent."""
-        if not reconcile_env_conflict_note():
+        if not reconcile_env_conflict_note(getattr(self, "root", None)):
             return
         audit = getattr(self, "_audit", None)
         if audit is not None:
             audit.log("warn", "reconcile", detail=RECONCILE_ENV_OVERRIDDEN)
 
     @staticmethod
-    def _reconcile_authorized() -> bool:
-        """Check if the user has authorized auto-reconcile of external AI files.
+    def _reconcile_authorized(root=None) -> bool:
+        """May Engram read other AI tools' memory and config files at all?
+
+        Nothing reads them automatically any more; this gates the explicit
+        ``engram import-memories`` command and the read-only count that
+        ``engram doctor`` / ``engram status`` show.
 
         - ENGRAM_RECONCILE=0 (or false/off/no) always disables it.
         - ``"reconcile_authorized": false`` in telemetry_config.json disables it
@@ -214,39 +325,69 @@ class ReconcileMixin:
         env = _reconcile_env()
         if env == "off":
             return False
-        configured = _reconcile_config_value()
+        configured = _reconcile_config_value(root)
         if configured is False:
-            return False
+            return _OWNER_PREVIEW_CONSENT.get()
         if env == "on":
             return True
         return True if configured is None else bool(configured)
 
     @overflow_batch
-    def reconcile_memories(self, *, project_folder: str = "") -> dict:
-        """Scan external AI tool memory dirs and auto-import missing items.
+    def reconcile_memories(
+        self,
+        *,
+        project_folder: str = "",
+        dry_run: bool = False,
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
+    ) -> dict:
+        """Import other AI tools' memory files into the review queue.
 
-        Returns a dict with sync stats.  Designed to be called silently
-        during cold-start (generate_context) and session wrap-up.
+        No server start, cold start, read or session close-out calls this; the
+        Owner's ``engram import-memories`` plans with ``_plan_memory_import`` and
+        writes that confirmed plan. ``dry_run=True`` returns the plan and writes
+        nothing at all (no rows, no audit line). Without it the plan is written
+        right away through ``memory_import.write_items`` (review queue, receipt,
+        audit line); as a library call it keeps the capacity rules' overflow
+        archive behaviour instead of stopping at a full review queue.
+        ``also_existing`` adds texts planned elsewhere in the same run to the
+        dedup set.
 
-        Requires reconcile authorization (granted during setup or via
-        ENGRAM_RECONCILE=1 env var).
+        Returns counts plus ``items``: one ``{id, source, file, content_sha256,
+        status}`` dict per planned or imported memory -- no item text.
+
+        Honours the off switches (ENGRAM_RECONCILE=0 or
+        ``reconcile_authorized: false`` in telemetry_config.json).
         """
-        if not self._reconcile_authorized():
-            self._note_reconcile_env_conflict()
+        plan = ReconcileMixin._scan_memories(
+            self, project_folder=project_folder, also_existing=also_existing, audit=not dry_run,
+        )
+        return self._finish_reconcile(plan, dry_run=dry_run, source="memories",
+                                      name="reconcile_memories")
+
+    def _scan_memories(
+        self,
+        *,
+        project_folder: str = "",
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
+        audit: bool = False,
+    ) -> dict:
+        """Scan memory files into a full plan (item text included). Writes rows never;
+        ``audit`` only allows the skip-large audit lines of a real run."""
+        dry_run = not audit
+        if not self._reconcile_authorized(self.root):
             result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
-                      "skipped_large": 0, "sources": [],
+                      "skipped_large": 0, "sources": [], "items": [],
                       "skipped_reason": "reconcile not authorized"}
             if project_folder:
                 result["scope"] = self._reconcile_scope_metadata(project_folder)
                 result["skipped_scope"] = 0
             return result
-        imported = 0
         duplicates = 0
         rejected_old_summary = 0
         scanned_files = 0
         skipped_large = 0
         skipped_scope = 0
-        sources: list[str] = []
+        items: list[dict] = []
         target_project_id = _project_id(project_folder) if project_folder else ""
         target_claude_project = (
             self._encode_claude_project_name(str(Path(project_folder).resolve()))
@@ -254,19 +395,8 @@ class ReconcileMixin:
             else ""
         )
 
-        existing_lessons = self.get_lessons(limit=None, _update_access=False)
-        existing_decisions = self.get_decisions(limit=None, _update_access=False)
-        existing_summaries = {
-            lesson.get("summary", "")
-            for lesson in existing_lessons
-        }
-        # Also include decision texts for dedup
-        for d in existing_decisions:
-            existing_summaries.add(d.get("question", ""))
-            existing_summaries.add(d.get("choice", ""))
-        # Rows the capacity cap archived were already captured once; re-importing
-        # them on every start would grow the archive without bound.
-        existing_summaries |= self._overflow_archive_texts()
+        existing_summaries = self._reconcile_existing_summaries(dry_run=dry_run)
+        existing_summaries |= set(also_existing)
         existing_summaries.discard("")
 
         for glob_pattern in self._CLAUDE_MEMORY_GLOBS:
@@ -281,7 +411,7 @@ class ReconcileMixin:
             if not rel_pattern:
                 continue
 
-            for mem_file in base.glob(rel_pattern):
+            for mem_file in sorted(base.glob(rel_pattern)):
                 if mem_file.name == "MEMORY.md":
                     continue  # Index file, not a memory
                 if target_project_id:
@@ -294,8 +424,9 @@ class ReconcileMixin:
                     fsize = mem_file.stat().st_size
                     if fsize > self._RECONCILE_MAX_FILE_SIZE:
                         skipped_large += 1
-                        self._audit.log("warn", "reconcile/skip_large",
-                                        detail=f"{mem_file.name} ({fsize}B)")
+                        if not dry_run:
+                            self._audit.log("warn", "reconcile/skip_large",
+                                            detail=f"{mem_file.name} ({fsize}B)")
                         continue
                     content = mem_file.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
@@ -332,8 +463,10 @@ class ReconcileMixin:
                 if _rejected_before(self.root, parsed["legacy_summary"], project_folder=project_folder):
                     rejected_old_summary += 1  # rejected under its 4.21.1 summary
                     continue
+                if _rejected_before(self.root, summary_candidate, project_folder=project_folder):
+                    rejected_old_summary += 1  # the insert would refuse it as well
+                    continue
 
-                # Auto-import as lesson
                 domain = "auto_reconcile"
                 if fm_type == "project":
                     domain = "project"
@@ -342,36 +475,107 @@ class ReconcileMixin:
                 elif fm_type == "reference":
                     domain = "reference"
 
-                result = self.add_lesson(
-                    summary_candidate,
-                    domain=domain,
-                    detail=parsed["detail"],
-                    source_tool="auto_reconcile",
-                    tier="staging",
-                    project_folder=project_folder or None,
-                )
-                if result.get("status") not in _NOT_IMPORTED:
-                    imported += 1
-                    sources.append(mem_file.name)
-                    existing_summaries.add(summary_candidate)
-                else:
-                    duplicates += 1
+                items.append(_import_item(
+                    "memories", mem_file, summary_candidate, parsed["detail"],
+                    domain=domain, source_tool="auto_reconcile",
+                    project_folder=project_folder, label=mem_file.name,
+                ))
+                existing_summaries.add(summary_candidate)
 
-        self._audit.log("read", "reconcile_memories",
-                        detail=f"scanned={scanned_files} imported={imported} "
-                               f"dup={duplicates} skipped_large={skipped_large}")
         result = {
             "scanned_files": scanned_files,
-            "imported": imported,
+            "imported": 0,
             "duplicates": duplicates,
+            "queue_full": 0,
             "rejected_under_old_summary": rejected_old_summary,
             "skipped_large": skipped_large,
-            "sources": sources,
+            "sources": [],
+            "items": items,
         }
         if project_folder:
             result["skipped_scope"] = skipped_scope
             result["scope"] = self._reconcile_scope_metadata(project_folder)
         return result
+
+    def _finish_reconcile(self, plan: dict, *, dry_run: bool, source: str, name: str) -> dict:
+        """Public result of reconcile_*: the dry-run plan or the written result,
+        with items reduced to id, source, file, hash and status (no text)."""
+        if plan.get("skipped_reason"):
+            if not dry_run:
+                self._note_reconcile_env_conflict()
+            return plan
+        if dry_run:
+            result = dict(plan)
+            result["dry_run"] = True
+        else:
+            result = self._write_reconcile_plan(plan, source=source, name=name)
+        result["items"] = [_item_metadata(item) for item in result.get("items") or []]
+        return result
+
+    def _write_reconcile_plan(self, plan: dict, *, source: str, name: str) -> dict:
+        """Library write path of the import engine: the shared writer, receipt, audit."""
+        from .memory_import import write_items
+
+        written = write_items(
+            self, plan["items"], sources=[source], command=f"Engram.{name}",
+            resource=f"knowledge/{name}", source_tool="engram_library",
+            stop_when_queue_full=False,
+        )
+        result = dict(plan)
+        result.update(
+            imported=written["imported"],
+            duplicates=plan["duplicates"] + written["duplicates"],
+            queue_full=written["queue_full"],
+            not_written=written["not_written"],
+            partial=written["partial"],
+            receipt=written["receipt"],
+            items=written["items"],
+            sources=[item["label"] for item in written["items"]],
+        )
+        self._audit.log("read", name,
+                        detail=f"scanned={plan['scanned_files']} imported={result['imported']} "
+                               f"dup={result['duplicates']} skipped_large={plan.get('skipped_large', 0)}")
+        return result
+
+    def _plan_memory_import(self, *, also_existing: "set[str] | frozenset[str]" = frozenset()) -> dict:
+        """The full plan (with item text) behind :meth:`reconcile_memories`.
+
+        Zero-write, works on a read-only handle; used by ``memory_import`` to
+        show the Owner the list and then write exactly that list.
+        """
+        return ReconcileMixin._scan_memories(self, project_folder="", also_existing=also_existing,
+                                             audit=False)
+
+    def _plan_config_import(
+        self,
+        *,
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
+        extra_project_roots: "tuple | list" = (),
+    ) -> dict:
+        """The full plan (with item text) behind :meth:`reconcile_ai_configs` (zero-write)."""
+        return ReconcileMixin._scan_configs(
+            self, search_roots=None, max_imports=25, project_folder="",
+            also_existing=also_existing, extra_project_roots=extra_project_roots, audit=False,
+        )
+
+    def _reconcile_existing_summaries(self, *, dry_run: bool = False) -> set[str]:
+        """Texts an import is deduplicated against (access-neutral read).
+
+        Active lessons of every tier (so the review queue counts), decision
+        questions and choices, and rows the capacity cap moved to the overflow
+        archive (they were captured once already; re-importing them would grow
+        the archive without bound). A dry run never migrates legacy fields on
+        disk.
+        """
+        migrate = not dry_run
+        existing_lessons = self.get_lessons(limit=None, _update_access=False, _migrate_fields=migrate)
+        existing_decisions = self.get_decisions(limit=None, _update_access=False, _migrate_fields=migrate)
+        summaries = {lesson.get("summary", "") for lesson in existing_lessons}
+        for d in existing_decisions:
+            summaries.add(d.get("question", ""))
+            summaries.add(d.get("choice", ""))
+        summaries |= self._overflow_archive_texts()
+        return summaries
 
     def collect_memory_candidates(self) -> list[dict]:
         """Read-only scan of external AI memory files into reconcile candidates.
@@ -382,7 +586,7 @@ class ReconcileMixin:
         path (``reconcile_apply``) to classify. Honors the same authorization
         gate and per-file size cap. Returns ``[]`` when not authorized.
         """
-        if not self._reconcile_authorized():
+        if not self._reconcile_authorized(self.root):
             return []
         candidates: list[dict] = []
         for glob_pattern in self._CLAUDE_MEMORY_GLOBS:
@@ -512,42 +716,67 @@ class ReconcileMixin:
         search_roots: list[str] | None = None,
         max_imports: int = 25,
         project_folder: str = "",
+        dry_run: bool = False,
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
+        extra_project_roots: "tuple | list" = (),
     ) -> dict:
-        """Scan AI tool config files and import unique rules into Engram.
+        """Import rules from other AI tools' config files into the review queue.
 
-        Discovers project roots from Claude Code project entries, then
-        looks for CLAUDE.md, .cursorrules, AGENT.md, etc. in each.
-        Parses markdown sections and imports meaningful directives as lessons.
+        Planned by ``_plan_config_import`` for ``engram import-memories``; without
+        ``dry_run`` the plan is written at once through the shared writer (see
+        :meth:`reconcile_memories`). Rule-file sections are capped at
+        ``max_imports`` (25) per run; run again after an import to continue.
+        Discovers project roots from Claude Code project entries, then looks
+        for CLAUDE.md, .cursorrules, AGENT.md, etc. in each, parses markdown
+        sections and imports each meaningful one as a staging lesson, at most
+        ``max_imports`` per run. ``dry_run=True`` returns the same plan and
+        writes nothing; ``also_existing`` adds texts planned elsewhere in the
+        same run to the dedup set. ``extra_project_roots`` adds project folders
+        (e.g. the current directory during ``engram setup``) whose CLAUDE.md /
+        AGENTS.md / .cursorrules ... are read like discovered project roots.
+        ``items`` lists one dict per planned or
+        imported section (see :meth:`reconcile_memories`).
 
-        Requires reconcile authorization (granted during setup or via
-        ENGRAM_RECONCILE=1 env var).
+        Honours the off switches (ENGRAM_RECONCILE=0 or
+        ``reconcile_authorized: false`` in telemetry_config.json).
         """
-        if not self._reconcile_authorized():
-            self._note_reconcile_env_conflict()
+        plan = ReconcileMixin._scan_configs(
+            self, search_roots=search_roots, max_imports=max_imports,
+            project_folder=project_folder, also_existing=also_existing,
+            extra_project_roots=extra_project_roots, audit=not dry_run,
+        )
+        return self._finish_reconcile(plan, dry_run=dry_run, source="configs",
+                                      name="reconcile_ai_configs")
+
+    def _scan_configs(
+        self,
+        *,
+        search_roots: list[str] | None = None,
+        max_imports: int = 25,
+        project_folder: str = "",
+        also_existing: "set[str] | frozenset[str]" = frozenset(),
+        extra_project_roots: "tuple | list" = (),
+        audit: bool = False,
+    ) -> dict:
+        """Scan rule files into a full plan (item text included); writes no rows."""
+        dry_run = not audit
+        if not self._reconcile_authorized(self.root):
             result = {"imported": 0, "duplicates": 0, "scanned_files": 0,
-                      "sources": [],
+                      "sources": [], "items": [],
                       "skipped_reason": "reconcile not authorized",
                       "budget_exhausted": False}
             if project_folder:
                 result["scope"] = self._reconcile_scope_metadata(project_folder)
             return result
-        imported = 0
+        planned = 0
         duplicates = 0
         scanned_files = 0
-        sources: list[str] = []
+        items: list[dict] = []
         budget_exhausted = False
         import_budget = max(0, int(max_imports))
 
-        existing_lessons = self.get_lessons(limit=None, _update_access=False)
-        existing_decisions = self.get_decisions(limit=None, _update_access=False)
-        existing_summaries = {
-            lesson.get("summary", "") for lesson in existing_lessons
-        }
-        for d in existing_decisions:
-            existing_summaries.add(d.get("question", ""))
-            existing_summaries.add(d.get("choice", ""))
-        # Already-captured rows now in the overflow archive are not re-imported.
-        existing_summaries |= self._overflow_archive_texts()
+        existing_summaries = self._reconcile_existing_summaries(dry_run=dry_run)
+        existing_summaries |= set(also_existing)
         existing_summaries.discard("")
 
         # Collect all config files to scan
@@ -584,7 +813,9 @@ class ReconcileMixin:
 
         # Project-level configs
         if search_roots is None and not project_folder:
-            for root in self._discover_project_roots():
+            project_roots = list(self._discover_project_roots())
+            project_roots += [Path(root) for root in extra_project_roots]
+            for root in project_roots:
                 for fname in self._AI_CONFIG_FILENAMES:
                     candidate = root / fname
                     if candidate.is_file():
@@ -605,8 +836,9 @@ class ReconcileMixin:
             try:
                 fsize = cfg.stat().st_size
                 if fsize > _MAX_CFG:
-                    self._audit.log("warn", "reconcile_config/skip_large",
-                                    detail=f"{cfg.name} ({fsize}B)")
+                    if not dry_run:
+                        self._audit.log("warn", "reconcile_config/skip_large",
+                                        detail=f"{cfg.name} ({fsize}B)")
                     continue
                 content = cfg.read_text(encoding="utf-8", errors="replace")
                 if "\ufffd" in content:
@@ -647,32 +879,31 @@ class ReconcileMixin:
                 if is_dup:
                     continue
 
-                if imported >= import_budget:
+                # Rule-file sections: at most max_imports (25) per run.
+                if planned >= import_budget:
                     budget_exhausted = True
                     break
+                if _rejected_before(self.root, summary_candidate, project_folder=project_folder):
+                    continue  # the insert would refuse it
 
-                result = self.add_lesson(
-                    summary_candidate,
-                    domain="ai_config",
-                    detail=_bounded_detail(section_body, source=content),
-                    source_tool="config_scan",
-                    tier="staging",
-                    project_folder=project_folder or None,
-                )
-                if result.get("status") not in _NOT_IMPORTED:
-                    imported += 1
-                    sources.append(f"{cfg.parent.name}/{cfg.name}")
-                    existing_summaries.add(summary_candidate)
-                else:
-                    duplicates += 1
+                planned += 1
+                items.append(_import_item(
+                    "configs", cfg, summary_candidate,
+                    _bounded_detail(section_body, source=content),
+                    domain="ai_config", source_tool="config_scan",
+                    project_folder=project_folder, label=f"{cfg.parent.name}/{cfg.name}",
+                ))
+                existing_summaries.add(summary_candidate)
             if budget_exhausted:
                 break
 
         result = {
             "scanned_files": scanned_files,
-            "imported": imported,
+            "imported": 0,
             "duplicates": duplicates,
-            "sources": sources,
+            "queue_full": 0,
+            "sources": [],
+            "items": items,
             "budget_exhausted": budget_exhausted,
         }
         if project_folder:

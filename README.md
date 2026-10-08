@@ -109,7 +109,7 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 
 | | Current repo / development facts |
 |---|---|
-| Version frame | **v4.21.2** (verified 2026-09-26; check PyPI and GitHub Releases for the latest published package) |
+| Version frame | **v4.22.0** (verified 2026-10-07; check PyPI and GitHub Releases for the latest published package) |
 | Supported AI tools | **16** (evidence level varies by client; see Supported Tools and the validation runbook) |
 | MCP tools | **19 Core** (loaded by default) + **40 Advanced** (opt-in via `ENGRAM_TOOLS=all`) |
 | Knowledge types | **3** (lessons, decisions, playbooks) |
@@ -118,7 +118,7 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | Optional field-level AES-256-GCM for supported profile fields; local files are plaintext JSON/Markdown by default |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls by default | **0** for identity and knowledge tools — except optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
+| Network calls by default | One anonymous usage ping a day (`engram telemetry off` or `DO_NOT_TRACK=1` turns it off); the `engram` command also checks PyPI for a newer version at most once a day in interactive terminals, and `engram doctor` checks on each run (`ENGRAM_NO_UPDATE_CHECK=1` turns it off); identity and knowledge tools make none, except the optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
 
 ---
 
@@ -229,8 +229,8 @@ The setup wizard will:
 2. Let you choose the Engram data folder (`~/.engram`, another drive, or a custom path)
 3. Detect your AI tools, list the exact config files it will touch, and write the MCP connection after a one-keystroke confirm (backed up first; decline leaves them untouched)
 4. Walk you through seed knowledge (role, tech stack, language)
-5. Smart-import rules from your existing `CLAUDE.md` / `.cursorrules` files
-6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (cross-tool sync, anonymous statistics)
+5. Offer to import rules and memories from your other AI tools — `CLAUDE.md`, `.cursorrules`, memory files (default no; lists them first, then the review queue, approve with `engram review`)
+6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (anonymous statistics)
 7. **Preview your AI identity card** — immediate proof of value
 
 After setup writes the MCP connection (you confirm at the prompt first), restart your AI tool. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.
@@ -252,6 +252,7 @@ engram continuity    # metadata-only proof that cross-tool handoff is ready
 engram management    # metadata-only review/playbook management view
 engram doctor        # diagnose all tools
 engram doctor --fix  # auto-repair issues + inject missing instructions
+engram doctor --days 7 --json  # which AI clients are configured and called Engram lately (read-only)
 engram repair-encoding        # dry-run scan for garbled / mojibake text
 engram repair-encoding --apply  # repair reversible cases with a backup
 ```
@@ -311,6 +312,11 @@ Don't take the table above on faith — run the checks on your own machine:
 
 ### Configure for Your AI Tool
 
+The snippets use the server name `engram`, the name `engram setup` writes. An
+entry named `piia-engram` (from earlier instructions) is still recognised, and
+setup moves it to `engram` after backing up the file instead of adding a second
+server.
+
 <details open>
 <summary><strong>Claude Code</strong></summary>
 
@@ -319,9 +325,18 @@ Don't take the table above on faith — run the checks on your own machine:
 engram setup
 # Skip the confirmation prompt for non-interactive/CI runs
 engram setup --apply-external-config
-# Or manual:
-claude mcp add piia-engram -- piia-engram-mcp
+# Or manual (user scope, available in all your projects):
+claude mcp add --scope user engram -- piia-engram-mcp
 ```
+
+Setup registers Engram through the `claude` command into Claude Code's user
+config (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`); it never edits
+that file itself. If `claude` is not on your `PATH`, setup prints the exact
+command to run. The values passed with `-e` appear on the `claude` process
+command line while it runs. Engram also recognises an entry named `piia-engram`
+from earlier instructions. Setup versions before this fix wrote to
+`~/.claude/.mcp.json`, which Claude Code does not read: run `engram setup`
+again to register in the right place (it offers to remove the old entry).
 
 </details>
 
@@ -332,7 +347,7 @@ Add to `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "piia-engram-mcp",
       "args": ["--transport", "stdio"]
     }
@@ -353,30 +368,25 @@ Compatible fallback if console scripts are not on `PATH`:
 <details>
 <summary><strong>Codex (OpenAI)</strong></summary>
 
-Add to `~/.codex/mcp.json`:
-```json
-{
-  "mcpServers": {
-    "piia-engram": {
-      "command": "python",
-      "args": ["-m", "piia_engram.mcp_server"]
-    }
-  }
-}
+Add to `~/.codex/config.toml` (the file `engram setup` writes for Codex):
+```toml
+[mcp_servers.engram]
+command = "python"
+args = ["-m", "piia_engram.mcp_server"]
 ```
 
-> **Plugin manifest note (Codex CLI 0.130.0+)**: piia-engram ships a `.claude-plugin/plugin.json` whose schema is also recognized by Codex CLI. Native one-command plugin install via Codex's marketplace flow isn't supported yet (Codex expects a multi-plugin marketplace manifest at the repo root, which would conflict with the single-plugin manifest used by other tools). For now, configure Codex via the `~/.codex/mcp.json` snippet above — it's the supported path and works on every Codex version.
+> **Plugin manifest note (Codex CLI 0.130.0+)**: piia-engram ships a `.claude-plugin/plugin.json` whose schema is also recognized by Codex CLI. Native one-command plugin install via Codex's marketplace flow isn't supported yet (Codex expects a multi-plugin marketplace manifest at the repo root, which would conflict with the single-plugin manifest used by other tools). For now, configure Codex via the `~/.codex/config.toml` snippet above — it's the supported path and works on every Codex version.
 
 </details>
 
 <details>
 <summary><strong>Claude Desktop</strong></summary>
 
-Add to `claude_desktop_config.json`:
+Add to `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\`; macOS: `~/Library/Application Support/Claude/`):
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -393,7 +403,7 @@ Any tool that supports MCP over stdio works. Use this config:
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -414,7 +424,7 @@ For tools without MCP support (ChatGPT, Gemini, Kimi): run `get_identity_card` i
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"]
     }
@@ -513,7 +523,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://your-server:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -528,7 +538,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "url": "http://your-server:8767/sse",
       "headers": {
         "Authorization": "Bearer abc123..."
@@ -547,14 +557,14 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 ## MCP Tools
 
-piia-engram ships 59 MCP tools. By default, only the 19 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 59 tools, add `ENGRAM_TOOLS=all` to your MCP config:
+piia-engram ships 59 MCP tools. By default, only the 19 **Tier-1 Core** tools are loaded to keep the AI's context clean. Core means "used in most sessions", not "read-only": some core tools write local memory or owner-gated export files, and the governance layer still gates those side effects. Each tool also carries standard MCP hints (read-only, destructive, idempotent, open-world) for the client; they are advice, not access control, which stays with strict mode and governance. For the short operator view, see the [MCP cheatsheet](docs/operator-mcp-cheatsheet.md). To unlock all 59 tools, add `ENGRAM_TOOLS=all` to your MCP config:
 
 You can also expose composable capability modes such as knowledge management, governance, admin, or integrations; see the [capability modes guide](docs/operator-mcp-cheatsheet.md#capability-modes).
 
 ```json
 {
   "mcpServers": {
-    "piia-engram": {
+    "engram": {
       "command": "python",
       "args": ["-m", "piia_engram.mcp_server"],
       "env": { "ENGRAM_TOOLS": "all" }
@@ -563,7 +573,7 @@ You can also expose composable capability modes such as knowledge management, go
 }
 ```
 
-**Startup sync:** Engram reconciles memories/config snippets from local AI tools when an MCP server starts. By default this runs in the background so stdio clients can initialize quickly. Set `ENGRAM_MCP_STARTUP_SYNC=eager` to restore synchronous startup sync, or `ENGRAM_MCP_STARTUP_SYNC=off` to skip startup sync for latency-sensitive test arms. `ENGRAM_EPHEMERAL=1` also skips startup sync and migration work in container/ephemeral clients.
+**Importing from other AI tools:** Engram never reads other AI tools' memory or rule files on its own: not at server start, not on cold start, not at session end. Run `engram import-memories` to bring them in; it lists what it found first (`--dry-run` stops there), then adds them to the review queue after you confirm, and writes a receipt to `import_receipts/` in the store. `ENGRAM_MCP_STARTUP_SYNC` is still accepted but no longer does anything; `ENGRAM_RECONCILE=0` turns reading other AI tools' files off entirely. `ENGRAM_EPHEMERAL=1` skips the startup config check in container/ephemeral clients.
 
 ### Tier-1 Core (18 tools — daily workflow)
 
@@ -607,7 +617,7 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `user_portrait` | `action`: get / save / compare the AI-maintained user portrait |
 | `preview_context_governance` | Advanced owner-gated preview: build safe-context, freshness/conflict, replay, or evidence proposals without applying changes |
 | `get_playbooks` | Playbook reads via `mode`: list, get (full content), recent, management (incl. archived/deleted metadata) |
-| `manage_playbook` | Playbook lifecycle via `action`: update, archive, delete, restore (mutations stay confirm-gated) |
+| `manage_playbook` | Playbook lifecycle via `action`: update, archive, delete, restore (mutations stay confirm-gated and need `expected_version`) |
 | `playbook_execution` | Guided execution via `action`: prepare a step plan, update_step, status rollup (passive reference; no auto-execution) |
 | `get_lessons` | List reusable lessons learned |
 | `get_decisions` | List key decisions; `thread_seed_id` / `history_question` reconstruct decision threads and revision history |
@@ -615,22 +625,22 @@ Advanced tools include optional local integrations, owner/admin surfaces, and ma
 | `list_projects` | List saved project snapshots |
 | `extract_session_insights` | Extract lessons and decisions from session text |
 | `ingest_notes` | Parse free-form notes into structured knowledge |
-| `update_knowledge` | Update a lesson or decision by ID |
-| `archive_knowledge` | Archive a lesson or decision by ID |
+| `update_knowledge` | Update a lesson, decision or playbook by ID (needs `expected_version`) |
+| `archive_knowledge` | Archive a lesson, decision or playbook by ID (needs `expected_version`) |
 | `confirm_knowledge` | Owner-only confirmation stamp via human, test, or anchor provenance |
 | `onboard_repo` | Owner-only repo scan: create staging repo-fact candidates from anchors |
-| `onboard_accept` | Owner-only accept: validate a candidate anchor and promote it to verified |
+| `onboard_accept` | Local only: accepting an onboard candidate is `engram onboard-accept <id>`; over MCP it answers `local_review_only` and writes nothing |
 | `check_anchors` | Owner-only revalidation for existing anchor-backed facts |
-| `merge_knowledge` | Merge a duplicate into the primary item |
+| `merge_knowledge` | Merge a duplicate into the primary item (needs both items' versions) |
 | `manage_relation` | `action`: link / unlink — manage typed relations between knowledge items (decision threads) |
 | `explore_knowledge` | Knowledge graph exploration via `mode`: related, similar, merge_candidates |
 | `get_knowledge_overview` | Knowledge digest, health report, stale checks |
 | `get_stale_knowledge` | List items that need review |
-| `review_staging` | Staging review hub via `action`: list pending, batch decisions, review_item, apply_text review results |
+| `review_staging` | Staging review via `action`: list pending, batch preview (`dry_run=true`), review_item. Approving, rejecting or archiving pending items is local only (`engram review`); over MCP it answers `local_review_only` |
 | `export_knowledge_report` | Owner-gated export: write a readable Markdown knowledge report |
 | `request_outline_review` | Owner-gated export: generate an interactive local HTML review page |
 | `export_engram` | Owner-gated export: write a full backup (`format="openclaw"` for OpenClaw-compatible files) |
-| `import_engram` | Owner/admin import: use `dry_run=True` first for a metadata-only merge/conflict preview (`format="openclaw"` supported) |
+| `import_engram` | Owner/admin import preview only (`dry_run=True`): a metadata-only merge/conflict plan (`format="openclaw"` supported). Applying an import is local: `engram import <backup.json> --apply --yes` (OpenClaw: `engram import --format openclaw ... --apply --yes`) |
 | `read_web_content` | Fetch a user-provided URL: prefers a local sidecar if running, otherwise uses the self-contained built-in reader (`pip install "piia-engram[reader]"`) |
 | `get_audit_log` | Get recent audit log entries |
 | `start_project` | Start a project with inherited knowledge |
@@ -744,8 +754,8 @@ brings an entry back).
 upgrade (it reads no stored knowledge bodies and never reaches outside the
 Engram root). For JSON backups, `import_engram(..., dry_run=True)` or
 `engram import <backup.json>` returns a metadata-only merge plan with
-add/skip/conflict counts before any write; `--apply --yes` is required to mutate
-the local store. Same-summary lessons and same-question decisions with divergent
+add/skip/conflict counts before any write; applying it is local only:
+`engram import <backup.json> --apply --yes` (over MCP, `import_engram` only previews). Same-summary lessons and same-question decisions with divergent
 semantic fields are previewed as version-chain candidates; they are materialized
 only when the owner explicitly runs
 `engram import <backup.json> --apply --yes --materialize-version-chain`. Engram
@@ -815,7 +825,7 @@ The setup wizard detects your AI tools without changing their config files by de
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
 
 **Does piia-engram send data to the cloud?**
-Not by default. Identity and knowledge tools use local files, and telemetry is **off by default**. Optional anonymous usage statistics can be enabled as a local log; remote telemetry and weekly feedback reports require separate explicit opt-in and send counts only, never knowledge content. You can inspect the next payload with `engram telemetry preview`, disable anytime with `engram telemetry off`, and turn remote sending off with `engram telemetry remote off`. See **[PRIVACY.md](PRIVACY.md)** for the full data flow diagram, what is and isn't collected, and your data rights.
+Your memories never leave your machine. Engram sends one anonymous usage ping a day (random install ID, version, OS, Python version, AI client name, date) so we know how many installs are active; it never contains memories, file paths, account details or command arguments, and the server does not store IP addresses. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (it is off in CI and in containers); `engram telemetry preview` shows the exact payload. Detailed statistics and feedback reports are separate opt-ins. See **[PRIVACY.md](PRIVACY.md)**.
 
 **How many MCP tools does piia-engram provide?**
 Two tiers, designed so most users only see 18 tools:
@@ -910,6 +920,7 @@ piia-engram doctor --fix     # Auto-repair any issues found
 piia-engram sessions         # List saved cross-tool agent sessions
 piia-engram sessions show <id>  # Print one saved session
 piia-engram review           # List staging knowledge awaiting review
+piia-engram review interactive  # Decide pending proposals one at a time (a/r/s/k/v/q, confirm with y)
 piia-engram review show <id> # Inspect one review item
 piia-engram review approve <id> --yes  # Promote a staging item
 piia-engram review archive <id> --yes  # Archive a review item

@@ -26,7 +26,6 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 _write_operation_lock = threading.RLock()
-_reconcile_operation_lock = threading.RLock()
 
 
 def _configure_utf8_stdio() -> None:
@@ -46,38 +45,36 @@ def _env_flag_enabled(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
+def _current_client_info() -> tuple[str, str]:
+    """clientInfo (name, version) the connected MCP client sent at initialize.
+
+    Read from the live request only, so each session reports its own client.
+    Outside a request (an atexit or heartbeat save) the answer is ("", ""),
+    recorded as ``unknown``: never borrowed from another session. The values
+    are the client's own claim -- provenance only, never trust.
+    """
+    try:
+        params = mcp.get_context().session.client_params
+        info = getattr(params, "clientInfo", None) if params is not None else None
+        if info is not None:
+            return str(getattr(info, "name", "") or ""), str(getattr(info, "version", "") or "")
+    except Exception:
+        pass  # not inside a request
+    return "", ""
+
+
 def _locked_engram_call(fn, *args, **kwargs):
-    """Serialize MCP write operations that may read-modify-write JSON stores."""
-    with _write_operation_lock:
+    """Serialize MCP write operations that may read-modify-write JSON stores.
+
+    Every MCP call into the store runs here, so this is also the one place
+    that marks rows written during the call with ``provenance.origin = "mcp"``
+    and the client's self-reported clientInfo (see ``write_provenance``).
+    """
+    client_name, client_version = _current_client_info()
+    with _write_operation_lock, _write_provenance.origin_scope(
+        _write_provenance.ORIGIN_MCP, client_name=client_name, client_version=client_version,
+    ):
         return fn(*args, **kwargs)
-
-
-def _locked_reconcile_call(fn, *args, **kwargs):
-    """Serialize long-running reconcile passes without blocking normal writes."""
-    with _reconcile_operation_lock:
-        return fn(*args, **kwargs)
-
-
-def _startup_sync_mode(is_ephemeral: bool) -> str:
-    """Return startup reconcile mode: background (default), eager, or off."""
-    if is_ephemeral:
-        return "off"
-
-    raw = os.environ.get("ENGRAM_MCP_STARTUP_SYNC", "").strip().lower()
-    if not raw:
-        return "background"
-    if raw in ("background", "bg", "async", "lazy", "on", "1", "true", "yes"):
-        return "background"
-    if raw in ("eager", "sync"):
-        return "eager"
-    if raw in ("off", "0", "false", "no", "none", "disabled"):
-        return "off"
-
-    logger.warning(
-        "invalid ENGRAM_MCP_STARTUP_SYNC=%r; using background startup sync",
-        raw,
-    )
-    return "background"
 
 
 def _run_startup_auto_migrate() -> None:
@@ -93,48 +90,6 @@ def _run_startup_auto_migrate() -> None:
         auto_migrate()
 
 
-def _run_startup_sync() -> None:
-    """Reconcile external AI memories/configs on MCP startup."""
-    if _engram is None:
-        return
-    try:
-        with _reconcile_operation_lock:
-            _mem = _engram.reconcile_memories()
-            _cfg = _engram.reconcile_ai_configs()
-        _archived = len(_mem.get("overflow_archived_ids") or []) + len(
-            _cfg.get("overflow_archived_ids") or []
-        )
-        if _mem["imported"] or _cfg["imported"] or _archived:
-            _msgs = []
-            if _mem["imported"]:
-                _msgs.append(f"memories={_mem['imported']}")
-            if _cfg["imported"]:
-                _msgs.append(f"configs={_cfg['imported']}")
-            if _archived:
-                _msgs.append(f"moved to overflow archive={_archived}")
-            print(
-                f"[engram] startup sync: {', '.join(_msgs)}",
-                file=sys.stderr,
-            )
-    except Exception as exc:
-        logger.warning("startup sync failed: %s", exc)
-
-
-def _schedule_startup_sync(mode: str) -> None:
-    if mode == "off":
-        return
-    if mode == "eager":
-        _run_startup_sync()
-        return
-
-    thread = threading.Thread(
-        target=_run_startup_sync,
-        name="engram-startup-sync",
-        daemon=True,
-    )
-    thread.start()
-
-
 from piia_engram.beta_tracker import track_event as _track_beta_event
 
 
@@ -144,6 +99,7 @@ def _beta(event: str, **data) -> None:
         return
     _track_beta_event(event, **data)
 from piia_engram import provenance as _provenance
+from piia_engram import write_provenance as _write_provenance
 from piia_engram.continuity_digest import build_session_digest as _build_session_digest
 
 # Starlette imports are deferred to SSE mode — not needed for stdio.
@@ -188,6 +144,10 @@ try:
     from . import recall_service as _recall_service  # noqa: E402
 except ImportError:
     import recall_service as _recall_service  # noqa: E402
+try:
+    from . import recall_policy as _recall_policy  # noqa: E402
+except ImportError:
+    import recall_policy as _recall_policy  # noqa: E402
 try:
     from . import context_governance as _context_governance  # noqa: E402
 except ImportError:
@@ -488,7 +448,13 @@ class _SessionTracker:
         if self.client_info:
             return  # already detected
         self.client_info = {"name": name, "version": version}
-        logger.info("MCP client: %s %s", name, version)
+        # clientInfo is whatever the client sent: strip control characters
+        # (newlines, terminal escapes) and cap it before it reaches the log.
+        logger.info(
+            "MCP client: %s %s",
+            _write_provenance.clean_client_text(name),
+            _write_provenance.clean_client_text(version),
+        )
         # Auto-map well-known MCP client names to our tool_name taxonomy
         # so session tracking works even if the AI never calls
         # save_agent_context(tool=...).
@@ -991,6 +957,29 @@ def _detect_mcp_client_once() -> None:
         pass  # not in a request context, or client didn't send info
 
 
+def _usage_ping_module():
+    try:
+        from piia_engram import usage_ping as _usage_ping
+    except ImportError:
+        return None
+    return _usage_ping
+
+
+def _start_usage_ping(client_name: str) -> None:
+    """Daily anonymous usage ping. usage_ping allows one attempt per process."""
+    module = _usage_ping_module()
+    if module is not None:
+        module.maybe_send(client_name)
+
+
+def _show_usage_notice() -> None:
+    """Notice on stderr at every start while the ping is on (stdout carries the
+    MCP protocol). Writes nothing, so the one-time CLI notice is still shown."""
+    module = _usage_ping_module()
+    if module is not None:
+        module.maybe_show_notice(sys.stderr, mark=False)
+
+
 def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None:
     """Record a tool call for telemetry and session auto-tracking.
 
@@ -1035,6 +1024,9 @@ def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None
                     return
             except Exception:
                 return
+    # Daily usage ping (network + a write to the user config dir): only past both
+    # governance checks above, so suppressed non-owner calls stay side-effect free.
+    _start_usage_ping(_session.client_info.get("name", "") or "unknown")
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
         _track_count += 1
@@ -1228,7 +1220,22 @@ _DEFAULT_SERVER_INSTRUCTIONS = (
     "- Need past knowledge → search_knowledge(query, filters_json='{\"tier\":\"verified\"}')\n"
     "- Learned something reusable → memory_store(kind='lesson', content_json=...)\n"
     "- Decision made → memory_store(kind='decision', content_json=...)\n"
-    "- Conversation end → wrap_up_session\n"
+    "- Conversation end → wrap_up_session\n\n"
+    "What to keep:\n"
+    "- Only what stays useful later; not today's progress, to-dos or temporary state.\n"
+    "- Relative dates (\"yesterday\", \"next week\"): write the actual date only when you can\n"
+    "  tell when it was said; otherwise keep the words and add \"(date unknown)\".\n"
+    "- If something contradicts an existing entry: search_knowledge for the old one, then\n"
+    "  write the correction with supersedes=<old id> instead of an unrelated new entry.\n\n"
+    "Notes:\n"
+    "- Playbooks you add (add_playbook, memory_store kind='playbook') are proposals: they wait\n"
+    "  for the Owner's review (engram review) and are used only after approval.\n"
+    "- Approving, rejecting or archiving pending proposals, and accepting onboard candidates,\n"
+    "  is the Owner's local engram review / engram onboard-accept; over MCP review_staging\n"
+    "  lists and previews only (other requests: local_review_only).\n"
+    "- Changing an existing entry (update_knowledge, archive_knowledge, merge_knowledge,\n"
+    "  manage_playbook, or a write with supersedes) needs expected_version /\n"
+    "  supersedes_expected_version: the version from the read result.\n"
 )
 
 _STRICT_SERVER_INSTRUCTIONS = (
@@ -1241,9 +1248,17 @@ _STRICT_SERVER_INSTRUCTIONS = (
     "  type:project_fact, type:lesson or type:decision; playbooks: rule, lesson or project_fact)\n"
     "  and say in detail / description why it is worth keeping.\n"
     "  Proposals wait in the review queue; the Owner decides with the local engram review CLI.\n"
-    "- Do not propose session logs, progress notes or anything already in files or git;\n"
-    "  keep session checkpoints in project-local notes.\n"
+    "- Propose only what stays useful later: no session logs, today's progress, to-dos,\n"
+    "  temporary state or anything already in files or git; keep session checkpoints in\n"
+    "  project-local notes.\n"
+    "- Relative dates (\"yesterday\", \"next week\"): write the actual date only when you can\n"
+    "  tell when it was said; otherwise keep the words and add \"(date unknown)\".\n"
+    "- If something contradicts an existing entry: search_knowledge for the old one, then\n"
+    "  propose a revision with supersedes=<old id> (it waits for review like any proposal)\n"
+    "  instead of an unrelated new entry.\n"
     "- Editing, approving, archiving, merging and identity changes are refused over MCP.\n"
+    "- A proposal that replaces an existing entry (supersedes, or a playbook update) needs that\n"
+    "  entry's version: supersedes_expected_version / expected_version from the read result.\n"
 )
 
 
@@ -1340,6 +1355,8 @@ def _validate_path(value: str, *, allow_empty: bool = False) -> str | None:
         return f"路径参数必须是字符串（收到 {type(value).__name__}）"
     if "\x00" in value:
         return "路径包含 NUL 字节（不允许）"
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return "路径包含控制字符（不允许） / path contains a control character"
     if not allow_empty and not value.strip():
         return "路径不能为空"
     return None
@@ -1637,6 +1654,15 @@ except ImportError:  # plain-script mode (no package context)
         get_daily_log,
     )
 
+# Advisory hints for clients (read-only / destructive / idempotent / open-world),
+# set once every tool module is imported. Not access control: strict mode and
+# governance decide who may do what.
+try:
+    from .tool_annotations import apply_tool_annotations as _apply_tool_annotations  # noqa: E402
+except ImportError:  # plain-script mode (no package context)
+    from tool_annotations import apply_tool_annotations as _apply_tool_annotations  # type: ignore[no-redef]  # noqa: E402
+
+_apply_tool_annotations(mcp)
 _apply_tool_tier()
 
 
@@ -1662,34 +1688,26 @@ def main() -> None:
         )
 
     # Detect ephemeral/Docker environments where no local AI tools exist.
-    # Skip auto_migrate and reconcile to speed up startup (critical for
-    # mcp-proxy which has short connection timeouts).
+    # Skip auto_migrate there to speed up startup (critical for mcp-proxy
+    # which has short connection timeouts).
     _is_ephemeral = os.path.isfile("/.dockerenv") or _env_flag_enabled("ENGRAM_EPHEMERAL")
 
-    # Auto-migrate legacy configs on first run after upgrade (stdio only;
+    # Content-free config migration on first run after upgrade (stdio only;
     # must happen before mcp.run() to avoid polluting the MCP stdio channel).
     if args.transport == "stdio" and not _is_ephemeral:
         _run_startup_auto_migrate()
 
-    # Auto-reconcile on MCP server startup — runs once regardless of which
-    # AI tool connects.  This ensures cross-tool memory sync happens even if
-    # the AI tool never calls get_user_context.
-    # Skip in ephemeral containers — no AI tool configs to scan.
-    # Startup sync policy: background by default, eager/off by env override.
-    try:
-        from piia_engram.reconcile import reconcile_env_conflict_note as _reconcile_note
-    except ImportError:
-        from reconcile import reconcile_env_conflict_note as _reconcile_note  # type: ignore[no-redef]
-    _note = _reconcile_note()
-    if _note:
-        print(f"[engram] warning: {_note}", file=sys.stderr)
+    # The server start never reads other AI tools' memory or config files and
+    # never writes memory content: importing them is the explicit
+    # `engram import-memories` command. ENGRAM_MCP_STARTUP_SYNC and
+    # ENGRAM_RECONCILE are still accepted but no longer change the start.
     for _warning in _startup_env_warnings():
         print(f"[engram] warning: {_warning}", file=sys.stderr)
     if _engram is not None:
         _latch = _gov_rt._strict_mode.bootstrap(_engram.root, source="mcp")
         if _latch:
             print(f"[engram] warning: {_latch}", file=sys.stderr)
-    _schedule_startup_sync(_startup_sync_mode(_is_ephemeral))
+    _show_usage_notice()
 
     if args.transport == "sse":
         if not _HAS_STARLETTE:

@@ -58,7 +58,8 @@ class _FakeEngram:
         return []
 
     def get_relevant_lessons(self, project_folder=None, limit=8, _update_access=True):
-        return [dict(e) for e in self._relevant]
+        # stored rows always carry a status (recall trusts only active rows)
+        return [{"status": "active", **e} for e in self._relevant]
 
     def search_knowledge(self, query, scope="all", limit=10):
         return {}

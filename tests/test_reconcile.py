@@ -255,8 +255,9 @@ def test_reconcile_empty_dir(tmp_path: Path):
 
     engram._CLAUDE_MEMORY_GLOBS = [str(mem_dir / "*.md")]
     result = engram.reconcile_memories()
-    assert result == {"scanned_files": 0, "imported": 0, "duplicates": 0, "rejected_under_old_summary": 0,
-                      "skipped_large": 0, "sources": []}
+    assert result == {"scanned_files": 0, "imported": 0, "duplicates": 0, "queue_full": 0,
+                      "rejected_under_old_summary": 0, "skipped_large": 0, "sources": [],
+                      "items": [], "not_written": 0, "partial": False, "receipt": ""}
 
 
 # ── Non-existent path doesn't crash ──────────────────────────────────
@@ -927,7 +928,7 @@ def test_staging_reminder_in_context(tmp_path: Path):
 
     ctx = e.generate_context()
     assert "staging_review_reminder" in ctx
-    assert "12 条自动导入的知识尚未审核" in ctx
+    assert "12 条待审知识" in ctx
 
 
 def test_no_staging_reminder_when_few(tmp_path: Path):

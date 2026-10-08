@@ -281,7 +281,8 @@ class TestReviewMergeTools:
             action="apply_text", review_text=review
         ))
         parsed = json.loads(result)
-        assert parsed.get("archived") >= 0
+        # applying review results is the Owner's local review in every mode
+        assert parsed.get("error") == "local_review_only"
 
     def test_review_staging_apply_text_plain(self, eng: Engram):
         r = eng.add_lesson({"summary": "to archive via text review"})
@@ -537,7 +538,8 @@ class TestMemoryStore:
             }),
             user_confirmed=True,
         ))
-        assert "Playbook 已记录" in result
+        # an AI-written playbook is a proposal in every approval mode
+        assert "engram review" in result
 
     def test_memory_store_invalid_json(self, eng: Engram):
         result = _run(mcp_server.memory_store(

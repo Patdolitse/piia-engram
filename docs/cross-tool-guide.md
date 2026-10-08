@@ -51,7 +51,13 @@ Every knowledge record has a `source_tool` field marking which tool wrote it. It
 
 Each AI tool needs to be configured with Engram as an MCP Server:
 
-**Claude Code** - in `~/.claude/` or the project's `.mcp.json`:
+**Claude Code** - register it at user scope with the `claude` command
+(Claude Code keeps it in `~/.claude.json`; it does not read
+`~/.claude/.mcp.json`):
+```bash
+claude mcp add --scope user engram -- piia-engram-mcp
+```
+A project can instead share it in a `.mcp.json` at the project root:
 ```json
 {
   "mcpServers": {
@@ -248,18 +254,22 @@ update_identity(field="profile", updates_json='{"role":"developer"}', source_too
 
 ### 4.3 Knowledge Deduplication (v3.29.4+)
 
-When different tools write similar knowledge, Engram uses three-tier deduplication:
+When different tools write similar lessons or decisions, Engram compares the new entry with the active entries in the same project scope:
 
-| Similarity | Handling | Description |
+| Match | Handling | Description |
 |--------|------|------|
-| ≥ 85% | **Reject** | Exact duplicate, not added |
-| 55%-84% | **Link** | Added but automatically linked via `related_ids` |
+| Same text after normalization | **Reject** | Exact duplicate, not added; the reply names the existing entry and how to revise it (`supersedes`, or `update_knowledge` where edits are allowed). Normalization ignores case, punctuation, extra whitespace and a leading label such as "Lesson:"; a decision compares its question (or its title when it has no question) and its choice. Because punctuation is ignored, text that differs only in punctuation, such as version numbers (`3.11` and `31.1`), counts as the same. |
+| ≥ 95% similar, not the same | **Review** | Added to the review queue (also outside strict mode) with `duplicate_candidate` naming the earlier entry and the similarity; you decide whether it is new. `allow_similar_new=true` declares a similar but not identical entry as new and stores it as a related entry instead; it cannot bypass the refusal of identical content. |
+| 55%-95% | **Link** | Added as usual and linked via `related_ids` (`_dedup_note`); the review card marks it as a near-duplicate |
 | < 55% | **Pass** | Added normally |
 
 This means:
 - Claude Code and Codex write the exact same lesson → only one is kept
+- Writing an almost identical lesson, or a decision whose wording differs by one word (which can be the opposite conclusion) → it waits for your review instead of being dropped
 - Writing similar but differing lessons → both are kept and automatically marked as related
 - Writing unrelated lessons → each is stored independently
+
+A decision with the same question and a different choice is still stored as a revision that replaces the earlier one. Playbooks keep their own rule: a similar title is refused with guidance. The review card (`engram review export`) shows a duplicate candidate's earlier entry id, the similarity and a sentence-by-sentence diff.
 
 ### 4.4 source_tool Filtering
 
@@ -325,10 +335,11 @@ Returns structured JSON for easy automated processing.
 summary, extracts bounded candidate knowledge, updates the project snapshot
 when a project folder is supplied, and appends a daily-log entry.
 
-It does not run full reconciliation by default. Expensive maintenance such as
-AI config reconciliation should be requested explicitly with
-`run_reconcile=True` or run through dedicated owner maintenance flows. This
-keeps session closeout predictable for MCP hosts with fixed tool timeouts.
+It does not run full reconciliation by default, and it never imports other
+AI tools' memory or config files: `run_reconcile=True` is still accepted but
+imports nothing. Importing them is the owner's `engram import-memories`
+command. This keeps session closeout predictable for MCP hosts with fixed tool
+timeouts.
 
 Normal closeout:
 
@@ -353,26 +364,17 @@ Retrying the same caller-provided `idempotency_key` returns
 the existing operation state instead of duplicating daily-log, extraction,
 snapshot, or playbook writes.
 
-Explicit maintenance reconcile:
+Importing other AI tools' memories is a terminal command, not a closeout
+option:
 
-```python
-wrap_up_session(
-    summary="Owner-approved maintenance closeout.",
-    source_tool="codex",
-    project_folder="E:/Example/Project",
-    user_confirmed=True,
-    run_reconcile=True,
-    reconcile_scope="project",
-)
+```bash
+engram import-memories            # list, then import after you confirm
+engram import-memories --dry-run  # list only; writes nothing
 ```
 
-Use the explicit form only when the owner wants reconciliation work during
-closeout. With a project folder, `project` is the default scope: external
-Claude memory is accepted only from the same canonical project identity and
-config scanning is confined to that project root. There is no fuzzy path-prefix
-merge. An owner can request `reconcile_scope="global"` explicitly for a global
-maintenance pass. If the bounded config-import budget is reached, closeout
-returns `partial_complete` with a metadata-only budget reason.
+Imported items wait in the review queue. A closeout called with
+`run_reconcile=True` reports both reconcile stages as skipped
+(`explicit_import_only`) and points to the command.
 
 Telemetry and feedback are separate opt-in metadata paths. They are not reconciliation, do not contain knowledge bodies, and are controlled by the telemetry/feedback opt-in settings rather than `run_reconcile`. Default non-opt-in closeout sends no remote feedback.
 

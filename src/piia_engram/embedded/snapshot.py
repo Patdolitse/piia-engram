@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .. import recall_policy as _recall_policy
 from .contract import SNAPSHOT_SCHEMA, canonical_hash
 
 MAX_ITEMS = 8
@@ -337,9 +338,13 @@ def _exclude_reason(
 ) -> str | None:
     import json as _json
 
-    status = str(item.get("status", "active")).lower()
-    tier = str(item.get("tier", "verified")).lower()
-    if status in {"staging", "pending", "rejected", "archived", "superseded"} or tier not in {"verified", "active"}:
+    if kind == "project_context":
+        status = str(item.get("status", "active")).lower()
+        if status in {"staging", "pending", "rejected", "archived", "superseded"}:
+            return "untrusted_or_inactive"
+    elif not _recall_policy.is_trusted(item):
+        # the same whitelist every recall surface uses (status active; tier and
+        # memory_state empty or verified; approval not rejected / deprecated)
         return "untrusted_or_inactive"
     text = _json.dumps(item, ensure_ascii=False, default=str)
     if _SECRET.search(text):

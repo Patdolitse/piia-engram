@@ -39,6 +39,11 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
 
     One-time migration for existing OCA users.
     """
+    from .memory_import import refusal
+
+    refused = refusal(engram.root)  # ENGRAM_RECONCILE=0 / reconcile_authorized=false
+    if refused is not None:
+        return {"migrated": [], "status": "disabled", "disabled_by": refused["disabled_by"]}
     mem_dir = Path(oca_memory_dir)
     migrated: list[str] = []
 
@@ -87,13 +92,25 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
         try:
             near_misses = json.loads(nm_path.read_text(encoding="utf-8"))
             if isinstance(near_misses, list):
-                for nm in near_misses[-20:]:
-                    engram.add_lesson({
-                        "summary": nm.get("what_happened", "")[:80],
-                        "detail": nm.get("what_could_have_happened", ""),
-                        "domain": "safety",
-                        "source_project": "migrated_from_oca_memory",
-                    })
+                from .memory_import import note_outcome, recording
+
+                with recording(
+                    engram, sources=["legacy_memory_migration"],
+                    command="legacy_memory_migration",
+                    resource="knowledge/import_legacy_memory", source_tool="legacy_memory_migration",
+                ) as record:
+                    for nm in near_misses[-20:]:
+                        summary = nm.get("what_happened", "")[:80]
+                        detail = nm.get("what_could_have_happened", "")
+                        result = engram.add_lesson({
+                            "summary": summary,
+                            "detail": detail,
+                            "domain": "safety",
+                            "source_project": "migrated_from_oca_memory",
+                            "tier": "staging",  # imported lessons wait for review
+                        }, _audit_metadata_only=True)
+                        note_outcome(record, result, source="legacy_memory_migration",
+                                     file="near_misses.json", summary=summary, detail=detail)
                 migrated.append(f"near_misses ({len(near_misses)} entries)")
         except Exception as exc:
             logger.warning("migrate near_misses failed: %s", exc)
@@ -332,6 +349,84 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     }
 
 
+def openclaw_command(soul_path: str = "", memory_path: str = "", user_path: str = "", *, apply: bool = True) -> str:
+    """The local ``engram import --format openclaw`` command line, with placeholders.
+
+    The caller's paths are never echoed (they could carry shell syntax); each
+    file that was given appears as ``<SOUL.md>`` / ``<MEMORY.md>`` / ``<USER.md>``.
+    """
+    parts = ["engram import --format openclaw"]
+    for flag, value, holder in (("--soul", soul_path, "<SOUL.md>"), ("--memory", memory_path, "<MEMORY.md>"),
+                                ("--user", user_path, "<USER.md>")):
+        if value:
+            parts.append(f"{flag} {holder}")
+    if apply:
+        parts.append("--apply --yes")
+    return " ".join(parts)
+
+
+def _read_openclaw_file(raw: str) -> tuple[dict, str | None]:
+    """(metadata, text) for one OpenClaw file: ``~`` expanded, strict UTF-8."""
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in str(raw)):
+        return {"error": "path contains a control character"}, None
+    path = Path(raw).expanduser()
+    if not path.exists():
+        return {"exists": False}, None
+    if not path.is_file():
+        return {"exists": True, "error": "not a file"}, None
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return {"exists": True, "error": "not UTF-8 text"}, None
+    except OSError as exc:
+        return {"exists": True, "error": f"cannot read the file ({type(exc).__name__})"}, None
+    bullets = sum(1 for line in text.splitlines() if line.strip().startswith("- "))
+    return {"exists": True, "bullets": bullets}, text
+
+
+def read_openclaw_files(soul_path: str = "", memory_path: str = "", user_path: str = "") -> tuple[dict, dict]:
+    """Read every given OpenClaw file up front: ({name: text}, {name: metadata}).
+
+    The preview and the import use this one reader. A missing file is
+    reported as ``{"exists": False}`` and skipped; any other problem carries
+    ``error``, and the import then writes nothing.
+    """
+    texts: dict[str, str] = {}
+    files: dict[str, dict] = {}
+    for name, raw in (("soul", soul_path), ("memory", memory_path), ("user", user_path)):
+        if not raw:
+            continue
+        info, text = _read_openclaw_file(raw)
+        files[name] = info
+        if text is not None:
+            texts[name] = text
+    return texts, files
+
+
+def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "", user_path: str = "") -> dict:
+    """Metadata-only look at OpenClaw files: which exist and how many bullet lines each holds.
+
+    Reads nothing when the import switch is off (ENGRAM_RECONCILE=0). Writes nothing.
+    """
+    from .memory_import import refusal
+
+    refused = refusal(engram.root)
+    if refused is not None:
+        return {**refused, "bridge_level": OPENCLAW_BRIDGE_LEVEL}
+    if not (soul_path or memory_path or user_path):
+        return {"error": "give at least one OpenClaw file (soul, memory or user)",
+                "bridge_level": OPENCLAW_BRIDGE_LEVEL}
+    _texts, files = read_openclaw_files(soul_path, memory_path, user_path)
+    return {
+        "status": "preview",
+        "format": "openclaw",
+        "dry_run": True,
+        "files": files,
+        "note": "metadata only; MEMORY.md lessons go to the review queue, USER.md / SOUL.md merge "
+                "into the profile, preferences and quality standards",
+    }
+
+
 @overflow_batch
 def import_from_openclaw(
     engram: "Engram",
@@ -350,10 +445,30 @@ def import_from_openclaw(
         memory_path: Path to MEMORY.md (optional).
         user_path: Path to USER.md (optional).
 
+    Lessons from MEMORY.md wait in the review queue (staging) and a confirmed
+    batch leaves an import receipt plus an audit line. USER.md / SOUL.md still
+    merge into identity directly (there is no identity review queue).
+
     Returns:
         Dict with import summary.
     """
+    from .memory_import import note_outcome, recording, refusal
+    from .reconcile import _display_path
+
+    refused = refusal(engram.root)  # ENGRAM_RECONCILE=0 / reconcile_authorized=false
+    if refused is not None:
+        return {**refused, "bridge_level": OPENCLAW_BRIDGE_LEVEL, "receipt": ""}
+
+    # Everything is read and checked before anything is written.
+    texts, files = read_openclaw_files(soul_path, memory_path, user_path)
+    unreadable = {name: info for name, info in files.items() if info.get("error")}
+    if unreadable:
+        return {"error": "unreadable_file", "files": files, "imported": [],
+                "bridge_level": OPENCLAW_BRIDGE_LEVEL, "receipt": "",
+                "message": "An OpenClaw file could not be read; nothing was imported."}
+
     imported = []
+    receipt = ""
 
     def _parse_md_bullets(text: str) -> list[str]:
         """Extract bullet point content from markdown."""
@@ -365,96 +480,104 @@ def import_from_openclaw(
         return lines
 
     # --- Import USER.md → profile ---
-    if user_path:
-        p = Path(user_path)
-        if p.is_file():
-            content = p.read_text(encoding="utf-8")
-            bullets = _parse_md_bullets(content)
-            updates = {}
-            for b in bullets:
-                if b.lower().startswith("role:"):
-                    updates["role"] = b.split(":", 1)[1].strip()
-                elif b.lower().startswith("language:"):
-                    updates["language"] = b.split(":", 1)[1].strip()
-                elif b.lower().startswith("technical level:"):
-                    updates["technical_level"] = b.split(":", 1)[1].strip()
-            if updates:
-                engram.update_profile(updates)
-                imported.append(f"USER.md → profile ({', '.join(updates.keys())})")
+    if "user" in texts:
+        content = texts["user"]
+        bullets = _parse_md_bullets(content)
+        updates = {}
+        for b in bullets:
+            if b.lower().startswith("role:"):
+                updates["role"] = b.split(":", 1)[1].strip()
+            elif b.lower().startswith("language:"):
+                updates["language"] = b.split(":", 1)[1].strip()
+            elif b.lower().startswith("technical level:"):
+                updates["technical_level"] = b.split(":", 1)[1].strip()
+        if updates:
+            engram.update_profile(updates)
+            imported.append(f"USER.md → profile ({', '.join(updates.keys())})")
 
     # --- Import SOUL.md → preferences + quality_standards ---
-    if soul_path:
-        p = Path(soul_path)
-        if p.is_file():
-            content = p.read_text(encoding="utf-8")
-            # Simple section-based parsing
-            current_section = ""
-            prefs = {}
-            rules = []
-            for line in content.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("## "):
-                    current_section = stripped[3:].strip().lower()
-                elif stripped.startswith("- ") and current_section:
-                    value = stripped[2:].strip()
-                    if current_section in ("work preferences", "工作偏好"):
-                        if ":" in value:
-                            k, v = value.split(":", 1)
-                            prefs[k.strip()] = v.strip()
-                    elif current_section in ("quality standards", "质量标准"):
-                        rules.append(value)
-            if prefs:
-                engram.update_preferences({"work_patterns": prefs})
-                imported.append(f"SOUL.md → preferences ({len(prefs)} items)")
-            if rules:
-                existing = engram.get_quality_standards()
-                existing_rules = set(existing.get("rules", []))
-                new_rules = [r for r in rules if r not in existing_rules]
-                if new_rules:
-                    all_rules = list(existing_rules) + new_rules
-                    engram.update_quality_standards({"rules": all_rules[-15:]})
-                    imported.append(f"SOUL.md → quality_standards (+{len(new_rules)} rules)")
+    if "soul" in texts:
+        content = texts["soul"]
+        # Simple section-based parsing
+        current_section = ""
+        prefs = {}
+        rules = []
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                current_section = stripped[3:].strip().lower()
+            elif stripped.startswith("- ") and current_section:
+                value = stripped[2:].strip()
+                if current_section in ("work preferences", "工作偏好"):
+                    if ":" in value:
+                        k, v = value.split(":", 1)
+                        prefs[k.strip()] = v.strip()
+                elif current_section in ("quality standards", "质量标准"):
+                    rules.append(value)
+        if prefs:
+            engram.update_preferences({"work_patterns": prefs})
+            imported.append(f"SOUL.md → preferences ({len(prefs)} items)")
+        if rules:
+            existing = engram.get_quality_standards()
+            existing_rules = set(existing.get("rules", []))
+            new_rules = [r for r in rules if r not in existing_rules]
+            if new_rules:
+                all_rules = list(existing_rules) + new_rules
+                engram.update_quality_standards({"rules": all_rules[-15:]})
+                imported.append(f"SOUL.md → quality_standards (+{len(new_rules)} rules)")
 
     # --- Import MEMORY.md → lessons ---
-    if memory_path:
-        p = Path(memory_path)
-        if p.is_file():
-            content = p.read_text(encoding="utf-8")
-            existing_summaries = {
-                l.get("summary", "") for l in engram.get_lessons(limit=None, _update_access=False)
-            }
-            # Lessons already moved to the overflow archive are not imported again.
-            archived_texts = getattr(engram, "_overflow_archive_texts", None)
-            if callable(archived_texts):
-                existing_summaries |= archived_texts()
-            new_count = 0
-            current_section = ""
-            for line in content.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("## "):
-                    current_section = stripped[3:].strip().lower()
-                elif stripped.startswith("- ") and current_section in (
-                    "lessons learned", "经验教训"
-                ):
-                    text = stripped[2:].strip()
-                    # Remove domain prefix like [python]
-                    domain = ""
-                    if text.startswith("[") and "]" in text:
-                        domain = text[1:text.index("]")]
-                        text = text[text.index("]") + 1:].strip()
-                    if text and text not in existing_summaries:
-                        engram.add_lesson({
-                            "summary": text,
-                            "domain": domain,
-                            "source_tool": "openclaw_import",
-                        })
-                        existing_summaries.add(text)
+    if "memory" in texts:
+        p = Path(memory_path).expanduser()
+        content = texts["memory"]
+        existing_summaries = {
+            l.get("summary", "") for l in engram.get_lessons(limit=None, _update_access=False)
+        }
+        # Lessons already moved to the overflow archive are not imported again.
+        archived_texts = getattr(engram, "_overflow_archive_texts", None)
+        if callable(archived_texts):
+            existing_summaries |= archived_texts()
+        new_count = 0
+        lesson_lines: list[tuple[str, str]] = []
+        current_section = ""
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                current_section = stripped[3:].strip().lower()
+            elif stripped.startswith("- ") and current_section in (
+                "lessons learned", "经验教训"
+            ):
+                text = stripped[2:].strip()
+                # Remove domain prefix like [python]
+                domain = ""
+                if text.startswith("[") and "]" in text:
+                    domain = text[1:text.index("]")]
+                    text = text[text.index("]") + 1:].strip()
+                if text and text not in existing_summaries:
+                    lesson_lines.append((text, domain))
+                    existing_summaries.add(text)
+        if lesson_lines:
+            with recording(
+                engram, sources=["openclaw"], command="engram import --format openclaw",
+                resource="knowledge/import_openclaw", source_tool="openclaw_import",
+            ) as record:
+                for text, domain in lesson_lines:
+                    result = engram.add_lesson({
+                        "summary": text,
+                        "domain": domain,
+                        "source_tool": "openclaw_import",
+                        "tier": "staging",  # imports wait for review
+                    }, _audit_metadata_only=True)
+                    if note_outcome(record, result, source="openclaw",
+                                    file=_display_path(p), summary=text):
                         new_count += 1
-            if new_count:
-                imported.append(f"MEMORY.md → lessons (+{new_count})")
+            receipt = record.receipt
+        if new_count:
+            imported.append(f"MEMORY.md → lessons (+{new_count}, review queue)")
 
     return {
         "status": "success" if imported else "no_new_data",
         "bridge_level": OPENCLAW_BRIDGE_LEVEL,
         "imported": imported,
+        "receipt": receipt,
     }

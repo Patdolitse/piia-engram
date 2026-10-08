@@ -37,6 +37,7 @@
 - Purpose: make `wrap_up_session` lightweight, bounded, local-first, and observable.
 - Main behavior change: default session-end closeout records bounded context and timing metadata without running full maintenance reconciliation.
 - Non-goal: this does not make reconcile automatic or always-on.
+- Current state (later change, not part of PR #40): external memory/config import no longer runs from `wrap_up_session` at all; `run_reconcile=True` is accepted and imports nothing, and importing is the explicit `engram import-memories` command.
 - Key commits: `a62d116`, `bb5fb61`, `0bda678`, `03ef522`, `0ddf527`, `f77c3ad`, `966d7d9`, `f95a259`, `01f1402`, `6e178e2`, `c2f7f4f`
 - Key files:
   - `src/piia_engram/mcp_tools_session.py`

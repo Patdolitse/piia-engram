@@ -69,6 +69,64 @@ def test_public_docs_name_explicit_reconcile_boundary() -> None:
     assert "run_reconcile=True" in text
     assert "does not run full reconciliation by default" in text
     assert "`wrap_up_session` 是轻量的会话结束保存" in text
+    # run_reconcile=True no longer imports; the explicit command is named instead.
+    assert "engram import-memories" in text
+
+
+def test_public_docs_do_not_claim_automatic_import() -> None:
+    docs = [
+        "README.md",
+        "README.zh-CN.md",
+        "docs/architecture.md",
+        "docs/cross-tool-guide.md",
+        "docs/operator-mcp-cheatsheet.md",
+        "docs/quickstart-first-value.md",
+        "docs/quickstart-first-value.zh-CN.md",
+        "docs/user-guide.md",
+        "docs/user-guide.zh-CN.md",
+        "CONTRIBUTING.md",
+        ".mcp/server.json",
+    ]
+    for name in docs:
+        text = (ROOT / name).read_text(encoding="utf-8")
+        for phrase in AUTOMATIC_IMPORT_CLAIMS:
+            assert phrase.lower() not in text.lower(), f"{name} still claims automatic import: {phrase}"
+        if name.startswith(("README", "docs/user-guide", "docs/quickstart")):
+            assert "engram import-memories" in text, name
+
+
+# Phrases that describe the removed automatic import (startup sync, first-call
+# bootstrap, reconcile side effects of cold start).
+AUTOMATIC_IMPORT_CLAIMS = [
+    "auto-bootstrap",
+    "imports your preferences and project rules automatically",
+    "reconciles memories/config snippets from local AI tools when an MCP server starts",
+    "ENGRAM_MCP_STARTUP_SYNC=eager",
+    "startup reconciliation",
+    "set to background for local cross-tool sync",
+    "cross-tool memory/config sync",
+    "auto-sync side effects",
+    "skips expensive reconciliation",
+    "自动引导",
+    "启动同步",
+    "自动同步副作用",
+    "跳过昂贵的 reconcile",
+]
+
+
+def test_mcp_tool_descriptions_do_not_claim_automatic_import() -> None:
+    import asyncio
+
+    from piia_engram import mcp_server
+
+    tools = asyncio.run(mcp_server.mcp.list_tools())
+    assert tools
+    for tool in tools:
+        text = (tool.description or "").lower()
+        for phrase in AUTOMATIC_IMPORT_CLAIMS:
+            assert phrase.lower() not in text, f"{tool.name} description: {phrase}"
+    by_name = {tool.name: tool.description or "" for tool in tools}
+    assert "engram import-memories" in by_name["get_user_context"]
 
 
 def test_cross_tool_guide_documents_telemetry_as_separate_opt_in_boundary() -> None:
@@ -85,6 +143,8 @@ def test_operator_docs_define_reconcile_as_owner_maintenance() -> None:
     assert "Reconciliation is an owner maintenance action" in text
     assert "Default session closeout does not scan external AI memory or config files" in text
     assert "wrap_up_session(..., run_reconcile=True, user_confirmed=True)" in text
+    assert "imports nothing" in text
+    assert "engram import-memories" in text
     assert "staging-tier candidates" in text
 
 
@@ -97,4 +157,4 @@ def test_docs_include_bounded_closeout_diagnostics() -> None:
     assert "--live-inspect" in cross
     assert "--live-closeout --allow-write" in cross
     assert "Closeout budget" in ops
-    assert "does not change the default reconcile boundary" in ops
+    assert "does not change the reconcile boundary" in ops

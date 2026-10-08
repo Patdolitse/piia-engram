@@ -107,7 +107,7 @@ def apply_lifecycle_archive(
             items.append(item)
             continue
         if item_id not in eligible_ids:
-            if proposal.get("tier") == "verified":
+            if proposal.get("tier") == "verified" or proposal.get("pinned"):
                 outcome = OUTCOME_PROTECTED
                 counts["protected"] += 1
             elif proposal.get("tier") == "archived":

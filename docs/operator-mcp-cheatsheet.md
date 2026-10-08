@@ -81,21 +81,19 @@ owner-only local CLI (`engram playbook scope classify|apply|rollback|queue|resol
 
 ## Maintenance Reconcile
 
-Reconciliation is an owner maintenance action. Default session closeout does not scan external AI memory or config files. To request reconciliation during closeout, call `wrap_up_session(..., run_reconcile=True, user_confirmed=True)`.
+Reconciliation is an owner maintenance action. Default session closeout does not scan external AI memory or config files, and no MCP call does: `wrap_up_session(..., run_reconcile=True, user_confirmed=True)` is accepted but imports nothing. The owner runs `engram import-memories` in a terminal (preview first; `--dry-run` writes nothing).
 
-When `project_folder` is present, explicit closeout reconciliation defaults to
-`reconcile_scope="project"`: Claude memory entries are matched to the exact
-canonical project identity and config scanning stays inside that project root.
-Parent folders, nested repositories, and adjacent projects are not prefix
-matched. Use `reconcile_scope="global"` only for an intentional owner-approved
-global maintenance pass. A bounded config import reports `partial_complete`
-rather than claiming that all candidates were scanned.
+`engram doctor` and `engram status` show a read-only count of what the
+command would import. `ENGRAM_RECONCILE=0` (or `reconcile_authorized: false` in
+`telemetry_config.json`) turns reading other AI tools' files off entirely.
 
-Imported items remain staging-tier candidates until reviewed. Reconcile results should stay metadata-only: counts, source labels, scan status, and budget flags are appropriate; raw external memory bodies and config file contents are not.
+Imported items remain staging-tier candidates until reviewed. Each confirmed
+import writes a receipt to `import_receipts/` in the store (time, source files,
+count, entry ids, content hashes; no text) and an audit line. Reconcile results should stay metadata-only: counts, source labels, scan status, and budget flags are appropriate; raw external memory bodies and config file contents are not.
 
 ## Closeout budget
 
-The closeout budget bounds optional late session-end work and reports metadata under `maintenance.budget`. Fast closeout mode may skip extraction-heavy and late optional stages, but it does not change the default reconcile boundary: external memory/config reconciliation still requires `run_reconcile=True`.
+The closeout budget bounds optional late session-end work and reports metadata under `maintenance.budget`. Fast closeout mode may skip extraction-heavy and late optional stages, but it does not change the reconcile boundary: external memory/config import happens only through `engram import-memories`.
 
 `wrap_up_session` also returns an opaque `operation.operation_id` and metadata-only
 stage records. Provide a caller-stable `idempotency_key` before starting closeout.

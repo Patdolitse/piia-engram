@@ -37,6 +37,7 @@ from .permission_profile_vnext import (
     CallerContext,
     resolve_effective_profile,
 )
+from . import recall_policy as _recall_policy
 from .recall import _entry_type, merge_knowledge
 from .recall_service import gather_recall_sources
 from .safe_context import build_safe_context
@@ -63,6 +64,13 @@ DEFAULT_ROLE = "assistant"
 
 _REDACTION_PLACEHOLDER = "[REDACTED]"
 
+# withheld reason for a row the recall policy keeps out of every injection
+_INELIGIBLE_REASONS: dict[str, str] = {
+    "pending": "pending_review",
+    "superseded": "superseded",
+    "archived": "archived",
+}
+
 
 def _knowledge_digest(item: dict[str, Any]) -> dict[str, Any]:
     """Project one knowledge item to the compact digest the preview shows."""
@@ -72,12 +80,46 @@ def _knowledge_digest(item: dict[str, Any]) -> dict[str, Any]:
         or item.get("question")
         or "(no summary)"
     )
-    return {
+    digest = {
         "type": str(item.get("type") or item.get("_type") or _entry_type(item)),
         "tier": str(item.get("tier") or ""),
         "sensitivity": str(item.get("sensitivity") or DEFAULT_SENSITIVITY),
         "summary": str(label),
     }
+    if _recall_policy.is_pinned(item):
+        digest["pinned"] = True
+    return digest
+
+
+def _review_annotations(digest: dict[str, Any], item: dict[str, Any]) -> None:
+    """Owner-facing notes on a held-back item: duplicate candidate and the
+    client's self-reported name. Ids, a score and a name only -- no bodies."""
+    from .dedup_review import pending_candidate
+    from .write_provenance import client_summary
+
+    candidate = pending_candidate(item)
+    if candidate is not None:
+        digest["duplicate_of"] = candidate[0]
+        if candidate[1] is not None:
+            digest["duplicate_similarity"] = round(candidate[1], 2)
+    client = client_summary(item)
+    if client.get("origin") == "mcp":
+        name = " ".join(p for p in (client.get("client_name"), client.get("client_version")) if p)
+        digest["client"] = redact_export_text(name or client.get("client", "unknown"))
+        digest["client_self_reported"] = True
+
+
+def _annotation_text(item: dict[str, Any]) -> str:
+    notes = []
+    if item.get("duplicate_of"):
+        score = item.get("duplicate_similarity")
+        pct = f" ({float(score):.0%})" if isinstance(score, (int, float)) else ""
+        notes.append(t(f"重复候选，对应 {item['duplicate_of']}{pct}",
+                       f"possible duplicate of {item['duplicate_of']}{pct}"))
+    if item.get("client"):
+        notes.append(t(f"客户端（自报）: {item['client']}",
+                       f"client (self-reported): {item['client']}"))
+    return " · ".join(notes)
 
 
 def _placeholder_count(value: Any) -> int:
@@ -134,6 +176,7 @@ def build_context_preview(
         query=query,
         limit=budget["limit"],
         include_playbooks=include_playbooks,
+        want_ineligible=True,
     )
     identity = sources.get("identity", {})
     recent_activity = sources.get("recent_activity", {})
@@ -149,23 +192,58 @@ def build_context_preview(
         for pb in (sources.get("playbooks") or [])
         if isinstance(pb, dict)
     ][:2]
+    for pointer, pb in zip(playbook_pointers, sources.get("playbooks") or []):
+        if isinstance(pb, dict) and _recall_policy.is_pinned(pb):
+            pointer["pinned"] = True
 
     # --- panel ②: split raw knowledge into exposed vs withheld -----------
     exposed_pre: list[dict[str, Any]] = []
+    exposed_ids: list[str] = []  # parallel to exposed_pre (budget report only)
     withheld_items: list[dict[str, Any]] = []
+
+    def _governance_reason(item: dict[str, Any], state: str) -> str:
+        """This caller's ceiling / staging exclusion (unchanged semantics)."""
+        if _sens_rank(item.get("sensitivity", DEFAULT_SENSITIVITY)) > ceiling_rank:
+            return "sensitivity_above_ceiling"
+        if profile.staging_excluded and state == _recall_policy.PENDING:
+            return "staging_excluded"
+        return ""
+
     for item in merged:
         if not isinstance(item, dict):
             continue
         digest = _knowledge_digest(item)
-        sens = item.get("sensitivity", DEFAULT_SENSITIVITY)
-        if _sens_rank(sens) > ceiling_rank:
-            digest["withheld_reason"] = "sensitivity_above_ceiling"
-            withheld_items.append(digest)
-        elif profile.staging_excluded and str(item.get("tier") or "") == "staging":
-            digest["withheld_reason"] = "staging_excluded"
+        own_state = _recall_policy.classify(item).state
+        verdict = _recall_policy.classify(
+            item, withheld_reason=_governance_reason(item, own_state)
+        )
+        if verdict.state == _recall_policy.WITHHELD:
+            digest["withheld_reason"] = verdict.reason
+            _review_annotations(digest, item)
             withheld_items.append(digest)
         else:
             exposed_pre.append(digest)
+            exposed_ids.append(str(item.get("id") or ""))
+    # Rows the recall policy keeps out of every injection (awaiting review,
+    # replaced by a newer version, archived). The owner sees them here with
+    # the reason; a governance reason wins (withheld), as for eligible rows.
+    for entry in sources.get("ineligible") or []:
+        item = entry.get("row") if isinstance(entry, dict) else None
+        if not isinstance(item, dict):
+            continue
+        digest = _knowledge_digest(item)
+        state = str(entry.get("state") or "")
+        verdict = _recall_policy.classify(
+            item, withheld_reason=_governance_reason(item, state)
+        )
+        if verdict.state == _recall_policy.WITHHELD:
+            digest["withheld_reason"] = verdict.reason
+        else:
+            digest["withheld_reason"] = _INELIGIBLE_REASONS.get(state, "not_eligible")
+        if entry.get("superseded_by"):
+            digest["superseded_by"] = str(entry["superseded_by"])
+        _review_annotations(digest, item)
+        withheld_items.append(digest)
     # Withheld summaries are owner-facing metadata, but the report may be
     # saved/shared — scrub credential/PII shapes there too (not counted as
     # injection redaction hits; this is preview hygiene, not the send path).
@@ -177,6 +255,7 @@ def build_context_preview(
     # label (they are metadata-only; the lesson/decision split above never
     # touched them, so mislabeling as lessons is impossible).
     exposed_pre.extend(playbook_pointers)
+    exposed_ids.extend(str(pb.get("id") or "") for pb in playbook_pointers)
     raw_exposed_payload = {
         "identity": identity,
         "recent_activity": recent_activity,
@@ -188,6 +267,21 @@ def build_context_preview(
     safe_meta = safe.get("meta", {}).get("safe_context", {}) if isinstance(safe, dict) else {}
     safe_knowledge = safe.get("knowledge", []) if isinstance(safe, dict) else []
     trimmed_by_budget = max(0, len(exposed_pre) - len(safe_knowledge))
+    # The budget trims from the end, so the trimmed items are the tail. Only
+    # this owner-facing preview shows their summaries (scrubbed like withheld
+    # ones); injection surfaces report ids and section names only.
+    kept_n = len(exposed_pre) - trimmed_by_budget
+    trimmed_items = []
+    for digest in exposed_pre[kept_n:]:
+        shown = dict(digest)
+        shown["summary"] = redact_export_text(str(shown.get("summary") or shown.get("title") or ""))
+        trimmed_items.append(shown)
+    trimmed_ids = [i for i in exposed_ids[kept_n:] if i]
+    omitted = _recall_policy.omitted_info(
+        ids=trimmed_ids,
+        sections=["knowledge"] if trimmed_by_budget else [],
+        extra=trimmed_by_budget - len(trimmed_ids),
+    )
     # Digests come out of the SAFE (redacted) payload so the preview itself
     # never carries an unredacted secret.
     exposed_digests = [item for item in safe_knowledge if isinstance(item, dict)]
@@ -210,6 +304,16 @@ def build_context_preview(
             )
 
     generated_at = (now or datetime.now()).replace(microsecond=0).isoformat()
+    knowledge_panel: dict[str, Any] = {
+        "exposed": exposed_digests,
+        "withheld": withheld_items,
+        "exposed_count": len(exposed_digests),
+        "withheld_count": len(withheld_items),
+        "trimmed_by_budget": trimmed_by_budget,
+        "trimmed": trimmed_items,
+    }
+    if omitted:
+        knowledge_panel["omitted"] = omitted
     return {
         "generated_at": generated_at,
         "level": level_key,
@@ -229,13 +333,7 @@ def build_context_preview(
             "exposed": safe_identity,
             "withheld_fields": withheld_fields,
         },
-        "knowledge": {
-            "exposed": exposed_digests,
-            "withheld": withheld_items,
-            "exposed_count": len(exposed_digests),
-            "withheld_count": len(withheld_items),
-            "trimmed_by_budget": trimmed_by_budget,
-        },
+        "knowledge": knowledge_panel,
         "redaction": {
             "placeholder": _REDACTION_PLACEHOLDER,
             "hits": redaction_hits,
@@ -258,6 +356,9 @@ def build_context_preview(
 _REASON_LABELS: dict[str, tuple[str, str]] = {
     "sensitivity_above_ceiling": ("敏感度高于该调用方上限", "above this caller's sensitivity ceiling"),
     "staging_excluded": ("暂存层对该调用方不可见", "staging tier hidden from this caller"),
+    "pending_review": ("待审，批准前不会注入", "awaiting review; never injected before approval"),
+    "superseded": ("已被新版本取代", "replaced by a newer version"),
+    "archived": ("已归档", "archived"),
 }
 _TYPE_LABELS: dict[str, tuple[str, str]] = {
     "lesson": ("经验", "lesson"),
@@ -272,6 +373,7 @@ _TIER_LABELS: dict[str, tuple[str, str]] = {
     "verified": ("已验证", "verified"),
     "staging": ("暂存", "staging"),
 }
+_PIN_LABEL: tuple[str, str] = ("已钉住", "pinned")
 # Identity field names: zh UI shows a human label, en keeps the raw key.
 # Unknown keys fall back to the raw name (never hidden, never invented).
 _FIELD_LABELS: dict[str, tuple[str, str]] = {
@@ -364,8 +466,9 @@ def render_context_preview_text(preview: dict[str, Any]) -> str:
     ))
     for item in knowledge.get("exposed", []):
         tier = f"/{_label(_TIER_LABELS, item['tier'])}" if item.get("tier") else ""
+        pin = f"/{t(*_PIN_LABEL)}" if item.get("pinned") else ""
         lines.append(
-            f"  - ({_label(_TYPE_LABELS, item.get('type'))}{tier}, "
+            f"  - ({_label(_TYPE_LABELS, item.get('type'))}{tier}{pin}, "
             f"{_label(_SENS_LABELS, item.get('sensitivity'))}) {item.get('summary')}"
         )
     withheld = knowledge.get("withheld", [])
@@ -380,12 +483,25 @@ def render_context_preview_text(preview: dict[str, Any]) -> str:
                 f"{_label(_SENS_LABELS, item.get('sensitivity'))}) "
                 f"[{_label(_REASON_LABELS, item.get('withheld_reason'))}] "
                 f"{item.get('summary')}"
+                + (f" · {_annotation_text(item)}" if _annotation_text(item) else "")
             )
     else:
         lines.append(t(
             "  （没有超出该调用方上限的条目）",
             "  (none above this caller's ceiling)",
         ))
+
+    trimmed_items = knowledge.get("trimmed") or []
+    if trimmed_items:
+        lines.append(t(
+            f"因预算被裁掉的知识（{len(trimmed_items)} 条，仅摘要；AI 只会看到被省略的条数与 id）:",
+            f"Knowledge trimmed by budget ({len(trimmed_items)} items, summaries only; "
+            "the AI only sees the omitted count and ids):",
+        ))
+        for item in trimmed_items:
+            lines.append(
+                f"  - ({_label(_TYPE_LABELS, item.get('type'))}) {item.get('summary')}"
+            )
 
     staging = caller.get("staging_excluded")
     hits = redaction.get("hits", 0)
@@ -637,7 +753,8 @@ def render_context_preview_html(preview: dict[str, Any]) -> str:
             rows.append(
                 "<tr>"
                 f"<td>{esc(_label(_TYPE_LABELS, item.get('type')))}</td>"
-                f"<td>{esc(_label(_TIER_LABELS, item.get('tier')) or '—')}</td>"
+                f"<td>{esc(_label(_TIER_LABELS, item.get('tier')) or '—')}"
+                f"{esc(' · ' + t(*_PIN_LABEL)) if item.get('pinned') else ''}</td>"
                 f"<td>{_sens_tag(item.get('sensitivity'))}</td>"
                 f"<td>{_summary_html(item.get('summary', ''))}</td>"
                 "</tr>"
@@ -656,7 +773,9 @@ def render_context_preview_html(preview: dict[str, Any]) -> str:
                 f"<td>{esc(_label(_TYPE_LABELS, item.get('type')))}</td>"
                 f"<td>{_sens_tag(item.get('sensitivity'))}</td>"
                 f"<td>{esc(_label(_REASON_LABELS, item.get('withheld_reason')))}</td>"
-                f"<td>{_summary_html(item.get('summary', ''))}</td>"
+                f"<td>{_summary_html(item.get('summary', ''))}"
+                + (f'<div class="muted">{esc(_annotation_text(item))}</div>' if _annotation_text(item) else "")
+                + "</td>"
                 "</tr>"
             )
         if not rows:

@@ -23,15 +23,20 @@ import hashlib
 import json
 import re
 import unicodedata
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 FILENAME = "tombstones.jsonl"
-# Version of normalize()/claim_hashes(). A record from another version cannot be
-# compared: it never matches, doctor reports it, and it must be migrated (re-hash
-# from the row) before it protects anything again. Bump on any normalize change.
-HASH_VERSION = 2
+# Version of normalize()/claim_hashes(). Bump on any normalize change.
+# v3 hashes each claim field on its own and joins them with a unit separator, and a
+# decision without a question uses its title. v2 records (question + " " + choice)
+# are still compared, with v2 hashes, so earlier rejections keep refusing. A record
+# from any other version never matches; doctor reports it.
+HASH_VERSION = 3
+MATCHED_HASH_VERSIONS = (2, 3)
+_FIELD_SEP = "\x1f"
 
 _MARKDOWN_CHARS = set("`*_#>|~^")
 _WS_RE = re.compile(r"\s+")
@@ -71,17 +76,29 @@ def normalize(text: str) -> str:
     return _WS_RE.sub(" ", "".join(kept)).strip()
 
 
+def _step_actions(row: dict) -> list[str]:
+    return [
+        str(step.get("action", "")) if isinstance(step, dict) else str(step)
+        for step in (row.get("steps") or [])
+    ]
+
+
+def claim_fields(kind: str, row: dict) -> tuple[str, ...]:
+    """The fields a claim is made of: a lesson summary; a decision's question (else
+    its title) and choice; a playbook's title and step actions."""
+    if kind == "decision":
+        return (str(row.get("question") or row.get("title") or ""), str(row.get("choice") or ""))
+    if kind == "playbook":
+        return (str(row.get("title") or ""), *_step_actions(row))
+    return (str(row.get("summary", "") or ""),)
+
+
 def claim_text(kind: str, row: dict) -> str:
-    """The text a reject is about: a lesson summary, a decision's question + choice,
-    or a playbook's purpose + step actions."""
+    """The v2 claim text (question + " " + choice; title + actions), kept for v2 records."""
     if kind == "decision":
         return f"{row.get('question', '')} {row.get('choice', '')}"
     if kind == "playbook":
-        steps = row.get("steps") or []
-        actions = " ".join(
-            str(step.get("action", "")) if isinstance(step, dict) else str(step) for step in steps
-        )
-        return f"{row.get('title', '')} {actions}"
+        return f"{row.get('title', '')} {' '.join(_step_actions(row))}"
     return str(row.get("summary", "") or "")
 
 
@@ -95,11 +112,44 @@ def _tokens(normalized: str) -> set[str]:
     return tokens
 
 
-def claim_hashes(kind: str, row: dict) -> tuple[str, str]:
-    normalized = normalize(claim_text(kind, row))
+def _hash_pair(normalized: str) -> tuple[str, str]:
     h1 = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     h2 = hashlib.sha256(" ".join(sorted(_tokens(normalized))).encode("utf-8")).hexdigest()
     return h1, h2
+
+
+@lru_cache(maxsize=8192)
+def _hashes_v3(fields: tuple[str, ...]) -> tuple[str, str]:
+    # Each field is normalized on its own: the separator would otherwise be
+    # collapsed as whitespace, and "a b"+"c" would equal "a"+"b c".
+    return _hash_pair(_FIELD_SEP.join(normalize(field) for field in fields))
+
+
+@lru_cache(maxsize=8192)
+def _hashes_v2(text: str) -> tuple[str, str]:
+    return _hash_pair(normalize(text))
+
+
+def claim_hashes(kind: str, row: dict) -> tuple[str, str]:
+    """(h1, h2) of the claim under the current HASH_VERSION (cached by content)."""
+    return _hashes_v3(claim_fields(kind, row))
+
+
+def claim_hashes_for_version(kind: str, row: dict, version: Any) -> tuple[str, str] | None:
+    """(h1, h2) of the claim under ``version``; None when it cannot be compared.
+
+    v2 hashed a decision as question + choice, so every question-less decision
+    with the same choice shared one v2 hash. Such a decision is not compared with
+    v2 records at all; an identical re-proposal of the rejected row is still
+    refused by the retired-twin check (``duplicate_retired``).
+    """
+    if version == HASH_VERSION:
+        return claim_hashes(kind, row)
+    if version == 2:
+        if kind == "decision" and not str(row.get("question") or "").strip():
+            return None
+        return _hashes_v2(claim_text(kind, row))
+    return None
 
 
 def scope_of(row: dict) -> str:
@@ -125,28 +175,48 @@ def load(root) -> list[dict]:
     return out
 
 
+def _matched_version(record: dict) -> Any:
+    """The record's hash version when it is one this release matches, else None.
+
+    Type-checked first: a malformed field (a list, a dict) is never hashed."""
+    version = record.get("hv")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None
+    return version if version in MATCHED_HASH_VERSIONS else None
+
+
 def lookup(root, kind: str, row: dict) -> dict | None:
-    """The tombstone refusing this row, if any: same h1 and same scope."""
-    h1, _h2 = claim_hashes(kind, row)
+    """The tombstone refusing this row, if any: same h1 (of the record's version) and scope."""
     scope = scope_of(row)
+    hashes: dict[Any, tuple[str, str] | None] = {}
     for record in load(root):
-        if record.get("hv") != HASH_VERSION:
+        version = _matched_version(record)
+        if version is None or record.get("scope", "global") != scope:
             continue
-        if record.get("h1") == h1 and record.get("scope", "global") == scope:
+        if version not in hashes:
+            hashes[version] = claim_hashes_for_version(kind, row, version)
+        pair = hashes[version]
+        if pair is not None and record.get("h1") == pair[0]:
             return record
     return None
 
 
 def stale_version_ids(root) -> list[str]:
     """Tombstones written by another hash version: they match nothing until migrated."""
-    return [str(r.get("id")) for r in load(root) if r.get("hv") != HASH_VERSION]
+    return [str(r.get("id")) for r in load(root) if _matched_version(r) is None]
 
 
 def near(root, kind: str, row: dict) -> dict | None:
     """A tombstone whose token set matches (h2) -- a flag for the review export only."""
-    _h1, h2 = claim_hashes(kind, row)
+    hashes: dict[Any, tuple[str, str] | None] = {}
     for record in load(root):
-        if record.get("hv") == HASH_VERSION and record.get("h2") == h2:
+        version = _matched_version(record)
+        if version is None:
+            continue
+        if version not in hashes:
+            hashes[version] = claim_hashes_for_version(kind, row, version)
+        pair = hashes[version]
+        if pair is not None and record.get("h2") == pair[1]:
             return record
     return None
 
@@ -221,8 +291,12 @@ def _remove_locked(path: Path, item_id: str) -> bool:
         kept.append(line)
     if removed:
         tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text("".join(k + "\n" for k in kept), encoding="utf-8")
-        import os
+        from .atomic_replace import replace_with_retry
 
-        os.replace(tmp, path)
+        try:
+            tmp.write_text("".join(k + "\n" for k in kept), encoding="utf-8")
+            replace_with_retry(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)  # leave no half-done rewrite behind
+            raise
     return removed

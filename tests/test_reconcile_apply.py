@@ -206,40 +206,49 @@ def test_reconcile_apply_audit_is_metadata_only(tmp_path, monkeypatch):
 # --- CLI surface (owner-only) ----------------------------------------------
 
 
-def _fixed_candidates(self):
-    return [{"summary": "prefer pure store-free helpers for the recall surface",
-             "detail": f"{SECRET} novel", "domain": "auto_reconcile",
-             "source": "mem.md"}]
+# `engram reconcile apply` is kept for compatibility and runs the same import
+# as `engram import-memories --source memories` (memory files under HOME, the
+# review queue, a receipt and an audit line), so these tests use a sample home
+# instead of patching collect_memory_candidates.
 
 
-def test_cli_reconcile_apply_commit_requires_confirm(tmp_path, monkeypatch, capsys):
+def test_cli_reconcile_apply_commit_requires_confirm(tmp_path, monkeypatch, capsys, other_ai_tools_home):
     from piia_engram.core import Engram
     from piia_engram.setup_wizard import _run_reconcile
 
-    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-    monkeypatch.setattr(Engram, "collect_memory_candidates", _fixed_candidates)
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
 
     # --commit without --yes must fail closed and import nothing.
     assert _run_reconcile(["apply", "--commit", "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["requires_confirmation"] is True
     assert payload["changed"] is False
+    assert payload["counts"]["import"] == 2
     assert len(_active_lessons(Engram())) == 0
+    assert not (tmp_path / "store" / "import_receipts").exists()
 
 
-def test_cli_reconcile_apply_commit_confirmed(tmp_path, monkeypatch, capsys):
+def test_cli_reconcile_apply_commit_confirmed(tmp_path, monkeypatch, capsys, other_ai_tools_home):
     from piia_engram.core import Engram
     from piia_engram.setup_wizard import _run_reconcile
 
-    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-    monkeypatch.setattr(Engram, "collect_memory_candidates", _fixed_candidates)
+    store = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_DIR", str(store))
+    monkeypatch.setenv("ENGRAM_AUDIT", "1")
 
     assert _run_reconcile(["apply", "--commit", "--yes", "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
+    out = capsys.readouterr().out
+    payload = json.loads(out)
     assert payload["changed"] is True
-    assert payload["counts"]["imported"] == 1
-    assert SECRET not in json.dumps(payload)
-    assert len(_active_lessons(Engram())) == 1
+    assert payload["counts"]["imported"] == 2
+    assert "linter" not in out and "staging bucket" not in out  # metadata only
+    lessons = _active_lessons(Engram())
+    assert len(lessons) == 2
+    assert all((row.get("tier") or row.get("memory_state")) == "staging" for row in lessons)
+    receipt = store / payload["receipt"]
+    assert receipt.is_file()
+    assert json.loads(receipt.read_text(encoding="utf-8"))["imported"] == 2
+    assert "knowledge/import_memories" in (store / "audit.log").read_text(encoding="utf-8")
 
 
 # --- conflict preview v2 (metadata-only; no mutation) ----------------------

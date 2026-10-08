@@ -25,14 +25,14 @@ Codex, …), shows you the exact config files it will touch, and asks for a
 one-keystroke confirm before writing the MCP connection (every write is
 backed up first). Choosing "No" leaves all external configs untouched. For
 non-interactive/CI runs, `engram setup --apply-external-config` skips the
-prompt and writes directly.
+prompt and writes directly. Claude Code is registered with
+`claude mcp add --scope user engram ...` instead of a file write; if the
+`claude` command is not available, setup prints that command for you to run.
 
-Then **auto-bootstrap** does the rest: the first time your AI tool calls Engram
-(via `get_user_context` or `get_resume_brief`), it scans your existing rule
-files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, etc.) in read-only mode and
-imports your preferences and project rules automatically — no separate import
-step. So the connect-once step above is all you do; the "it already knows me"
-moment happens on the next session by itself.
+Engram does not read your other AI tools' files on its own. To bring in what
+they already know (memory files, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`,
+etc.), run `engram import-memories` (setup offers it once too): it lists the
+items first and adds them to the review queue only after you confirm.
 
 Identity and knowledge tools use local files. No cloud account is required.
 

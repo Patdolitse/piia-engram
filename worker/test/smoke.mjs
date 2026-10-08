@@ -190,6 +190,8 @@ async function postEvent(db, body) {
     visibleLabels.length <= 8 && visibleLabels.length >= 2, `labels=${visibleLabels.length}`);
   check('dashboard bars use tooltip values instead of always-visible numbers',
     !panel.includes('class="bar-val"') && panel.includes(`title="${latest.date}: 300"`));
+  check('dashboard links back to the usage page at /',
+    /<a href="\/" class="header-btn">使用统计<\/a>/.test(html));
 }
 
 console.log(failures === 0 ? '\nALL SMOKE CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);

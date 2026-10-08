@@ -22,6 +22,31 @@ def isolated_mcp_engram(tmp_path: Path, monkeypatch) -> Engram:
     return eng
 
 
+def _refuse_import_engine(engram: Engram, monkeypatch, calls: list[str]) -> None:
+    """Make any call into the import engine fail loudly."""
+
+    def mem(**kwargs):
+        calls.append("mem")
+        raise AssertionError("wrap_up_session must not import memories")
+
+    def cfg(**kwargs):
+        calls.append("cfg")
+        raise AssertionError("wrap_up_session must not import configs")
+
+    monkeypatch.setattr(engram, "reconcile_memories", mem)
+    monkeypatch.setattr(engram, "reconcile_ai_configs", cfg)
+
+
+def _assert_import_skipped(payload: dict) -> None:
+    for stage in ("reconcile_memories", "reconcile_ai_configs"):
+        assert payload["maintenance"][stage] == {
+            "status": "skipped",
+            "reason": "explicit_import_only",
+        }
+        assert payload["operation"]["stages"][stage]["status"] == "skipped"
+    assert payload["memory_import"]["command"] == "engram import-memories"
+
+
 def test_wrap_up_session_skips_reconciliation_by_default(
     isolated_mcp_engram: Engram,
     monkeypatch,
@@ -51,22 +76,14 @@ def test_wrap_up_session_skips_reconciliation_by_default(
     assert maintenance["reconcile_ai_configs"]["status"] == "skipped"
 
 
-def test_wrap_up_session_can_run_reconciliation_when_explicitly_requested(
+def test_wrap_up_session_run_reconcile_no_longer_imports(
     isolated_mcp_engram: Engram,
     monkeypatch,
 ) -> None:
+    # run_reconcile=True is accepted for compatibility; importing other AI
+    # tools' memories is the explicit `engram import-memories` command.
     calls: list[str] = []
-
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_memories",
-        lambda: calls.append("mem") or {"imported": 0, "sources": []},
-    )
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_ai_configs",
-        lambda: calls.append("cfg") or {"imported": 0, "sources": [], "scanned_files": 0},
-    )
+    _refuse_import_engine(isolated_mcp_engram, monkeypatch, calls)
 
     payload = json.loads(_run(mcp_server.wrap_up_session(
         summary="Finished M8 reliability planning.",
@@ -75,9 +92,8 @@ def test_wrap_up_session_can_run_reconciliation_when_explicitly_requested(
         run_reconcile=True,
     )))
 
-    assert calls == ["mem", "cfg"]
-    assert payload["maintenance"]["reconcile_memories"]["status"] == "ok"
-    assert payload["maintenance"]["reconcile_ai_configs"]["status"] == "ok"
+    assert calls == []
+    _assert_import_skipped(payload)
 
 
 def test_wrap_up_session_returns_metadata_only_timing(
@@ -215,22 +231,13 @@ def test_wrap_up_session_budget_metadata_is_path_free(
     assert payload["maintenance"]["budget"]["budget_ms"] == 1
 
 
-def test_wrap_up_session_explicit_reconcile_not_skipped_by_fast_mode(
+def test_wrap_up_session_run_reconcile_in_fast_mode_imports_nothing(
     isolated_mcp_engram: Engram,
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("ENGRAM_WRAP_UP_MODE", "fast")
     calls: list[str] = []
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_memories",
-        lambda: calls.append("mem") or {"imported": 0, "sources": []},
-    )
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_ai_configs",
-        lambda: calls.append("cfg") or {"imported": 0, "sources": [], "scanned_files": 0},
-    )
+    _refuse_import_engine(isolated_mcp_engram, monkeypatch, calls)
 
     payload = json.loads(_run(mcp_server.wrap_up_session(
         summary="Explicit reconcile must remain explicit even in fast mode.",
@@ -239,43 +246,20 @@ def test_wrap_up_session_explicit_reconcile_not_skipped_by_fast_mode(
         run_reconcile=True,
     )))
 
-    assert calls == ["mem", "cfg"]
-    assert payload["maintenance"]["reconcile_memories"]["status"] == "ok"
-    assert payload["maintenance"]["reconcile_ai_configs"]["status"] == "ok"
+    assert calls == []
+    # The reason names the explicit command, not the closeout budget.
+    _assert_import_skipped(payload)
 
 
-def test_wrap_up_session_allows_explicit_global_reconcile(
+def test_wrap_up_session_global_reconcile_scope_is_echoed_and_imports_nothing(
     isolated_mcp_engram: Engram,
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    calls: list[tuple[str, dict]] = []
-
-    def reconcile_memories(**kwargs):
-        calls.append(("mem", kwargs))
-        return {"imported": 0, "sources": []}
-
-    def reconcile_ai_configs(**kwargs):
-        calls.append(("cfg", kwargs))
-        return {
-            "imported": 0,
-            "sources": [],
-            "scanned_files": 0,
-            "budget_exhausted": False,
-        }
-
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_memories",
-        reconcile_memories,
-    )
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_ai_configs",
-        reconcile_ai_configs,
-    )
+    calls: list[str] = []
+    _refuse_import_engine(isolated_mcp_engram, monkeypatch, calls)
 
     payload = json.loads(_run(mcp_server.wrap_up_session(
         summary="Owner explicitly requested a global reconcile.",
@@ -286,41 +270,26 @@ def test_wrap_up_session_allows_explicit_global_reconcile(
         reconcile_scope="global",
     )))
 
-    assert calls == [("mem", {}), ("cfg", {})]
+    assert calls == []
     assert payload["maintenance"]["reconcile_scope"] == {
         "requested": "global",
         "effective": "global",
         "project_scoped": False,
     }
+    _assert_import_skipped(payload)
 
 
-def test_wrap_up_session_reports_config_budget_as_partial_completion(
+def test_wrap_up_session_run_reconcile_never_makes_closeout_partial(
     isolated_mcp_engram: Engram,
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    # Earlier a capped config import made the closeout "partial_complete".
+    # With no import step left, run_reconcile=True cannot do that any more.
     project = tmp_path / "project"
     project.mkdir()
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_memories",
-        lambda **kwargs: {
-            "imported": 0,
-            "sources": [],
-            "scope": {"mode": "project_exact"},
-        },
-    )
-    monkeypatch.setattr(
-        isolated_mcp_engram,
-        "reconcile_ai_configs",
-        lambda **kwargs: {
-            "imported": 25,
-            "sources": [],
-            "scanned_files": 4,
-            "budget_exhausted": True,
-            "scope": {"mode": "project_exact"},
-        },
-    )
+    calls: list[str] = []
+    _refuse_import_engine(isolated_mcp_engram, monkeypatch, calls)
 
     payload = json.loads(_run(mcp_server.wrap_up_session(
         summary="Project reconcile reached its bounded import budget.",
@@ -330,13 +299,10 @@ def test_wrap_up_session_reports_config_budget_as_partial_completion(
         run_reconcile=True,
     )))
 
-    assert payload["maintenance"]["reconcile_ai_configs"]["status"] == "partial"
-    assert payload["maintenance"]["reconcile_ai_configs"]["budget_exhausted"] is True
-    assert payload["operation"]["status"] == "partial_complete"
-    assert payload["operation"]["stages"]["reconcile_ai_configs"]["status"] == "partial"
-    assert payload["operation"]["outcome"]["stage_partials"] == [
-        "reconcile_ai_configs"
-    ]
+    assert calls == []
+    assert "reconcile_ai_configs" not in payload["operation"]["outcome"].get("stage_partials", [])
+    assert "reconcile_memories" not in payload["operation"]["outcome"].get("stage_partials", [])
+    _assert_import_skipped(payload)
 
 
 def test_wrap_up_session_returns_queryable_operation_status(

@@ -2,17 +2,18 @@
   "schema_version": 1,
   "_about": "Machine-readable canonical PUBLIC FACTS for piia-engram. This is the single source of truth that scripts/check_public_fact_sync.py enforces against the current-state public documentation surfaces. Update this file (and re-run scripts/check_public_fact_sync.py) whenever the numbers below change.",
   "package_name": "piia-engram",
-  "local_dev_version": "4.21.2",
+  "local_dev_version": "4.22.0",
   "release_frame": "These are LOCAL DEV facts for the working tree as of last_verified_date. Public registries (PyPI, MCP Registry, Glama, Smithery, LobeHub) reflect the last PUBLISHED release and only change during an actual publish/release. A gap between this manifest and a public registry is EXPECTED between releases and is not in-repo drift to fix by editing docs.",
   "facts": {
-    "test_passed": 5585,
-    "test_skipped": 13,
-    "test_collected": 5598,
+    "test_passed": 6973,
+    "test_skipped": 27,
+    "test_collected": 7000,
     "mcp_tools_total": 59,
     "mcp_tools_core": 19,
     "mcp_tools_advanced": 40,
     "telemetry_default": "off",
-    "telemetry_remote_default": "off"
+    "telemetry_remote_default": "off",
+    "usage_ping_default": "on"
   },
   "product_boundary_contract": {
     "schema_version": 1,
@@ -81,7 +82,7 @@
       "Owner-gated export/admin surfaces are public capabilities with governance, not private internals."
     ]
   },
-  "last_verified_date": "2026-09-24",
+  "last_verified_date": "2026-10-08",
   "sources": {
     "package_name": "pyproject.toml [project].name",
     "local_dev_version": "pyproject.toml [project].version  (cross-check: git tag --sort=-creatordate | head -1)",
@@ -91,8 +92,9 @@
     "mcp_tools_total": "python scripts/count_mcp_tools.py --json -> .total (AST count of @mcp.tool() async defs in src/piia_engram/mcp_server.py; equals ENGRAM_TOOLS=all registration)",
     "mcp_tools_core": "python scripts/count_mcp_tools.py --json -> .core (size of the TIER1_TOOLS frozenset in mcp_server.py, loaded by default when ENGRAM_TOOLS is unset / 'core')",
     "mcp_tools_advanced": "python scripts/count_mcp_tools.py --json -> .advanced (total - core)",
-    "telemetry_default": "PRIVACY.md and docs/telemetry-privacy.md: telemetry is off by default (inspect PRIVACY.md 'Off by default' language)",
-    "telemetry_remote_default": "PRIVACY.md: remote telemetry is a separate explicit opt-in, off by default (inspect 'engram telemetry remote on/off' language)"
+    "telemetry_default": "docs/telemetry-privacy.md: detailed usage statistics stay off unless turned on (inspect 'stay off unless you turn them on')",
+    "telemetry_remote_default": "PRIVACY.md: remote telemetry is a separate explicit opt-in, off by default (inspect 'engram telemetry remote on/off' language)",
+    "usage_ping_default": "docs/telemetry-privacy.md and README: one anonymous usage ping a day, off with DO_NOT_TRACK=1 (inspect 'one anonymous usage ping a day')"
   },
   "current_state_surfaces": [
     "README.md",

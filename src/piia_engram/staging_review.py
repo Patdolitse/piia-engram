@@ -56,12 +56,19 @@ def batch_review_staging(
     limit: int = 50,
     offset: int = 0,
     via: str = "core:batch_review_staging",
+    owner_cli: bool = False,
 ) -> dict[str, Any]:
     """Preview or apply staging approve/reject actions.
 
     ``dry_run`` is the default. Mutations require ``dry_run=False`` and
     ``confirm=True``. Returned payload is metadata-only: ids, action labels,
     status codes and counts, never stored bodies.
+
+    For the Owner's local CLI only (``owner_cli=True``; never set on an MCP
+    path), an action may carry ``expected_version``: when the row's version is
+    no longer that number (it was edited after the reviewer saw it), the action
+    is ``version_conflict`` and nothing is written for it; the check runs again
+    right before the write.
     """
     op = str(operation or "review").strip().lower()
     if op in {"list", "list_pending", "pending"}:
@@ -78,6 +85,7 @@ def batch_review_staging(
         "failed": 0,
     }
     items: list[dict[str, Any]] = []
+    guards: dict[int, int | None] = {}
 
     for idx, row in enumerate(rows):
         item_id = str(row.get("id") or row.get("item_id") or "").strip()
@@ -95,6 +103,7 @@ def batch_review_staging(
             continue
 
         item_type, item = eng._find_item_by_id(item_id)
+        expected_version = _expected_version(row) if owner_cli else None
         if action == "reject" and _already_rejected(eng, item_id, item):
             # A reject that already landed (tombstone written, row gone or not
             # active): nothing left to do, so a re-run reports it as such.
@@ -105,9 +114,18 @@ def batch_review_staging(
             items.append(_item(idx, item_id, action, "not_found"))
             counts["failed"] += 1
             continue
-        if item.get("tier") != "staging":
+        if expected_version is not None and _row_version(item) != expected_version:
+            items.append(_item(idx, item_id, action, "version_conflict", item_type=item_type))
+            counts["failed"] += 1
+            continue
+        unfinished = (
+            action == "approve" and item_type == "playbook"
+            and bool(eng.unfinished_playbook_replacement(item))
+        )
+        if item.get("tier") != "staging" and not unfinished:
             items.append(_item(idx, item_id, action, "not_staging", item_type=item_type))
             counts["noop"] += 1
+            guards[idx] = expected_version
             continue
         if action == "approve":
             from . import tombstones as _tombstones
@@ -117,9 +135,15 @@ def batch_review_staging(
                 items.append(_item(idx, item_id, action, "rejected_before", item_type=item_type))
                 counts["failed"] += 1
                 continue
+            if not owner_cli and _replaces_pinned(eng, item):
+                # Replacing an Owner-pinned entry is decided by the Owner's local review only.
+                items.append(_item(idx, item_id, action, "pinned_target", item_type=item_type))
+                counts["failed"] += 1
+                continue
 
         items.append(_item(idx, item_id, action, "planned", item_type=item_type))
         counts["planned"] += 1
+        guards[idx] = expected_version
 
     if dry_run:
         return _payload(
@@ -131,6 +155,26 @@ def batch_review_staging(
             counts=counts,
             items=items,
         )
+
+    from . import review_boundary as _review_boundary
+
+    if _review_boundary.mcp_origin():
+        # Approving or rejecting a pending proposal is the Owner's local review
+        # in every approval mode; an MCP caller may only preview.
+        for it in items:
+            if it["status"] == "planned":
+                it["status"] = _review_boundary.LOCAL_REVIEW_ONLY
+        payload = _payload(
+            status=_review_boundary.LOCAL_REVIEW_ONLY,
+            dry_run=False,
+            confirmed=bool(confirm),
+            requires_confirmation=False,
+            changed=False,
+            counts=counts,
+            items=items,
+        )
+        payload.update(error=_review_boundary.LOCAL_REVIEW_ONLY, hint=_review_boundary.HINT)
+        return payload
 
     planned = [it for it in items if it["status"] == "planned"]
     if planned and not confirm:
@@ -147,22 +191,58 @@ def batch_review_staging(
         )
 
     changed = False
+    if confirm:
+        # An approved playbook retry can repair derived index state even when
+        # no approval remains planned. Preview, MCP and unconfirmed calls never
+        # reach this write; the reviewed version is rechecked inside the locks.
+        for it in items:
+            if it["status"] != "not_staging" or it["action"] != "approve" or it.get("type") != "playbook":
+                continue
+            with eng._review_locks():
+                current = eng._read_playbook_by_id(it["id"])
+                expected = guards.get(it["candidate_ref"])
+                stale = eng._review_version_conflict(it["id"], current, expected) if current else None
+                problem = eng._playbook_replacement_problem(current) if current else "not_found"
+                if stale or problem:
+                    it["status"] = stale["status"] if stale else problem
+                    counts["noop"] -= 1
+                    counts["failed"] += 1
+                    continue
+                changed |= eng._reconcile_playbook_index(it["id"])["changed"]
+                target = str(current.get("pending_supersedes") or "")
+                if target:
+                    changed |= eng._reconcile_playbook_index(target)["changed"]
     for it in planned:
         owner_reject = via or "core:batch_review_staging"
+        expected_version = guards.get(it["candidate_ref"])
+        if expected_version is not None:
+            _now_type, now_row = eng._find_item_by_id(it["id"])
+            if now_row is None or _row_version(now_row) != expected_version:
+                it["status"] = "version_conflict"
+                counts["failed"] += 1
+                continue
+        # The reviewed version travels into the operation and is compared again
+        # inside the lock that commits it (another process may write meanwhile).
         if it["action"] == "approve":
             if it.get("type") == "playbook":
-                result = eng.approve_playbook(it["id"])
+                result = eng.approve_playbook(it["id"], expected_version=expected_version)
             else:
-                result = eng.promote_knowledge(it["id"])
+                result = eng.promote_knowledge(it["id"], expected_version=expected_version)
             ok = result.get("status") == "promoted"
         else:
             # An explicit reject mark: the only core path (with the CLI apply and
             # the backfill) that writes a permanent tombstone.
             if it.get("type") == "playbook":
-                result = eng.reject_playbook(it["id"], _owner_reject=owner_reject)
+                result = eng.reject_playbook(it["id"], _owner_reject=owner_reject,
+                                             expected_version=expected_version)
             else:
-                result = eng.archive_knowledge(it["id"], _owner_reject=owner_reject)
+                result = eng.archive_knowledge(it["id"], _owner_reject=owner_reject,
+                                               expected_version=expected_version)
             ok = not result.get("error")
+        if "version_conflict" in (result.get("status"), result.get("error")):
+            it["status"] = "version_conflict"
+            counts["failed"] += 1
+            continue
         if ok:
             it["status"] = "applied"
             counts["applied"] += 1
@@ -180,6 +260,34 @@ def batch_review_staging(
         counts=counts,
         items=items,
     )
+
+
+def _replaces_pinned(eng, item: dict[str, Any]) -> bool:
+    """Whether approving ``item`` would supersede an entry the Owner pinned."""
+    from . import pinning as _pinning
+
+    target = str(item.get("pending_supersedes") or "")
+    if not target:
+        return False
+    _kind, row = _pinning.find(eng, target)
+    return _pinning.is_pinned(row)
+
+
+def _expected_version(row: dict[str, Any]) -> int | None:
+    value = row.get("expected_version")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1  # a malformed guard never matches: fail closed
+
+
+def _row_version(row: dict[str, Any]) -> int:
+    try:
+        return int(row.get("version") or 1)
+    except (TypeError, ValueError):
+        return 1
 
 
 def _item(
@@ -340,6 +448,12 @@ def _pending_item(item_type: str, item: dict[str, Any]) -> dict[str, Any]:
     labeling = _project_labeling(item)
     if labeling:
         row["labeling"] = labeling
+    from .dedup_review import pending_candidate
+
+    candidate = pending_candidate(item)
+    if candidate is not None:
+        # Metadata only (an id and a score), like the rest of this listing.
+        row["duplicate_candidate"] = {"existing_id": candidate[0], "similarity": candidate[1]}
     evidence = _review_evidence(item)
     if evidence:
         row["evidence"] = evidence

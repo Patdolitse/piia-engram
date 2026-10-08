@@ -29,6 +29,12 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Worker tests
+        run: node worker/test/smoke.mjs && node worker/test/usage.mjs && node worker/test/session.mjs
       - name: Run full suite with JUnit output
         env:
           ENGRAM_TEST: "1"
@@ -230,10 +236,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build==1.5.0
+        run: pip install build==1.5.0 twine==6.2.0
 
       - name: Build package
         run: python -m build
+
+      - name: Check distribution metadata
+        run: python -m twine check --strict dist/*.whl dist/*.tar.gz
 
       - name: Generate CycloneDX SBOM
         run: |

@@ -1,10 +1,14 @@
-"""Auto-bootstrap: ingest existing CLAUDE.md / AGENTS.md on first MCP call.
+"""Rule-file bootstrap helpers (no longer run automatically).
 
-When ``get_user_context`` or ``get_resume_brief`` detects an empty store
-(no lessons, no decisions, minimal profile), this module scans the local
+Earlier versions called :func:`run_bootstrap` from ``get_user_context``,
+``get_resume_brief`` and the SessionStart hook when the store was empty. No
+read path or hook calls it any more: other AI tools' rule and memory files are
+imported only by the explicit ``engram import-memories`` command, into the
+review queue. The functions stay importable for existing integrations.
+
+What :func:`run_bootstrap` does when called directly: it scans the local
 machine for AI tool rule files, classifies their content, and imports
-preferences and project rules — so the user experiences "it already knows me"
-without running ``engram setup`` first.
+preferences and project rules.
 
 The scan reuses the same classification logic as ``setup_wizard`` (user vs.
 project keywords, language extraction) but is stripped of all CLI/printing
@@ -12,9 +16,8 @@ dependencies so it can run silently inside the MCP server.
 
 Safety:
 - Only triggers ONCE per store (writes a ``_bootstrap_done`` marker).
-- All imported content goes through the N3 risk-based write gate: low/medium
-  risk auto-verifies, high-risk (value-bearing credentials etc.) routes to
-  staging for owner review.
+- All imported content lands in the review queue (staging); the detected
+  language is reported but not written to the profile.
 - Never reads files larger than 1500 lines (same limit as setup_wizard).
 - Never modifies any file outside the Engram store.
 """
@@ -84,6 +87,14 @@ def run_bootstrap(engram: "Engram") -> dict[str, Any]:
     Idempotent: marks the store as bootstrapped regardless of whether files
     were found, so this never fires twice.
     """
+    from .memory_import import refusal
+
+    refused = refusal(engram.root)  # ENGRAM_RECONCILE=0 / reconcile_authorized=false
+    if refused is not None:
+        return {"bootstrapped": False, "status": "disabled", "disabled_by": refused["disabled_by"],
+                "files_scanned": 0, "user_rules_imported": 0, "project_rules_imported": 0,
+                "language_detected": ""}
+
     result: dict[str, Any] = {
         "bootstrapped": True,
         "files_scanned": 0,
@@ -241,31 +252,34 @@ def _import_rules(engram: "Engram", rule_files: list[dict]) -> dict[str, Any]:
             else:
                 skipped += 1
 
-    # Write language to profile
-    if language:
-        try:
-            engram.update_profile({"language": language})
-        except Exception:
-            pass
+    # The detected language is reported, never written to the profile:
+    # imported text does not change identity.
 
-    # Write grouped lessons (same pattern as setup_wizard)
-    if user_sections:
-        detail = _build_grouped_detail(user_sections)
-        engram.add_lesson(
-            {"summary": "用户身份与偏好（首次连接自动导入）",
-             "domain": "user_preference",
-             "detail": detail,
-             "source_tool": "engram_bootstrap"},
-        )
+    # Grouped lessons, into the review queue, with an import receipt.
+    from .memory_import import note_outcome, recording
 
-    if project_sections:
-        detail = _build_grouped_detail(project_sections)
-        engram.add_lesson(
-            {"summary": "项目规则（首次连接自动导入）",
-             "domain": "project_rules",
-             "detail": detail,
-             "source_tool": "engram_bootstrap"},
-        )
+    groups = [
+        ("用户身份与偏好（从规则文件导入）", "user_preference", user_sections),
+        ("项目规则（从规则文件导入）", "project_rules", project_sections),
+    ]
+    with recording(
+        engram, sources=["rule_files"], command="bootstrap.run_bootstrap",
+        resource="knowledge/import_rule_files", source_tool="engram_bootstrap",
+    ) as record:
+        for summary, domain, sections in groups:
+            if not sections:
+                continue
+            detail = _build_grouped_detail(sections)
+            result = engram.add_lesson(
+                {"summary": summary,
+                 "domain": domain,
+                 "detail": detail,
+                 "source_tool": "engram_bootstrap",
+                 "tier": "staging"},
+                _audit_metadata_only=True,
+            )
+            note_outcome(record, result, source="rule_files",
+                         file=", ".join(sorted(sections)), summary=summary, detail=detail)
 
     return {
         "user_count": user_count,

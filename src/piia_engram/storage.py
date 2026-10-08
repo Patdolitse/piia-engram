@@ -18,6 +18,7 @@ from typing import Any, Iterator
 
 import portalocker
 
+from .atomic_replace import replace_with_retry
 from .capacity import SYSTEM_FIELDS as _CAPACITY_SYSTEM_FIELDS
 from .capacity import UPDATABLE_STATUSES as _CALLER_STATUSES
 
@@ -32,7 +33,7 @@ SCHEMA_VERSION = "2.0"
 _ENGRAM_DIR_NAME = ".engram"
 _LEGACY_DIR_NAME = ".piia"
 SIMILARITY_THRESHOLD = 0.55          # below this: pass; above: related or duplicate
-SIMILARITY_DUPLICATE_THRESHOLD = 0.95  # at or above: exact duplicate, reject
+SIMILARITY_DUPLICATE_THRESHOLD = 0.95  # at or above (not the same claim): duplicate candidate, review
 # Non-destructive semantic near-duplicate surfacing on write (Round-3): when the
 # lexical tier PASSES (bigram < SIMILARITY_THRESHOLD) but an embedding neighbor's
 # cosine similarity is >= this, the new item is still ADDED and merely cross-linked
@@ -180,7 +181,7 @@ PLAYBOOK_TRIGGERS = [
 ]
 _ALLOWED_PLAYBOOK_UPDATE_FIELDS: frozenset = frozenset({
     "title", "description", "triggers", "domain", "steps",
-    "preconditions", "pitfalls", "outcome", "source_tool",
+    "preconditions", "pitfalls", "outcome",
     "source_url", "status", "parameters", "required_tools", "tool_refs",
     "scope", "scope_type", "project_id", "project_folder",
     "project_ids", "project_folders",
@@ -567,7 +568,7 @@ def _atomic_write_json(path: Path, data: Any) -> None:
                 f.write(candidate_text)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, path)
+            replace_with_retry(tmp_path, path)
     except portalocker.LockException as exc:
         if fd != -1:
             os.close(fd)
@@ -648,7 +649,7 @@ def _update_json(path: Path, mutator, *, default: Any = None, blocking: bool = T
                     f.write(candidate_text)
                     f.flush()
                     os.fsync(f.fileno())
-                os.replace(tmp_path, path)
+                replace_with_retry(tmp_path, path)
             except Exception:
                 if fd != -1:
                     os.close(fd)

@@ -20,6 +20,14 @@ from .storage import ReadOnlyStoreError
 from . import strict_mode as _strict_mode
 from . import tombstones as _tombstones
 from . import provenance as _provenance
+from . import recall_policy as _recall_policy
+from . import write_provenance as _write_provenance
+from . import dedup_review as _dedup_review
+from . import pinning as _pinning
+from . import review_boundary as _review_boundary
+
+# (store root, cycle ids) pairs already reported, so a cycle warns once per process.
+_SUPERSEDE_CYCLES_WARNED: set[tuple[str, frozenset]] = set()
 
 # All constants and I/O utilities live in storage.py — re-exported here
 # for backward compatibility (tests import from piia_engram.core).
@@ -77,7 +85,7 @@ from .storage import (  # noqa: F401 — re-exports
 )
 from .retrieval import RetrievalMixin
 from .context import ContextMixin
-from .context import EXTRACTION_PROMPT, extract_knowledge, ingest_extraction  # noqa: F401
+from .context import EXTRACTION_PROMPT, extract_knowledge  # noqa: F401
 from .reconcile import ReconcileMixin
 from .reports import ReportsMixin
 from .contexts import ContextStoreMixin
@@ -660,13 +668,21 @@ class Engram(
     def _atomic_write_bytes(path: Path, data: bytes) -> None:
         """Write bytes atomically via temp file + fsync + rename."""
         import tempfile
+
+        from .atomic_replace import replace_with_retry
+
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
-            os.write(fd, data)
+            offset = 0
+            while offset < len(data):
+                written = os.write(fd, data[offset:])
+                if written <= 0:
+                    raise OSError("byte write made no progress")
+                offset += written
             os.fsync(fd)
             os.close(fd)
             fd = -1
-            Path(tmp).replace(path)
+            replace_with_retry(tmp, path)
         except BaseException:
             if fd >= 0:
                 os.close(fd)
@@ -949,7 +965,17 @@ class Engram(
     # -- Trust Boundaries (v2.0, new) --
 
     def get_trust_boundaries(self) -> dict:
-        return self._ensure_trust_boundaries()
+        """The trust boundaries with any missing default filled in memory.
+
+        A read never writes identity/trust_boundaries.json: the store's own
+        initialisation backfills the file, update_trust_boundaries changes it.
+        """
+        existing = _read_json(self._identity_dir / "trust_boundaries.json")
+        view = dict(existing) if isinstance(existing, dict) else {}
+        for key, value in DEFAULT_TRUST_BOUNDARIES.items():
+            if key not in view:
+                view[key] = deepcopy(value)
+        return view
 
     def update_trust_boundaries(self, updates: dict) -> None:
         updates, rejected = self._filter_allowed(updates, _ALLOWED_TRUST_FIELDS)
@@ -1532,6 +1558,7 @@ class Engram(
             raise ReadOnlyStoreError(f"read-only handle: refused write to {path.name}")
         outcome = CapacityOutcome()
         ctx = capacity_ctx or _capacity.CapacityContext()
+        unpinned: list[str] = []
 
         def _locked(current: Any) -> list[dict]:
             entries = self._entries_for_locked_mutation(current, entry_type)
@@ -1542,6 +1569,9 @@ class Engram(
             updated = mutator(entries)
             if updated is None:
                 updated = entries
+            # A pin counts only on a trusted row: a row this write took out of
+            # the trusted state (archived, demoted, rejected) loses its pin.
+            unpinned[:] = _pinning.clear_stale(updated)
             if entry_type in self._OVERFLOW_ARCHIVE_FILES:
                 plan = _capacity.plan_capacity(
                     deepcopy(before),
@@ -1551,6 +1581,12 @@ class Engram(
                     limits=_capacity.limits_from_env(),
                     ctx=ctx,
                 )
+                # Approving a proposal that supersedes an Owner-pinned entry is
+                # the Owner's local decision: an MCP caller's write stops here,
+                # before anything is archived or written.
+                blocked = _pinning.blocked_targets(plan.promoted_supersedes, updated)
+                if blocked:
+                    raise _pinning.PinnedTargetRefused(entry_type, blocked)
                 by_reason: dict[str, list[dict]] = {}
                 for row, reason in plan.archive:
                     by_reason.setdefault(reason, []).append(row)
@@ -1574,6 +1610,8 @@ class Engram(
 
         with knowledge_write_allowed():
             _update_json(path, _locked, default=[], blocking=blocking)
+        if unpinned:
+            _pinning.audit_auto_unpin(self, entry_type, unpinned, reason="no_longer_trusted")
         self._audit_capacity_moves(entry_type, outcome, ctx.source_tool)
         self._commit_promoted_supersedes(outcome)
         return outcome
@@ -1590,6 +1628,25 @@ class Engram(
                     "write", "knowledge/relations",
                     detail=f"{src} supersedes {dst} (pending edge written on promotion)",
                 )
+                self._unpin_superseded(dst, src)
+
+    def _unpin_superseded(self, old_id: str, new_id: str) -> None:
+        """A superseded entry keeps no pin (best-effort; audited)."""
+        try:
+            _pinning.auto_unpin(self, old_id, reason="superseded", by=new_id)
+        except Exception:
+            pass
+
+    def _hold_for_owner(self, new_row: dict, reason: str) -> None:
+        """Send a new row to the review queue: the Owner decides it, in every approval mode."""
+        new_row["tier"] = "staging"
+        new_row["memory_state"] = "staging"
+        new_row["approval_status"] = "pending"
+        new_row["approval_required"] = True
+        new_row["approval_reason"] = reason
+        for key in [k for k in new_row if k.startswith(("promotion_", "promoted_"))]:
+            new_row.pop(key, None)
+        self._refresh_labeling(new_row)
 
     def _supersede_target_row(
         self, new_row: dict, target_id: str, active: list[dict] | None = None
@@ -1685,20 +1742,22 @@ class Engram(
             counter += 1
         row["id"] = rid
 
+    def _same_claim_in_scope(self, entry_type: str, new_row: dict, new_key: str, row: dict) -> bool:
+        """Same claim hash (the one tombstones and the duplicate check use) and project scope."""
+        return (
+            _dedup_review.exact_key(entry_type, row) == new_key
+            and self._entries_share_project_scope(new_row, row)
+        )
+
     def _archived_identity_twin(self, entry_type: str, new_row: dict) -> dict | None:
-        """An archived row with the same identity text (and choice) in the same project scope."""
-        identity = self._entry_identity_text(new_row, entry_type)
-        if not identity:
+        """An archived row with the same claim hash in the same project scope."""
+        if not self._entry_identity_text(new_row, entry_type):
             return None
-        choice = (new_row.get("choice") or "").strip().lower()
+        new_key = _dedup_review.exact_key(entry_type, new_row)
         for row in reversed(self._archive_rows_cached(entry_type)):
             if self._is_snapshot_record(row):
                 continue
-            if self._entry_identity_text(row, entry_type) != identity:
-                continue
-            if entry_type == "decision" and (row.get("choice") or "").strip().lower() != choice:
-                continue
-            if self._entries_share_project_scope(new_row, row):
+            if self._same_claim_in_scope(entry_type, new_row, new_key, row):
                 return row
         return None
 
@@ -1736,23 +1795,18 @@ class Engram(
     def _batch_archived_twin(self, entry_type: str, new_row: dict) -> dict | None:
         """A row the open batch call already moved to the archive with the same content, or None.
 
-        Same identity text in the same project scope (and, for decisions, the
-        same choice). Duplicate checks read the active file only, so without
-        this a batch could write a row again right after archiving it.
+        Same claim hash in the same project scope. Duplicate checks read the
+        active file only, so without this a batch could write a row again right
+        after archiving it.
         """
         batch = _OVERFLOW_BATCH.get()
         if batch is None:
             return None
-        identity = self._entry_identity_text(new_row, entry_type)
-        if not identity:
+        if not self._entry_identity_text(new_row, entry_type):
             return None
-        choice = (new_row.get("choice") or "").strip().lower()
+        new_key = _dedup_review.exact_key(entry_type, new_row)
         for row in reversed(batch["archived_rows"][entry_type]):
-            if self._entry_identity_text(row, entry_type) != identity:
-                continue
-            if entry_type == "decision" and (row.get("choice") or "").strip().lower() != choice:
-                continue
-            if self._entries_share_project_scope(new_row, row):
+            if self._same_claim_in_scope(entry_type, new_row, new_key, row):
                 return row
         return None
 
@@ -1863,12 +1917,28 @@ class Engram(
         return candidate
 
     def _reviewed_ids(self) -> set[str]:
-        """Ids of the reviewed, active lessons and decisions (pool V)."""
+        """Ids of the reviewed rows: lessons, decisions and playbooks.
+
+        One rule for all three: a row is reviewed when its own labels are
+        trusted by the recall policy's whitelist (active; tier and memory state
+        empty or verified, any case), so an unreviewed row cannot hide a
+        reviewed one whatever its kind.
+        """
         ids: set[str] = set()
         for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
             for row in self._read_entries(self._knowledge_dir / name, kind, migrate=False):
-                if row.get("id") and _capacity.pool_of(row) == _capacity.POOL_V:
+                if row.get("id") and _recall_policy.is_trusted(row):
                     ids.add(str(row["id"]))
+        try:
+            for entry in self._read_playbook_index():
+                pid = str(entry.get("id") or "")
+                if not pid or entry.get("status") != "active":
+                    continue
+                pb = self._read_playbook_by_id(pid)
+                if isinstance(pb, dict) and _recall_policy.is_trusted(pb):
+                    ids.add(pid)
+        except Exception:  # a damaged playbook index never breaks a read
+            pass
         return ids
 
     def _honored_relation_edges(self) -> list[dict]:
@@ -1881,6 +1951,78 @@ class Engram(
         from . import version_chain as _vc
 
         return _vc.honored_edges(RelationStore(self.root).all_edges(), self._reviewed_ids())
+
+    def _supersede_index_inputs(self) -> tuple:
+        """File stamp of every file the supersede index is built from.
+
+        mtime and size alone miss a rewrite that keeps both (a file replaced
+        within one timestamp tick, or with the time restored), so the file's
+        identity (inode / file index) and ctime are part of the stamp too.
+        """
+        paths = [
+            self._knowledge_dir / "relations.json",
+            self._knowledge_dir / "lessons.json",
+            self._knowledge_dir / "decisions.json",
+        ]
+        try:
+            paths.extend(sorted(self._playbooks_dir.glob("*.json")))
+        except OSError:
+            pass
+        stamp = []
+        for path in paths:
+            try:
+                st = path.stat()
+                stamp.append((path.name, st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns))
+            except OSError:
+                stamp.append((path.name, None, None, None, None))
+        return tuple(stamp)
+
+    def _recall_supersede_index(self) -> "_recall_policy.SupersedeIndex":
+        """Supersede index every recall surface classifies against.
+
+        Built from the honored edges, so an unreviewed row never hides a
+        reviewed one, and cached until one of its input files changes (any
+        write changes a file's mtime, size, identity or ctime). A cycle of ``supersedes`` edges
+        is logged as one audit ``warn`` (ids only) per store and cycle set in
+        this process; the key is remembered only once the line was actually
+        written, so a read-only open (which never writes audit.log) does not
+        use it up. Members of a cycle keep their own state. Never raises: a
+        broken relation file yields an empty index.
+        """
+        stamp = self._supersede_index_inputs()
+        cached = getattr(self, "_supersede_index_cache", None)
+        if cached is not None and cached[0] == stamp:
+            index = cached[1]
+        else:
+            try:
+                edges = self._honored_relation_edges()
+            except Exception:  # never break a read over a damaged relation file
+                edges = []
+            index = _recall_policy.build_supersede_index(edges)
+            self._supersede_index_cache = (stamp, index)
+        if index.cycle_ids:
+            self._warn_supersede_cycle(index.cycle_ids)
+        return index
+
+    def _warn_supersede_cycle(self, cycle_ids: frozenset) -> None:
+        key = (str(self.root), cycle_ids)
+        if key in _SUPERSEDE_CYCLES_WARNED:
+            return
+        audit = getattr(self, "_audit", None)
+        log_path = getattr(audit, "log_path", None)
+        if audit is None or not getattr(audit, "enabled", False) or log_path is None:
+            return  # nothing would be written; keep the warning for a writer
+        try:
+            before = log_path.stat().st_size if log_path.exists() else 0
+            audit.log(
+                "warn", "knowledge/relations",
+                detail="supersede_cycle ids=" + ",".join(sorted(cycle_ids)),
+            )
+            written = log_path.exists() and log_path.stat().st_size > before
+        except Exception:  # audit must never break a read
+            written = False
+        if written:
+            _SUPERSEDE_CYCLES_WARNED.add(key)
 
     def _archived_only_rows(self, entry_type: str) -> dict[str, dict]:
         """Current archived rows whose id is not in the active file (a restored row is active)."""
@@ -2029,26 +2171,43 @@ class Engram(
                 entry["reproposal_of_rejected"] = cited
         return None
 
-    def _archive_with_reject(self, kind: str, item_id: str, owner_reject: str, archive) -> dict:
+    def _archive_with_reject(self, kind: str, item_id: str, owner_reject: str, archive,
+                             expected_version: int | None = None) -> dict:
         """Archive a row; tombstone it only for an explicit Owner reject mark.
 
         The tombstone is written FIRST, so the Owner's rejection holds even if the
         status write that follows never lands. That window is visible, not silent:
         doctor lists a tombstoned row that is still pending, and re-applying the
         same reject mark finishes it (the tombstone append is idempotent).
+
+        A reject mark holds the knowledge write lock across the version check,
+        the tombstone and the status write: a row changed since the Owner
+        reviewed it (``expected_version``) gets neither.
         """
-        if owner_reject:
+        if owner_reject and _review_boundary.mcp_origin():
+            return _review_boundary.refusal(item_id, action="reject")
+        if not owner_reject:
+            return archive()
+        from .storage import hold_directory_lock
+
+        with hold_directory_lock(self._knowledge_dir, timeout=30):
             _t, before = self._find_item_by_id(item_id)
+            if isinstance(before, dict) and expected_version is not None:
+                current = int(before.get("version") or 1)
+                if current != expected_version:
+                    return {"error": "version_conflict", "item_id": item_id,
+                            "expected_version": expected_version, "actual_version": current,
+                            "current_version": current, "changed": False}
             if isinstance(before, dict) and before.get("tier") == "staging":
                 _tombstones.append(
                     self.root, kind, before, via=owner_reject,
                     prior_rejection_id=str(before.get("reproposal_of_rejected") or ""),
                 )
-        return archive()
+            return archive()
 
     def tombstoned_but_pending(self) -> list[dict]:
         """Rows an Owner reject mark tombstoned whose status write did not land."""
-        stones = {r.get("id"): r for r in _tombstones.load(self.root)}
+        stones = {r.get("id"): r for r in _tombstones.load(self.root) if isinstance(r.get("id"), str)}
         if not stones:
             return []
         out = []
@@ -2063,6 +2222,36 @@ class Engram(
             if entry.get("id") in stones and entry.get("status", "active") == "active":
                 out.append({"id": entry.get("id"), "kind": "playbook", "tier": "staging"})
         return out
+
+    def _hold_duplicate_candidate(
+        self, entry: dict, existing: dict, similarity: float, result_box: dict
+    ) -> None:
+        """Queue a very similar (not identical) new row for the Owner, in every mode.
+
+        The row is stored as pending with ``duplicate_candidate`` naming the
+        earlier entry. A deliberately inactive, negative or archived row is left
+        alone and gets no marker, so the write reply matches what was stored.
+        """
+        if (
+            entry.get("status", "active") != "active"
+            or entry.get("tier") == "archived"
+            or entry.get("memory_state") in {"rejected", "deprecated"}
+        ):
+            return
+        record = _dedup_review.candidate_record(existing.get("id", ""), similarity)
+        entry["duplicate_candidate"] = record
+        # Same reset as the strict-mode gate: nothing pre-approves a pending row.
+        for key in [k for k in entry if k.startswith(("promotion_", "promoted_", "approval_"))]:
+            entry.pop(key, None)
+        entry.pop("user_confirmed", None)
+        entry["tier"] = "staging"
+        entry["memory_state"] = "staging"
+        entry["approval_status"] = "pending"
+        entry["approval_required"] = True
+        self._refresh_labeling(entry)
+        result_box["gate_note"] = (
+            f"duplicate-candidate->staging (of {record['existing_id']}, sim={record['similarity']:.2f})"
+        )
 
     def add_lesson(
         self,
@@ -2110,9 +2299,11 @@ class Engram(
 
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_lesson)
+        _write_provenance.stamp(new_lesson, allow_reserved=allow_internal_provenance)
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_lesson.pop(_field, None)
+        _dedup_review.strip_caller_fields(new_lesson)
 
         new_lesson = self._repair_incoming_text(new_lesson)
         new_lesson["timestamp"] = new_lesson.get("timestamp") or _now_iso()
@@ -2128,6 +2319,7 @@ class Engram(
         )
 
         result_box: dict[str, dict] = {}
+        lesson_ctx = _capacity.CapacityContext(source_tool=new_lesson.get("source_tool", ""))
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
             guard = self._insert_guard("lesson", new_lesson, lessons)
@@ -2154,6 +2346,9 @@ class Engram(
             ]
             best_sim = 0.0
             best_match = None
+            # Only the same claim (normalized text hash, same scope) is refused.
+            new_key = _dedup_review.exact_key("lesson", new_lesson)
+            exact_match = None
             for existing in same_scope_lessons:
                 if existing.get("status") != "active":
                     continue
@@ -2164,6 +2359,10 @@ class Engram(
                 if sim > best_sim:
                     best_sim = sim
                     best_match = existing
+                if exact_match is None and _dedup_review.exact_key("lesson", existing) == new_key:
+                    exact_match = existing
+            if exact_match is not None:
+                best_match, best_sim = exact_match, 1.0
 
             if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
                 # Check for supplement markers — demote to related if new text
@@ -2174,15 +2373,14 @@ class Engram(
                     marker in new_summary_lower and marker not in existing_summary_lower
                     for marker in _SUPPLEMENT_MARKERS
                 )
-                summaries_identical = (
-                    best_match.get("summary") or ""
-                ) == new_lesson.get("summary", "")
-                if allow_similar_new and not summaries_identical:
-                    # Explicit new-entry mode: a caller who knows the similar
-                    # summary is a DISTINCT fact falls through to the related
-                    # tier instead of being swallowed by the duplicate gate.
-                    pass
-                elif not has_supplement_signal:
+                summaries_identical = exact_match is not None
+                if not summaries_identical:
+                    if not allow_similar_new and not has_supplement_signal:
+                        # Very similar but not the same claim: stored, held for
+                        # the Owner as a duplicate candidate (never refused).
+                        self._hold_duplicate_candidate(new_lesson, best_match, best_sim, result_box)
+                    # allow_similar_new / supplement: the related tier below.
+                else:
                     # Tier 1: exact duplicate — reject, but never silently: a
                     # differing body means this is probably a REVISION, and the
                     # rejection must carry the explicit path to revise it.
@@ -2201,33 +2399,22 @@ class Engram(
                         "message": f"与现有教训相似度 {best_sim:.0%}，未重复添加",
                         "likely_revision": likely_revision,
                     }
+                    # Identical content has no new-entry bypass; the reply
+                    # names the existing entry and how to revise it.
+                    result["guidance"] = {
+                        "existing": _dedup_review.existing_guidance(best_match.get("id", ""), "lesson"),
+                    }
                     if likely_revision:
-                        if summaries_identical:
-                            # EXACT summary identity: safe to point at the
-                            # revision target (v4.19.1: fuzzy never does).
-                            result["guidance"] = {
-                                "revision": {
-                                    "tool_hint": "update_knowledge",
-                                    "target_id": best_match.get("id"),
-                                    "expected_version": int(best_match.get("version") or 1),
-                                },
-                                "new_entry": {
-                                    "param": "allow_similar_new",
-                                    "note": "set allow_similar_new=true to store as a distinct related entry",
-                                },
-                            }
-                        else:
-                            # Fuzzy summary match: new-entry escape hatch only;
-                            # the revision target is never auto-selected.
-                            result["guidance"] = {
-                                "new_entry": {
-                                    "param": "allow_similar_new",
-                                    "note": "summaries are similar but not identical; if this is genuinely a distinct fact, set allow_similar_new=true, otherwise locate the exact target id yourself",
-                                },
-                            }
+                        # EXACT claim identity: safe to point at the revision
+                        # target (v4.19.1: a similarity match never does; it
+                        # is a duplicate candidate instead, see above).
+                        result["guidance"]["revision"] = {
+                            "tool_hint": "update_knowledge",
+                            "target_id": best_match.get("id"),
+                            "expected_version": int(best_match.get("version") or 1),
+                        }
                     result_box["result"] = result
                     return lessons
-                # Supplement signal detected — fall through to related tier
 
             if best_sim >= SIMILARITY_THRESHOLD and best_match:
                 # Tier 2: semantically related — add but link
@@ -2247,6 +2434,23 @@ class Engram(
                 new_lesson, same_scope_lessons, semantic_neighbors, best_sim
             )
 
+            # A lesson that names another lesson in ``supersedes`` is a revision
+            # proposal: it always waits for the Owner, and the supersedes edge
+            # is written when it is approved (as for decisions).
+            supersede_target = str(new_lesson.get("supersedes") or "")
+            if supersede_target:
+                target_row = next(
+                    (
+                        row for row in lessons
+                        if str(row.get("id") or "") == supersede_target
+                        and not self._is_snapshot_record(row)
+                    ),
+                    None,
+                )
+                if target_row is not None and self._entries_share_project_scope(new_lesson, target_row):
+                    self._hold_for_owner(new_lesson, "supersede_proposal")
+                    new_lesson["pending_supersedes"] = supersede_target
+                    lesson_ctx.supersede_target = supersede_target
             self._redirect_when_verified_full(new_lesson, lessons)
             # A queued capture already in the archive is not placed there again.
             if _capacity.pool_of(new_lesson) != _capacity.POOL_V:
@@ -2258,13 +2462,11 @@ class Engram(
             result_box["result"] = new_lesson
             return lessons
 
-        outcome = self._update_entries(
-            path, "lesson", _mutate_lessons,
-            capacity_ctx=_capacity.CapacityContext(source_tool=new_lesson.get("source_tool", "")),
-        )
+        outcome = self._update_entries(path, "lesson", _mutate_lessons, capacity_ctx=lesson_ctx)
         result = result_box["result"]
         if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
             return result
+        _gate_note = result_box.get("gate_note", _gate_note)
 
         summary = new_lesson.get("summary", "")
         if _audit_metadata_only:
@@ -2335,6 +2537,8 @@ class Engram(
                 "ceiling": exc.ceiling,
                 "message": "the review queue is full; review or archive queued entries first",
             }
+        except _pinning.PinnedTargetRefused as exc:
+            return _pinning.pinned_target_refusal(item_id, exc.targets)
         return None
 
     def _redirect_when_verified_full(self, new_row: dict, rows: list[dict]) -> None:
@@ -2408,20 +2612,20 @@ class Engram(
     def _record_lesson_reads(self, lessons: list[dict]) -> None:
         """Count a read of ``lessons`` (best-effort; skipped while a writer holds the lock).
 
-        A read-only handle never counts reads: it must not write the store.
+        A read-only handle never counts reads: it must not write the store. A
+        read only counts an access; ``last_reviewed`` is set by the Owner's
+        confirm / review actions, never by a read.
         """
         if self._read_only:
             return
         now = _now_iso()
         selected_ids = {lesson.get("id") for lesson in lessons if lesson.get("id")}
         for lesson in lessons:
-            lesson["last_reviewed"] = now
             lesson["access_count"] = lesson.get("access_count", 0) + 1
 
         def _bump_access(entries: list[dict]) -> list[dict]:
             for entry in entries:
                 if entry.get("id") in selected_ids:
-                    entry["last_reviewed"] = now
                     entry["access_count"] = entry.get("access_count", 0) + 1
             return entries
 
@@ -2457,6 +2661,9 @@ class Engram(
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
+        immutable = _write_provenance.update_refusal(lesson_id, updates)
+        if immutable:
+            return immutable
         invalid_status = self._invalid_status_error(lesson_id, updates)
         if invalid_status:
             return invalid_status
@@ -2476,6 +2683,13 @@ class Engram(
                         "item_id": lesson_id,
                     }
                     return lessons
+                if _pinning.mcp_refuses(lesson):
+                    result_box["result"] = _pinning.refusal(lesson_id, "lesson", lesson)
+                    return lessons
+                decided = _review_boundary.update_refusal(lesson, updates, lesson_id)
+                if decided is not None:
+                    result_box["result"] = decided
+                    return lessons
                 current_version = int(lesson.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:
                     result_box["result"] = {
@@ -2483,6 +2697,7 @@ class Engram(
                         "item_id": lesson_id,
                         "expected_version": expected_version,
                         "actual_version": current_version,
+                        "current_version": current_version,
                     }
                     return lessons
                 before = dict(lesson)
@@ -2518,6 +2733,8 @@ class Engram(
                     result_box["noop"] = True
                     return lessons
                 lesson["last_updated"] = now
+                if tier_changed and new_tier != "staging":
+                    _dedup_review.clear_review_fields(lesson)
                 if content_changed:
                     snapshot_id = self._next_snapshot_id(
                         "lesson", lesson_id, current_version, existing_ids
@@ -2576,10 +2793,14 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_lesson(self, lesson_id: str, *, _owner_reject: str = "") -> dict:
+    def archive_lesson(
+        self, lesson_id: str, *, _owner_reject: str = "", expected_version: int | None = None
+    ) -> dict:
         """Mark a lesson as outdated without deleting it."""
-        return self._archive_with_reject("lesson", lesson_id, _owner_reject,
-                                         lambda: self.update_lesson(lesson_id, {"status": "outdated"}))
+        return self._archive_with_reject(
+            "lesson", lesson_id, _owner_reject,
+            lambda: self.update_lesson(lesson_id, {"status": "outdated"}, expected_version=expected_version),
+            expected_version=expected_version)
 
     def add_decision(
         self,
@@ -2624,9 +2845,11 @@ class Engram(
 
         if not allow_internal_provenance:
             _strip_untrusted_freshness_provenance(new_decision)
+        _write_provenance.stamp(new_decision, allow_reserved=allow_internal_provenance)
 
         for _field in _capacity.SYSTEM_FIELDS:
             new_decision.pop(_field, None)
+        _dedup_review.strip_caller_fields(new_decision)
 
         new_decision = self._repair_incoming_text(new_decision)
         # Sanitize project field regardless of input path (dict or kwargs)
@@ -2680,21 +2903,37 @@ class Engram(
             ]
             best_sim = 0.0
             best_match = None
+            # Only the same claim (question, else title, + choice; normalized
+            # text hash, same scope) is refused.
+            new_key = _dedup_review.exact_key("decision", new_decision)
+            exact_match = None
             for existing in same_scope_decisions:
                 if existing.get("status") != "active":
                     continue
-                sim = self._bigram_similarity(
-                    new_title,
-                    self._entry_identity_text(existing, "decision"),
-                )
+                existing_title = self._entry_identity_text(existing, "decision")
+                sim = self._bigram_similarity(new_title, existing_title)
                 if sim >= best_sim:
                     best_sim = sim
                     best_match = existing
+                if _dedup_review.exact_key("decision", existing) == new_key:
+                    exact_match = existing  # the latest identical row, like best_match
 
             # Track whether the new decision should auto-supersede the best match.
             # Set when same question + different choice (a decision revision).
             auto_supersedes_target: str | None = None
 
+            if exact_match is not None:
+                result_box["result"] = {
+                    "status": "duplicate",
+                    "similarity": 1.0,
+                    "existing_id": exact_match.get("id"),
+                    "existing_title": self._entry_identity_text(exact_match, "decision"),
+                    "message": "与现有决策相似度 100%，未重复添加",
+                    "guidance": {
+                        "existing": _dedup_review.existing_guidance(exact_match.get("id", ""), "decision"),
+                    },
+                }
+                return decisions
             if best_sim >= SIMILARITY_DUPLICATE_THRESHOLD and best_match:
                 # For decisions: different choice on same question = conflict, not duplicate
                 new_choice = (new_decision.get("choice") or "").strip().lower()
@@ -2707,14 +2946,10 @@ class Engram(
                     for m in _SUPPLEMENT_MARKERS
                 )
                 if not choices_differ and not has_supplement:
-                    result_box["result"] = {
-                        "status": "duplicate",
-                        "similarity": round(best_sim, 2),
-                        "existing_id": best_match.get("id"),
-                        "existing_title": self._entry_identity_text(best_match, "decision"),
-                        "message": f"与现有决策相似度 {best_sim:.0%}，未重复添加",
-                    }
-                    return decisions
+                    # Very similar but not the same claim (an opposite
+                    # conclusion can be one word away): stored and held for the
+                    # Owner as a duplicate candidate, never refused.
+                    self._hold_duplicate_candidate(new_decision, best_match, best_sim, result_box)
                 # Different choice or supplement — fall through to related tier.
                 # Same question + different choice → the new decision supersedes the old.
                 if choices_differ:
@@ -2755,6 +2990,23 @@ class Engram(
             # by the same write (explicit ``supersedes`` or auto-detected).
             target = str(new_decision.get("supersedes") or auto_supersedes_target or "")
             decision_ctx.supersede_target = target
+            # An AI's decision that would replace a reviewed one by inference
+            # (same question, other choice) is a proposal in every approval
+            # mode: no edge without the Owner, and no version guard is skipped.
+            if (
+                auto_supersedes_target
+                and not new_decision.get("supersedes")
+                and _pinning.mcp_origin()
+                and _capacity.pool_of(new_decision) == _capacity.POOL_V
+            ):
+                inferred = self._supersede_target_row(new_decision, target, decisions)
+                if inferred is not None and _capacity.pool_of(inferred) == _capacity.POOL_V:
+                    self._hold_for_owner(new_decision, "inferred_supersede")
+            # Replacing an Owner-pinned decision is always the Owner's call.
+            if target and _capacity.pool_of(new_decision) == _capacity.POOL_V:
+                pinned_target = self._supersede_target_row(new_decision, target, decisions)
+                if pinned_target is not None and _pinning.is_pinned(pinned_target):
+                    self._hold_for_owner(new_decision, "pinned_target")
             # An unreviewed decision must not hide a reviewed one: it records
             # the supersede, and the edge is written when it is promoted.
             if target and _capacity.pool_of(new_decision) != _capacity.POOL_V:
@@ -2769,6 +3021,7 @@ class Engram(
         result = result_box["result"]
         if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
             return result
+        _gate_note = result_box.get("gate_note", _gate_note)
         title = new_decision.get("question", "") or new_decision.get("title", "")
         if _audit_metadata_only:
             self._audit.log(
@@ -2807,6 +3060,7 @@ class Engram(
                         "knowledge/relations",
                         detail=f"{new_decision['id']} supersedes {supersedes_id} (decision thread)",
                     )
+                    self._unpin_superseded(str(supersedes_id), str(new_decision["id"]))
             except Exception:
                 pass  # edge is advisory; the decision itself is the hard write
 
@@ -2850,14 +3104,13 @@ class Engram(
         if _update_access and result and not self._read_only:
             now = _now_iso()
             selected_ids = {decision.get("id") for decision in result if decision.get("id")}
+            # a read counts an access only; last_reviewed is the Owner's review
             for decision in result:
-                decision["last_reviewed"] = now
                 decision["access_count"] = decision.get("access_count", 0) + 1
 
             def _bump_access(entries: list[dict]) -> list[dict]:
                 for entry in entries:
                     if entry.get("id") in selected_ids:
-                        entry["last_reviewed"] = now
                         entry["access_count"] = entry.get("access_count", 0) + 1
                 return entries
 
@@ -2892,6 +3145,9 @@ class Engram(
                 "fields": smuggled,
                 "message": "version-lineage fields are generated internally by the revision primitive; resend the update without them",
             }
+        immutable = _write_provenance.update_refusal(decision_id, updates)
+        if immutable:
+            return immutable
         invalid_status = self._invalid_status_error(decision_id, updates)
         if invalid_status:
             return invalid_status
@@ -2903,7 +3159,6 @@ class Engram(
             "alternatives",
             "status",
             "project",
-            "source_tool",
             "tier",
         }
         content_fields = {"title", "question", "choice", "reasoning", "alternatives"}
@@ -2921,6 +3176,13 @@ class Engram(
                         "item_id": decision_id,
                     }
                     return decisions
+                if _pinning.mcp_refuses(decision):
+                    result_box["result"] = _pinning.refusal(decision_id, "decision", decision)
+                    return decisions
+                decided = _review_boundary.update_refusal(decision, updates, decision_id)
+                if decided is not None:
+                    result_box["result"] = decided
+                    return decisions
                 current_version = int(decision.get("version") or 1)
                 if expected_version is not None and expected_version != current_version:
                     result_box["result"] = {
@@ -2928,6 +3190,7 @@ class Engram(
                         "item_id": decision_id,
                         "expected_version": expected_version,
                         "actual_version": current_version,
+                        "current_version": current_version,
                     }
                     return decisions
                 before = dict(decision)
@@ -2963,6 +3226,8 @@ class Engram(
                     result_box["noop"] = True
                     return decisions
                 decision["last_updated"] = now
+                if tier_changed and new_tier != "staging":
+                    _dedup_review.clear_review_fields(decision)
                 if content_changed:
                     snapshot_id = self._next_snapshot_id(
                         "decision", decision_id, current_version, existing_ids
@@ -3021,10 +3286,14 @@ class Engram(
             )
         return self._with_capacity_result(result, outcome_box.get("outcome") or CapacityOutcome())
 
-    def archive_decision(self, decision_id: str, *, _owner_reject: str = "") -> dict:
+    def archive_decision(
+        self, decision_id: str, *, _owner_reject: str = "", expected_version: int | None = None
+    ) -> dict:
         """Mark a decision as outdated without deleting it."""
-        return self._archive_with_reject("decision", decision_id, _owner_reject,
-                                         lambda: self.update_decision(decision_id, {"status": "outdated"}))
+        return self._archive_with_reject(
+            "decision", decision_id, _owner_reject,
+            lambda: self.update_decision(decision_id, {"status": "outdated"}, expected_version=expected_version),
+            expected_version=expected_version)
 
     def update_domain(self, domain: str, updates: dict) -> None:
         """Update skill/experience data for a domain (e.g. "python", "frontend")."""
@@ -3216,12 +3485,13 @@ STORE_WRITE_METHODS = frozenset({
     "archive_knowledge", "archive_lesson", "archive_playbook", "bulk_add_decisions",
     "bulk_add_knowledge", "bulk_add_lessons", "commit_candidates", "confirm_knowledge",
     "create_onboard_candidate", "create_onboard_candidates", "delete_playbook", "evaluate_tiers",
-    "export_all",
+    "export_all", "export_all_with_summary",
     "export_identity_card", "export_knowledge_report", "export_review_page",
     "extract_playbook_from_session", "extract_session_insights", "import_all",
     "increment_domain_usage", "ingest_notes", "install_builtin_playbook", "link_knowledge",
     "mark_validated_knowledge", "merge_knowledge", "merge_playbooks", "onboard_repo",
-    "prepare_playbook_execution", "promote_knowledge", "purge_search_index", "rebuild_index",
+    "prepare_playbook_execution", "promote_knowledge", "propose_playbook_update", "purge_search_index",
+    "rebuild_index",
     "reconcile_ai_configs", "reconcile_memories", "refresh_quick_context", "register_tool",
     "reject_playbook", "remove_relation", "remove_tool", "resolve_playbook_scope_review",
     "restore_lifecycle_archive", "restore_playbook", "revalidate_anchors", "revoke_caller",
@@ -3239,6 +3509,7 @@ READ_ONLY_SAFE_METHODS = frozenset({
     "capacity_status", "classify_legacy_playbooks", "classify_rarity", "collect_memory_candidates",
     "compare_user_portraits", "detect_active_decision_conflicts",
     "extract_candidates", "find_similar_knowledge", "find_tool", "generate_context",
+    "generate_context_report",
     "generate_review_page", "get_daily_log", "get_decision_history", "get_decision_thread",
     "get_decisions", "get_domains", "get_execution_status", "get_health_report",
     "get_knowledge_digest", "get_knowledge_history", "get_knowledge_inheritance",
@@ -3250,9 +3521,10 @@ READ_ONLY_SAFE_METHODS = frozenset({
     "get_staging_summary", "get_stale_knowledge", "get_stats", "get_trust_boundaries",
     "get_unclean_exit_marker", "get_work_style", "is_pending_playbook", "list_agent_sessions",
     "list_playbooks_for_management", "list_projects", "list_tools", "list_user_portraits",
+    "mcp_entry_version", "mcp_existing_write_guard", "mcp_supersede_guard",
     "pending_playbook_count", "preview_session_digest_backfill", "render_portrait_growth",
     "render_user_portrait", "render_user_portrait_html", "review_knowledge", "search_knowledge",
-    "suggest_merges", "tombstoned_but_pending",
+    "suggest_merges", "tombstoned_but_pending", "unfinished_playbook_replacement",
 })
 
 

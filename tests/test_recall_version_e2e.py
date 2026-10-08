@@ -47,10 +47,12 @@ class _FakeEngram:
         return [dict(r) for r in self._recent[:limit]]
 
     def get_relevant_lessons(self, project_folder=None, limit=8, _update_access=True):
-        return [dict(e) for e in self._relevant]
+        # stored rows always carry a status (recall trusts only active rows)
+        return [{"status": "active", **e} for e in self._relevant]
 
     def search_knowledge(self, query, scope="all", limit=10):
-        return json.loads(json.dumps(self._search))  # deep copy
+        hits = json.loads(json.dumps(self._search))  # deep copy
+        return {k: [{"status": "active", **r} for r in v] for k, v in hits.items()}
 
 
 def _fixture_engram():
@@ -109,8 +111,9 @@ def test_recall_ordering_is_stable_and_collapses_to_head():
     eng, edges = _fixture_engram()
     payload = _gather(eng, edges)
     labels = [k.get("summary") or k.get("choice") for k in payload["knowledge"]]
-    # v1 is superseded by v2 → dropped; order is relevant-first then query-only.
-    assert labels == ["current take", "another lesson", "query hit lesson", "no"]
+    # v1 is superseded by v2 → dropped; k3 is pending review → never recalled;
+    # order is relevant-first then query-only.
+    assert labels == ["current take", "query hit lesson", "no"]
     assert payload["meta"]["collapsed_versions"] == 1
 
 

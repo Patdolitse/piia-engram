@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
+from piia_engram import claude_code_mcp as _claude_code_mcp
 
 import importlib.util
 import hashlib
@@ -17,6 +18,15 @@ import sys
 from pathlib import Path, PureWindowsPath
 
 logger = logging.getLogger(__name__)
+
+if __name__ == "__main__":
+    # `python -m piia_engram.setup_wizard`: this file runs as __main__, while
+    # doctor imports piia_engram.setup_wizard, a second copy whose re-exports
+    # would import the half-initialised doctor. Run the package module instead.
+    from piia_engram.setup_wizard import main as _package_main
+
+    _package_main()
+    sys.exit(0)
 
 # 旧版 MCP server 名称，迁移时需要清理
 LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
@@ -148,10 +158,6 @@ _PROJECT_KEYWORDS = re.compile(
 # 可用环境变量 ENGRAM_MAX_RULE_LINES 覆盖（极少数超大规则仓库场景）。
 _MAX_RULE_LINES = 1500
 
-# 单条分组 lesson 的 detail 字符上限。1500 行规则在极端情况下可能很大，
-# 给个防御性上限，避免单条 lesson 撑爆 lessons.json（历史上有过损坏问题）。
-_MAX_DETAIL_CHARS = 20000
-
 
 def _max_rule_lines() -> int:
     """规则文件读取行数上限，支持 ENGRAM_MAX_RULE_LINES 覆盖，回退默认值。"""
@@ -263,167 +269,6 @@ def _classify_line(line: str, scope: str) -> str:
     return "user" if scope == "global" else "project"
 
 
-def _src_label(path) -> str:
-    """规则文件的来源标签：父目录名/文件名，避免存绝对路径，也便于区分同名文件。
-
-    根目录文件（如 /CLAUDE.md）的 parent.name 为空，用 "." 兜底，
-    避免生成形如 "/CLAUDE.md" 的伪绝对路径标签。
-    """
-    try:
-        parent_name = path.parent.name or "."
-        return f"{parent_name}/{path.name}"
-    except AttributeError:
-        return str(path)
-
-
-def _build_grouped_detail(sections: dict[str, list[str]]) -> str:
-    """把 {来源标签: [规则行]} 渲染成按来源分节的 markdown detail。
-
-    对极端超长内容做防御性截断，避免单条 lesson 撑爆 lessons.json。
-    截断在「行边界」进行（而非任意字符位置），保证不会把某条规则切成半行、
-    也不会在 markdown 列表项中间断开。注意 Python 字符串切片按 Unicode 码点
-    计数，本身不会切坏多字节字符，这里在行边界截断是为了语义完整。
-    """
-    parts: list[str] = []
-    for label, rules in sections.items():
-        parts.append(f"## {label}")
-        parts.extend(f"- {r}" for r in rules)
-        parts.append("")
-    detail = "\n".join(parts).strip()
-    if len(detail) > _MAX_DETAIL_CHARS:
-        # 在不超过上限的前提下，回退到最后一个换行边界，避免切半行规则
-        clipped = detail[:_MAX_DETAIL_CHARS]
-        last_nl = clipped.rfind("\n")
-        if last_nl > 0:
-            clipped = clipped[:last_nl]
-        detail = clipped.rstrip() + "\n\n…(truncated)"
-    return detail
-
-
-def _upsert_grouped_lesson(engram, summary: str, domain: str, detail: str) -> int:
-    """以 upsert 方式写入一条「setup 导入」分组 lesson。
-
-    为什么不直接 add_lesson：add_lesson 自带基于 *summary* 的相似度去重，
-    而分组 lesson 用的是固定模板 summary。第二次 `engram setup` 时新内容会
-    被判为与上次完全重复而被丢弃 → 规则更新永远无法落地（真 bug）。
-    因此这里按 source_tool=engram_setup + domain 找已存在的导入 lesson：
-    有就 update_lesson 刷新第一条（canonical）的 summary/detail（绕开 summary
-    去重、反映最新规则），没有才 add_lesson 新增。
-
-    迁移兼容：早期版本逐行导入会在同一 domain 留下多条 engram_setup lesson。
-    本函数更新 canonical 那条后，会把同 domain 其余 engram_setup 碎片标记为
-    outdated（status != "active" → 后续 get_lessons 不再返回），避免新旧并存
-    造成的陈旧碎片污染。归档而非删除，保留可审计的历史。
-
-    Returns: 1 表示已落地一条分组 lesson。
-    """
-    try:
-        existing = engram.get_lessons(
-            domain=domain,
-            source_tool="engram_setup",
-            limit=None,
-            _update_access=False,   # 只查不计访问
-            _migrate_fields=False,  # 只读，不回写旧知识文件
-        )
-    except Exception:
-        existing = []
-
-    existing_ids = [les["id"] for les in existing if les.get("id")]
-
-    if existing_ids:
-        canonical_id, *stragglers = existing_ids
-        engram.update_lesson(canonical_id, {"summary": summary, "detail": detail})
-        # 归档同 domain 残留的旧逐行导入碎片，避免新旧并存
-        for straggler_id in stragglers:
-            try:
-                engram.update_lesson(straggler_id, {"status": "outdated"})
-            except Exception:
-                pass
-    else:
-        engram.add_lesson(
-            summary,
-            domain=domain,
-            detail=detail,
-            source_tool="engram_setup",
-        )
-    return 1
-
-
-def _import_with_split(
-    rule_files: list[dict],
-    engram,
-) -> dict:
-    """将扫描到的规则文件按分流规则导入 Engram。
-
-    去碎片化：不再逐行存 lesson（那会制造大量低质量碎片），而是把所有
-    user 类规则汇成 *一条* user_preference lesson、所有 project 类规则汇成
-    *一条* project_rules lesson，detail 里按来源文件分节保留 provenance。
-    语言偏好仍单独提取写入 profile。
-
-    Returns: {user_count, project_count, skipped, files,
-              user_lessons, project_lessons}
-    """
-    user_sections: dict[str, list[str]] = {}
-    project_sections: dict[str, list[str]] = {}
-    skipped = 0
-    user_count = 0
-    project_count = 0
-    prefs_update: dict = {}
-
-    for rf in rule_files:
-        scope = rf["scope"]
-        label = _src_label(rf["path"])
-        for line in rf["lines"]:
-            category = _classify_line(line, scope)
-            stripped = line.strip()
-            if category == "user":
-                user_sections.setdefault(label, []).append(stripped)
-                user_count += 1
-                # 语言偏好 → profile（不影响其进入分组 lesson）
-                lower = stripped.lower()
-                if "中文" in stripped:
-                    prefs_update["language"] = "中文"
-                elif "english" in lower:
-                    prefs_update["language"] = "English"
-            elif category == "project":
-                project_sections.setdefault(label, []).append(stripped)
-                project_count += 1
-            else:
-                skipped += 1
-
-    if prefs_update:
-        engram.update_profile(prefs_update)
-
-    user_lessons = 0
-    project_lessons = 0
-
-    if user_sections:
-        user_lessons = _upsert_grouped_lesson(
-            engram,
-            _t("用户身份与偏好（Engram 从规则文件导入）",
-               "User identity & preferences (imported by Engram from rule files)"),
-            "user_preference",
-            _build_grouped_detail(user_sections),
-        )
-
-    if project_sections:
-        project_lessons = _upsert_grouped_lesson(
-            engram,
-            _t("项目规则（Engram 从规则文件导入）",
-               "Project rules (imported by Engram from rule files)"),
-            "project_rules",
-            _build_grouped_detail(project_sections),
-        )
-
-    return {
-        "user_count": user_count,
-        "project_count": project_count,
-        "skipped": skipped,
-        "files": [str(rf["path"]) for rf in rule_files],
-        "user_lessons": user_lessons,
-        "project_lessons": project_lessons,
-    }
-
 # ---------------------------------------------------------------------------
 # 工具检测配置
 # ---------------------------------------------------------------------------
@@ -449,9 +294,13 @@ def _tool_configs() -> dict:
 
     configs: dict = {
         # ── 已验证（团队实测） ─────────────────────────────
+        # Claude Code keeps user-scope MCP servers in ~/.claude.json (or
+        # $CLAUDE_CONFIG_DIR/.claude.json). setup never writes that file: it
+        # registers through `claude mcp add --scope user` (claude_code_mcp).
         "claude_code": {
             "name": "Claude Code",
-            "config_paths": [home / ".claude" / ".mcp.json"],
+            "config_paths": [_claude_code_mcp.user_config_path()],
+            "register_via": "claude_cli",
             "verified": True,
         },
         "cursor": {
@@ -556,12 +405,29 @@ _INSTRUCTION_MARKER_END = "<!-- /piia-engram -->"
 # to detect stale (v=1) snippets that lack the auto-resume directive.
 _SNIPPET_FRESHNESS_TOKEN = "get_resume_brief"
 
+# What to keep when distilling a memory (default snippets; the strict body says
+# the same in its own words). No braces: the snippets go through str.format.
+_DISTILL_RULES_ZH = (
+    "- 只记长期有用的内容；当天进度、待办和临时状态不记\n"
+    "- “昨天”“下周”这类相对日期：能确定当时日期就写成具体日期，否则保留原文并注明“日期未定”\n"
+    "- 如果与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订，"
+    "不要另起一条无关联的新条目\n"
+)
+_DISTILL_RULES_EN = (
+    "- Keep only what stays useful later; skip today's progress, to-dos and temporary state\n"
+    "- Relative dates (\"yesterday\", \"next week\"): write the actual date when you can tell when "
+    "it was said; otherwise keep the words and add \"(date unknown)\"\n"
+    "- If something contradicts an existing entry: find the old one with `search_knowledge`, "
+    "then submit a revision with `supersedes=<old id>` instead of an unrelated new entry\n"
+)
+
 # Map: tool_id → (instruction_file_path_fn, snippet)
 # instruction_file_path_fn takes Path.home() and returns the file path
 
 _INSTRUCTION_SNIPPETS: dict[str, dict] = {
     "claude_code": {
-        "path_fn": lambda home: home / ".claude" / "CLAUDE.md",
+        # In Claude Code's config directory: ~/.claude, or $CLAUDE_CONFIG_DIR.
+        "path_fn": lambda home: _claude_code_mcp.instructions_path(home),
         "snippet_zh": (
             "\n{marker}\n"
             "## Engram 记忆层\n\n"
@@ -572,7 +438,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- **做出决策**：调用 `add_decision` 记录选择和理由\n"
             "- **对话结束**：调用 `wrap_up_session` 保存上下文\n"
             "- **用户问起历史对话**（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n"
-            "- **搜索历史知识**：调用 `search_knowledge`\n"
+            "- **搜索历史知识**：调用 `search_knowledge`\n" +
+            _DISTILL_RULES_ZH +
             "{marker_end}\n"
         ),
         "snippet_en": (
@@ -585,7 +452,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- **Decisions made**: call `add_decision` to record choice and reasoning\n"
             "- **End of conversation**: call `wrap_up_session` to save context\n"
             "- **User asks about past conversations** (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n"
-            "- **Search past knowledge**: call `search_knowledge`\n"
+            "- **Search past knowledge**: call `search_knowledge`\n" +
+            _DISTILL_RULES_EN +
             "{marker_end}\n"
         ),
     },
@@ -604,7 +472,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 做决策时调用 `add_decision`\n"
             "- 对话结束调用 `wrap_up_session`\n"
             "- 用户问起历史对话（“我刚才/之前问过什么”）调用 `get_recent_context`\n"
-            "- 搜索知识用 `search_knowledge`\n"
+            "- 搜索知识用 `search_knowledge`\n" +
+            _DISTILL_RULES_ZH
         ),
         "snippet_en": (
             "---\n"
@@ -619,7 +488,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Decisions made: call `add_decision`\n"
             "- End of conversation: call `wrap_up_session`\n"
             "- User asks about past conversations (\"what did I just ask\"): call `get_recent_context`\n"
-            "- Search knowledge: call `search_knowledge`\n"
+            "- Search knowledge: call `search_knowledge`\n" +
+            _DISTILL_RULES_EN
         ),
     },
     "codex": {
@@ -633,7 +503,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 学到经验/踩坑：调用 `add_lesson` 存入\n"
             "- 做出决策：调用 `add_decision` 记录\n"
             "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
-            "- 用户问起历史对话（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n"
+            "- 用户问起历史对话（“我刚才/之前问过什么”、“上次聊到哪”）：调用 `get_recent_context` 查找\n" +
+            _DISTILL_RULES_ZH +
             "{marker_end}\n"
         ),
         "snippet_en": (
@@ -645,7 +516,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Lessons learned: call `add_lesson`\n"
             "- Decisions made: call `add_decision`\n"
             "- Task end: call `wrap_up_session` to save context\n"
-            "- User asks about past conversations (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n"
+            "- User asks about past conversations (\"what did I just ask\", \"where did we leave off\"): call `get_recent_context`\n" +
+            _DISTILL_RULES_EN +
             "{marker_end}\n"
         ),
     },
@@ -665,7 +537,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- 做出决策：调用 `add_decision` 记录\n"
             "- 任务结束：调用 `wrap_up_session` 保存上下文\n"
             "- 用户问起历史对话（“我刚才/之前问过什么”）：调用 `get_recent_context` 查找\n"
-            "- 搜索历史知识：调用 `search_knowledge`\n"
+            "- 搜索历史知识：调用 `search_knowledge`\n" +
+            _DISTILL_RULES_ZH +
             "{marker_end}\n"
         ),
         "snippet_en": (
@@ -678,7 +551,8 @@ _INSTRUCTION_SNIPPETS: dict[str, dict] = {
             "- Decisions made: call `add_decision`\n"
             "- Task end: call `wrap_up_session` to save context\n"
             "- User asks about past conversations (\"what did I just ask\"): call `get_recent_context`\n"
-            "- Search past knowledge: call `search_knowledge`\n"
+            "- Search past knowledge: call `search_knowledge`\n" +
+            _DISTILL_RULES_EN +
             "{marker_end}\n"
         ),
     },
@@ -699,7 +573,11 @@ _STRICT_SNIPPET_BODY = {
         "- 只提案值得长期保留的内容，一条一个主张：先用 `search_knowledge` 查重；在 domain 里写类型"
         "（type:rule、type:preference、type:project_fact、type:lesson 或 type:decision），"
         "在 detail 里写为什么值得保留。\n"
-        "- 会话日志、进度、检查点，以及文件或 git 里已有的内容，不要提案；写进项目自己的笔记。\n"
+        "- 只提案长期有用的：会话日志、当天进度、待办、临时状态、检查点，以及文件或 git 里已有的内容，"
+        "不要提案；写进项目自己的笔记。\n"
+        "- “昨天”“下周”这类相对日期：能确定当时日期就写成具体日期，否则保留原文并注明“日期未定”。\n"
+        "- 如果与已有条目矛盾：先用 `search_knowledge` 找到旧条目，再提交带 `supersedes=<旧 id>` 的修订提案"
+        "（同样进入待审），不要另起一条无关联的新条目。\n"
         "- 不要用 `wrap_up_session`、`extract_session_insights`、`save_agent_context` 做自动保存。\n"
         "- 批准、驳回、编辑、合并、导入和身份修改由 Owner 在本地完成，MCP 会拒绝这些操作。\n"
     ),
@@ -714,8 +592,14 @@ _STRICT_SNIPPET_BODY = {
         "- Propose only what is worth keeping, one claim per row: run `search_knowledge` first so "
         "you do not propose a duplicate; label the type in domain (type:rule, type:preference, "
         "type:project_fact, type:lesson or type:decision) and say in detail why it is worth keeping.\n"
-        "- Do not propose session logs, progress notes, checkpoints, or anything already in files "
-        "or git; keep those in the project's own notes.\n"
+        "- Propose only what stays useful later: no session logs, today's progress, to-dos, "
+        "temporary state, checkpoints, or anything already in files or git; keep those in the "
+        "project's own notes.\n"
+        "- Relative dates (\"yesterday\", \"next week\"): write the actual date when you can tell "
+        "when it was said; otherwise keep the words and add \"(date unknown)\".\n"
+        "- If something contradicts an existing entry: find the old one with `search_knowledge`, "
+        "then submit a revision with `supersedes=<old id>` (it waits for review too) instead of "
+        "an unrelated new entry.\n"
         "- Do not use `wrap_up_session`, `extract_session_insights` or `save_agent_context` as an "
         "auto-save.\n"
         "- Approving, rejecting, editing, merging, importing and identity changes are the Owner's, "
@@ -731,7 +615,7 @@ _STRICT_CURSOR_HEADER = {
 }
 
 # Fingerprints (see _snippet_fingerprint) of every default snippet Engram has
-# shipped, v=1 and v=2 markers, v3.29.0 through 4.21.1, taken from the git history
+# shipped, v=1 and v=2 markers, v3.29.0 through 4.21.2, taken from the git history
 # of _INSTRUCTION_SNIPPETS. Text inside the markers (or a whole Cursor .mdc) that
 # matches none of these, nor a current default, is the Owner's own text: setup and
 # doctor --fix never overwrite it.
@@ -766,6 +650,36 @@ _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS = frozenset({
     "ca30baf0a71d1080411a41321b6a7fd95b047bcadadca23ad547321e7621bc9c",  # windsurf zh
     "613fad067069ddbc3b26ce9b71e966cab24016f67386e1db45cdc95496032f50",  # windsurf zh
     "66333fa4d8336c1467172889489fccc10c01f2ff37e87e61d579bda107c99a82",  # windsurf zh
+    # 4.21.2 strict (read + propose) text, before the distill rules were added.
+    "d185faf1cc61b62230caaf247d0bba4403dd4f813a5d91a57dc4bdba8d7db005",  # strict zh (marked block)
+    "8661550f037b83c20ec053954ecec6c05676a9583ea381bfa93888070234078d",  # strict en (marked block)
+    "a92d0ad53a563a6ba04d7d51c773005eed8d1a3416327d209c80dd1038a25717",  # cursor strict zh
+    "477fd57e28d527a896652d2c63e73edf42a8385ef410b829b32c59d96678ae59",  # cursor strict en
+    # Unreleased first wording of the distill rules ("Contradicts an existing entry").
+    "92c68841751dbffada5cd6473b4ce9575098f9c14636326afdc7fa9c613c5b45",  # claude_code zh
+    "f15e2f9086e2bb887766f7e5b41cf3889272fcdbb6ee54c841dd8c89e3523cf0",  # claude_code en
+    "06d50df7db4796e0c5f5dd46e11ac264a5b0d93b407ec3bc15537ea86079ff88",  # cursor zh
+    "05bca085559c10863ea71442d56757eec69311852f3f2de016c6cd7b910694cd",  # cursor en
+    "b4dd70e8ba9655c0bef95f4e5ea5150ef5a220fbff2f99edbd45c82cab00a9e5",  # codex zh
+    "0d918e90b65df60c334b0c9441713e8b4fad58f976e8a7ea52896d53d6061307",  # codex en
+    "960d123f47cc63907bfe305ce1104a5aae1f30416d80b57388aff8771b39f292",  # windsurf zh
+    "132b555c208a0c930135c481215c47ccf2923afd3969a9942ca2b4ea8f7353a5",  # windsurf en
+    "51f38a59c9ea288eda82b5c8a5acd1c7290fd45d2e9b53ad774fed44d959e635",  # strict zh (marked block)
+    "2fbcf7073e6504731c1b9b507d9e8dcfe6d1e23abf978c31f254c0ac3168052b",  # strict en (marked block)
+    "0d2d5bc68d407b10a8037f67bf4bc29e280f9cbfa24c0ca32997d6021e1da4b7",  # cursor strict zh
+    "c2e4d289195e4bf32ed1a26ad21922777c408d35b148a7f1d250c4d65a6cac04",  # cursor strict en
+})
+# The strict (read + propose) texts among them: an older one of these is just an
+# older default to doctor, not "text that auto-saves".
+_KNOWN_STRICT_SNIPPET_FINGERPRINTS = frozenset({
+    "d185faf1cc61b62230caaf247d0bba4403dd4f813a5d91a57dc4bdba8d7db005",
+    "8661550f037b83c20ec053954ecec6c05676a9583ea381bfa93888070234078d",
+    "a92d0ad53a563a6ba04d7d51c773005eed8d1a3416327d209c80dd1038a25717",
+    "477fd57e28d527a896652d2c63e73edf42a8385ef410b829b32c59d96678ae59",
+    "51f38a59c9ea288eda82b5c8a5acd1c7290fd45d2e9b53ad774fed44d959e635",
+    "2fbcf7073e6504731c1b9b507d9e8dcfe6d1e23abf978c31f254c0ac3168052b",
+    "0d2d5bc68d407b10a8037f67bf4bc29e280f9cbfa24c0ca32997d6021e1da4b7",
+    "c2e4d289195e4bf32ed1a26ad21922777c408d35b148a7f1d250c4d65a6cac04",
 })
 
 
@@ -834,6 +748,20 @@ def _marked_block(content: str, marker: str) -> tuple[int, int, str] | None:
 def _is_default_snippet(tool_id: str, text: str) -> bool:
     fp = _snippet_fingerprint(text)
     return fp in _KNOWN_DEFAULT_SNIPPET_FINGERPRINTS or fp in _default_fingerprints(tool_id)
+
+
+def _instruction_snippet_is_strict_default(tool_id: str, content: str) -> bool:
+    """Is the Engram block (or Cursor .mdc) a strict default text Engram shipped?"""
+    content = content or ""
+    if tool_id == "cursor":
+        inner = content
+    else:
+        block = _marked_block(content, _INSTRUCTION_MARKER) or _marked_block(content, _INSTRUCTION_MARKER_V1)
+        if block is None:
+            return False
+        inner = block[2]
+    fp = _snippet_fingerprint(inner)
+    return fp in _KNOWN_STRICT_SNIPPET_FINGERPRINTS or fp in _default_fingerprints(tool_id, strict=True)
 
 
 def _instruction_snippet_state(tool_id: str, content: str, *, strict: bool = False) -> str:
@@ -1084,7 +1012,10 @@ def _inject_claude_code_hook_for_event(
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
 ) -> str | None:
-    """Register a per-event hook in ``~/.claude/settings.json``.
+    """Register a per-event hook in Claude Code's ``settings.json``.
+
+    The file is in Claude Code's config directory: ``~/.claude``, or
+    ``$CLAUDE_CONFIG_DIR`` when that is set.
 
     Generic core used by Stop / PreCompact / SessionStart / PostCompact
     wiring.
@@ -1117,7 +1048,7 @@ def _inject_claude_code_hook_for_event(
         ``force_rewrite`` is False, or on failure.
     """
     try:
-        settings_path = Path.home() / ".claude" / "settings.json"
+        settings_path = _claude_code_mcp.settings_path()
 
         engram_command = _build_engram_hook_command(
             python_path, module=module, extra_env=extra_env,
@@ -1458,6 +1389,18 @@ def _detect_tools() -> list[dict]:
     """检测已安装的 AI 工具，返回可配置的工具列表。"""
     detected = []
     for tool_id, cfg in _tool_configs().items():
+        if cfg.get("register_via") == "claude_cli":
+            # Registered through the claude command; the file is only parsed, never written.
+            if _claude_code_mcp.is_installed():
+                detected.append({
+                    "id": tool_id,
+                    "name": cfg["name"],
+                    "config_path": _claude_code_mcp.user_config_path(),
+                    "format": "json",
+                    "server_key": "mcpServers",
+                    "register_via": "claude_cli",
+                })
+            continue
         for config_path in cfg["config_paths"]:
             # 配置文件已存在，或父目录存在（工具已装但未配置 MCP）
             if config_path.exists() or config_path.parent.exists():
@@ -1572,7 +1515,9 @@ def _write_config_text_with_backup(
         if existing == text:
             return
         _backup_existing_config(config_path)
-    config_path.write_text(text, encoding="utf-8")
+    from piia_engram.file_safety import atomic_write_text
+
+    atomic_write_text(config_path, text)
 
 
 def _parse_toml(text: str) -> dict:
@@ -1712,6 +1657,20 @@ def _write_mcp_config(
             "refusing to overwrite it."
         )
     existing_engram = servers.get("engram")
+    if existing_engram is None:
+        # An Engram entry under the README's old name: move it to the engram
+        # key (the file is backed up before the write) instead of adding a
+        # second server.
+        old = servers.get("piia-engram")
+        if _claude_code_mcp.launches_engram(old):
+            existing_engram = servers.pop("piia-engram")
+            print("  [migrated] piia-engram -> engram")
+    others = [
+        name for name in _claude_code_mcp.engram_names(servers)
+        if name not in ("engram", "piia-engram") and name not in LEGACY_SERVER_NAMES
+    ]
+    if others:
+        print(f"  [note] {config_path.name}: {', '.join(others)} also starts Engram; left unchanged")
     existing_env = (
         existing_engram.get("env", {})
         if isinstance(existing_engram, dict)
@@ -1726,6 +1685,41 @@ def _write_mcp_config(
     if removed:
         print(f"  [migrated] removed legacy server(s): {', '.join(removed)}")
 
+    servers["engram"] = _engram_server_entry(
+        python_path,
+        mcp_server_path,
+        data_dir,
+        existing_env=existing_env,
+        extra_env=extra_env,
+        engram_tools=engram_tools,
+        store_root=file_safety_root,
+    )
+
+    _write_config_text_with_backup(
+        config_path,
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+        backup_root=file_safety_root,
+        authorized_external_write=authorized_external_write,
+    )
+
+
+def _engram_server_entry(
+    python_path: str,
+    mcp_server_path: str,
+    data_dir: str | None = None,
+    *,
+    existing_env: dict | None = None,
+    extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
+    store_root: str | Path | None = None,
+) -> dict:
+    """The ``engram`` MCP server entry setup writes for a JSON client.
+
+    ``existing_env`` is the env block of the entry being replaced: its
+    ENGRAM_TOOLS (when ``engram_tools`` is None), ENGRAM_DIR, ENGRAM_SEARCH
+    and the owner's own keys carry over.
+    """
+    existing_env = existing_env if isinstance(existing_env, dict) else {}
     # Always use `-m piia_engram.mcp_server` (module invocation).
     # Direct .py paths fail with "ImportError: attempted relative import
     # with no known parent package" in all clients that spawn a subprocess.
@@ -1755,22 +1749,13 @@ def _write_mcp_config(
     preserved_search = (extra_env or {}).get("ENGRAM_SEARCH") or existing_env.get("ENGRAM_SEARCH")
     if preserved_search:
         env["ENGRAM_SEARCH"] = str(preserved_search)
-    env.update(_carried_env(existing_env, store_root=preserved_data_dir or file_safety_root))
+    env.update(_carried_env(existing_env, store_root=preserved_data_dir or store_root))
 
-    entry: dict = {
+    return {
         "command": python_path,
         "args": ["-m", "piia_engram.mcp_server"],
         "env": env,
     }
-
-    servers["engram"] = entry
-
-    _write_config_text_with_backup(
-        config_path,
-        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-        backup_root=file_safety_root,
-        authorized_external_write=authorized_external_write,
-    )
 
 
 def _write_mcp_config_toml(
@@ -1788,16 +1773,23 @@ def _write_mcp_config_toml(
     策略：原地替换 [mcp_servers.engram] 段，保留文件其余内容不动。
     """
     existing_env: dict = {}
+    migrate_from: str | None = None
     if config_path.is_file():
         existing_config = _read_mcp_config_for_write(config_path, fmt="toml")
         existing_servers = existing_config.get("mcp_servers", {})
-        existing_engram = (
-            existing_servers.get("engram", {})
-            if isinstance(existing_servers, dict)
-            else {}
-        )
+        existing_servers = existing_servers if isinstance(existing_servers, dict) else {}
+        existing_engram = existing_servers.get("engram")
+        if existing_engram is None and _claude_code_mcp.launches_engram(existing_servers.get("piia-engram")):
+            # Move an Engram entry under the old name to the engram table.
+            migrate_from = "piia-engram"
+            existing_engram = existing_servers.get("piia-engram")
         if isinstance(existing_engram, dict) and isinstance(existing_engram.get("env"), dict):
             existing_env = existing_engram["env"]
+    replaced_headers = {"[mcp_servers.engram]", "[mcp_servers.engram.env]"}
+    if migrate_from:
+        for form in (migrate_from, f'"{migrate_from}"'):
+            replaced_headers |= {f"[mcp_servers.{form}]", f"[mcp_servers.{form}.env]"}
+        print(f"  [migrated] {migrate_from} -> engram")
 
     lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.is_file() else []
     new_lines: list[str] = []
@@ -1845,8 +1837,8 @@ def _write_mcp_config_toml(
         line = lines[i]
         stripped = line.strip()
 
-        # 检测 [mcp_servers.engram] 段开始
-        if stripped == '[mcp_servers.engram]':
+        # 检测 [mcp_servers.engram] 段（以及要迁移的旧名称段）
+        if stripped in replaced_headers and not stripped.endswith(".env]"):
             skip_until_next_section = True
             if not inserted:
                 new_lines.extend(engram_block)
@@ -1854,8 +1846,8 @@ def _write_mcp_config_toml(
             i += 1
             continue
 
-        # 检测 [mcp_servers.engram.env] 子段（也要跳过）
-        if stripped == '[mcp_servers.engram.env]':
+        # 检测 .env 子段（也要跳过）
+        if stripped in replaced_headers:
             skip_until_next_section = True
             i += 1
             continue
@@ -1893,6 +1885,12 @@ def _write_tool_mcp_config(
     engram_tools: str | None = "all",
 ) -> None:
     """Write an MCP config using the target client's declared format."""
+    if tool.get("register_via") == "claude_cli":
+        # Claude Code's user config is written only by the claude command.
+        raise ValueError(
+            f"{tool.get('name', 'Claude Code')} is registered with 'claude mcp add', "
+            "not by writing its config file"
+        )
     if tool.get("format", "json") == "toml":
         _write_mcp_config_toml(
             tool["config_path"],
@@ -2291,64 +2289,19 @@ def _run_seed_knowledge_onboarding(
         if seed_count:
             print(_t(f"\n  🌱 已注入 {seed_count} 条通用最佳实践（基于 {effective_tech}）",
                      f"\n  🌱 Injected {seed_count} starter best practices (based on {effective_tech})"))
-            print(_t("     这些标记为 staging——使用 3 次后自动晋升为 verified。",
+            print(_t("     这些标记为 staging——审核确认后才会变为 verified。",
                      "     These are marked staging — review confirms what becomes verified."))
 
-    # Step 4.5 — 智能扫描 + 分流导入
-    print(_t("\n  智能导入规则文件",
-             "\n  Smart rule file import"))
-    rule_files = _scan_rule_files(cwd=current_dir)
-    import_result: dict = {"user_count": 0, "project_count": 0, "skipped": 0, "files": []}
-
-    if rule_files:
-        print(_t(f"\n  扫描到 {len(rule_files)} 个规则文件：",
-                 f"\n  Found {len(rule_files)} rule file(s):"))
-        for rf in rule_files:
-            scope_label = _t("全局", "global") if rf["scope"] == "global" else _t("项目", "project")
-            content_count = sum(1 for l in rf["lines"] if l.strip() and not l.strip().startswith("#"))
-            print(_t(f"  [{scope_label}] {rf['path']} ({content_count} 行有效内容)",
-                     f"  [{scope_label}] {rf['path']} ({content_count} content lines)"))
-
-        # 预览分流
-        user_preview = project_preview = skip_preview = 0
-        for rf in rule_files:
-            for line in rf["lines"]:
-                cat = _classify_line(line, rf["scope"])
-                if cat == "user":
-                    user_preview += 1
-                elif cat == "project":
-                    project_preview += 1
-                else:
-                    skip_preview += 1
-
-        print(_t("\n  分流预览：", "\n  Classification preview:"))
-        print(_t(f"    用户身份: {user_preview} 条",
-                 f"    User identity: {user_preview}"))
-        print(_t(f"    项目规则: {project_preview} 条",
-                 f"    Project rules: {project_preview}"))
-        print(_t(f"    跳过:     {skip_preview} 条",
-                 f"    Skipped:       {skip_preview}"))
-
-        import_result = _import_with_split(rule_files, engram)
-        rule_total = import_result["user_count"] + import_result["project_count"]
-        grouped_lessons = import_result["user_lessons"] + import_result["project_lessons"]
-        print(_t(f"\n  ✅ 已读取: {import_result['user_count']} 条身份规则 + {import_result['project_count']} 条项目规则",
-                 f"\n  ✅ Read: {import_result['user_count']} identity + {import_result['project_count']} project rules"))
-        if grouped_lessons > 0:
-            # 关键：N 条规则去碎片化后归整为 grouped_lessons 条记忆，不是丢了规则——
-            # 规则按来源文件分节保留在这几条记忆的 detail 里（极长文件可能截断）。
-            print(_t(f"  📦 已归整为 {grouped_lessons} 条记忆（{rule_total} 条规则去碎片化合并，按来源文件分节保留出处）。",
-                     f"  📦 Consolidated into {grouped_lessons} memory entr{'y' if grouped_lessons == 1 else 'ies'} "
-                     f"({rule_total} rules merged, kept under their source-file sections)."))
-            print(_t("  🔒 提示：规则原文已存入本地记忆。若文件含密钥/令牌/隐私，请运行 'engram review' 删除。",
-                     "  🔒 Note: rule text is stored verbatim in local memory. If files contain secrets/tokens/private info, run 'engram review' to remove."))
-            print(_t("  ✍️  导入内容仅作起点 — 如需纠正或删除，运行 'engram review' 复核。",
-                     "  ✍️  Imports are just a starting point — run 'engram review' to correct or remove anything."))
-    else:
-        print(_t("  未发现规则文件（CLAUDE.md / .cursorrules 等）。",
-                 "  No rule files found (CLAUDE.md / .cursorrules etc.)."))
-
-    total_imported = import_result["user_count"] + import_result["project_count"]
+    # Step 4.5 — rule files and memories from other AI tools: the same flow as
+    # `engram import-memories` (list first, review queue after a yes, receipt
+    # and audit line). Nothing is written as trusted memory and the profile is
+    # not changed from imported text.
+    print(_t("\n  导入已有的规则与记忆", "\n  Import existing rules and memories"))
+    import_payload = _offer_setup_import(str(root), project_roots=(current_dir,)) or {}
+    imported_items = [
+        item for item in import_payload.get("items", []) if item.get("status") == "imported"
+    ]
+    total_imported = len(imported_items)
 
     print("\n========================================")
     print(_t("  Engram 初始化完成！", "  Engram setup complete!"))
@@ -2362,8 +2315,8 @@ def _run_seed_knowledge_onboarding(
     print(_t(f"  经验：已录入 {lessons_added} 条",
              f"  Lessons: {lessons_added} recorded"))
     if total_imported > 0:
-        print(_t(f"  导入：{total_imported} 条规则（{import_result['user_count']} 条身份 + {import_result['project_count']} 条项目）",
-                 f"  Imported: {total_imported} rules ({import_result['user_count']} identity + {import_result['project_count']} project)"))
+        print(_t(f"  导入：{total_imported} 条，已放进待审区，用 engram review 批准",
+                 f"  Imported: {total_imported} items, waiting in the review queue; approve them with engram review"))
     if seed_count > 0:
         print(_t(f"  种子：{seed_count} 条最佳实践（staging 层级）",
                  f"  Seeds: {seed_count} best practices (staging tier)"))
@@ -2436,51 +2389,84 @@ def _run_seed_knowledge_onboarding(
         "lessons_added": lessons_added,
         "seed_count": seed_count,
         "env_signals": env_signals,
-        "imported_files": import_result["files"],
-        "import_user_count": import_result["user_count"],
-        "import_project_count": import_result["project_count"],
+        "imported_files": sorted({item["file"] for item in imported_items}),
+        "imported_to_review": total_imported,
+        "import_receipt": import_payload.get("receipt", ""),
     }
 
 
 # ---------------------------------------------------------------------------
-# Privacy & data preferences (telemetry opt-in + reconcile authorization)
+# Privacy & data preferences (one-time import offer + telemetry opt-in)
 # ---------------------------------------------------------------------------
 
-def _run_privacy_preferences(data_dir: str) -> None:
-    """Ask user about auto-reconcile and anonymous usage statistics."""
-    from piia_engram.telemetry import (
-        _load_config, _save_config, set_enabled, set_remote_enabled,
-    )
+def _turn_off_usage_ping() -> None:
+    """A "no" to statistics also turns the daily usage ping off (best effort).
 
-    cfg = _load_config()
+    The detailed-statistics opt-out already keeps the ping off; saving the ping
+    setting too covers an earlier explicit `engram telemetry on`.
+    """
+    try:
+        from piia_engram import usage_ping as _usage_ping
+
+        _usage_ping.set_enabled(False)
+    except Exception:
+        pass
+
+
+def _offer_setup_import(data_dir: str, *, project_roots: tuple = ()) -> dict | None:
+    """Setup's import step: ask once; a yes runs `engram import-memories`.
+
+    Engram never reads other AI tools' files on its own. Answering yes lists
+    what was found and imports into the review queue only after a second yes.
+    A no writes nothing (no switch is stored either).
+    """
+    print(_t("  [1] 导入其它 AI 工具的记忆（可选，一次性）",
+             "  [1] Import memories from other AI tools (optional, one time)"))
+    print(_t("      Engram 不会自动读取其它 AI 工具的文件（如 ~/.claude/projects/*/memory/*.md、",
+             "      Engram never reads other AI tools' files on its own (e.g."))
+    print(_t("      CLAUDE.md、.cursorrules）。现在可以导入一次：先列出清单，确认后才写入待审区。",
+             "      ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules). Import once now:"))
+    print(_t("      以后随时可运行 engram import-memories。\n",
+             "      it lists them first and writes to the review queue only after you confirm.\n"
+             "      Run engram import-memories any time later.\n"))
+    if not _yn(_t("  现在导入一次吗？", "  Import once now?"), default=False):
+        print(_t("  ℹ️  未导入。以后可运行 engram import-memories。\n",
+                 "  ℹ️  Nothing imported. Run engram import-memories any time.\n"))
+        return None
+    payload = None
+    try:
+        from piia_engram import memory_import
+
+        # A stored reconcile_authorized=false (in this data folder) is lifted
+        # only when the Owner confirms the listed items, right before writing;
+        # ENGRAM_RECONCILE=0 is never lifted.
+        payload = memory_import.interactive_import(
+            lambda question: _yn(f"  {question}", default=False),
+            out=lambda text: _safe_print("\n".join(f"  {line}" for line in text.splitlines())),
+            root=Path(data_dir),
+            project_roots=tuple(project_roots),
+            lift_stored_no=True,
+        )
+    except Exception as exc:
+        print(_t(f"  ⚠️  导入未完成（{exc}）。可稍后运行 engram import-memories。",
+                 f"  ⚠️  Import did not finish ({exc}). Run engram import-memories later."))
+    print()
+    return payload
+
+
+def _run_privacy_preferences(data_dir: str, *, offer_import: bool = True) -> None:
+    """Offer a one-time import from other AI tools; ask about usage statistics."""
+    from piia_engram.telemetry import set_enabled, set_remote_enabled
 
     print(_t("\nStep 5 — 隐私与数据偏好", "\nStep 5 — Privacy & data preferences"))
-    print(_t("  你的数据默认只留在本机。以下可选功能需要你明确同意。\n",
-             "  Your data stays local by default. The following optional features require your explicit consent.\n"))
+    print(_t("  你的记忆只留在本机。Engram 每天发送一次匿名使用信号；下面第 [2] 或 [2b] 项选择“否”也会关闭它。",
+             "  Your memories stay on this machine. Engram sends one anonymous usage ping a day;"
+             " answering no to [2] or [2b] below also turns it off."))
+    print(_t("  以下可选功能需要你明确同意。\n",
+             "  The following optional features require your explicit consent.\n"))
 
-    # --- Reconcile authorization ---
-    print(_t("  [1] 跨工具记忆同步",
-             "  [1] Cross-tool memory sync"))
-    print(_t("      Engram 可以在每次启动时自动扫描其他 AI 工具的配置文件",
-             "      Engram can scan other AI tools' config files on each startup"))
-    print(_t("      （如 ~/.claude/projects/*/memory/*.md、CLAUDE.md、.cursorrules 等）",
-             "      (e.g. ~/.claude/projects/*/memory/*.md, CLAUDE.md, .cursorrules)"))
-    print(_t("      并导入其中的规则和记忆到 Engram。",
-             "      and import rules and memories into Engram."))
-    print(_t("      扫描结果会显示在 get_user_context 输出中。\n",
-             "      Results appear in get_user_context output.\n"))
-
-    reconcile_authorized = _yn(
-        _t("  允许 Engram 扫描其他 AI 工具的文件？",
-           "  Allow Engram to scan other AI tools' files?"),
-        default=True,
-    )
-    cfg["reconcile_authorized"] = reconcile_authorized
-    if reconcile_authorized:
-        print(_t("  ✅ 已授权跨工具同步\n", "  ✅ Cross-tool sync authorized\n"))
-    else:
-        print(_t("  ℹ️  已关闭跨工具同步。可设置 ENGRAM_RECONCILE=1 重新开启。\n",
-                 "  ℹ️  Cross-tool sync disabled. Set ENGRAM_RECONCILE=1 to re-enable.\n"))
+    if offer_import:
+        _offer_setup_import(data_dir)
 
     # --- Anonymous usage statistics ---
     print(_t("  [2] 匿名使用统计",
@@ -2535,29 +2521,26 @@ def _run_privacy_preferences(data_dir: str) -> None:
             print(_t("  ✅ 远程统计已开启\n",
                      "  ✅ Remote statistics enabled\n"))
         else:
-            print(_t("  ℹ️  仅本地统计。可随时运行 engram telemetry remote on 开启远程。\n",
-                     "  ℹ️  Local only. Run engram telemetry remote on to enable remote anytime.\n"))
+            _turn_off_usage_ping()
+            print(_t("  ℹ️  仅本地统计，每日使用信号也已关闭。可随时运行 engram telemetry remote on 开启远程。\n",
+                     "  ℹ️  Local only; the daily usage ping is off too."
+                     " Run engram telemetry remote on to enable remote anytime.\n"))
     else:
         set_remote_enabled(False)
-        print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
-                 "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
-
-    # Save reconcile pref to same config file
-    cfg_all = _load_config()
-    cfg_all["reconcile_authorized"] = reconcile_authorized
-    _save_config(cfg_all)
+        _turn_off_usage_ping()
+        print(_t("  ℹ️  未开启，每日使用信号也已关闭。可随时运行 engram telemetry on 改变。\n",
+                 "  ℹ️  Not enabled; the daily usage ping is off too. Run engram telemetry on to change anytime.\n"))
 
 
-def _run_privacy_defaults(data_dir: str) -> None:
-    """Set reconcile=on by default, then ask about telemetry."""
+
+def _run_privacy_defaults(data_dir: str, *, offer_import: bool = True) -> None:
+    """Offer a one-time import from other AI tools, then ask about telemetry."""
     from piia_engram.telemetry import (
-        _load_config, _save_config, set_enabled, set_feedback_enabled,
-        set_remote_enabled,
+        set_enabled, set_feedback_enabled, set_remote_enabled,
     )
 
-    cfg = _load_config()
-    cfg["reconcile_authorized"] = True
-    _save_config(cfg)
+    if offer_import:
+        _offer_setup_import(data_dir)
 
     # --- Ask about telemetry — one question, all-or-nothing ---
     print(_t("  [匿名使用统计]",
@@ -2568,6 +2551,10 @@ def _run_privacy_defaults(data_dir: str) -> None:
              "      Includes: tool call counts, knowledge totals, weekly governance summary"))
     print(_t("      绝不包含：知识内容、prompt、文件路径、邮箱、IP",
              "      Never includes: knowledge content, prompts, file paths, email, IP"))
+    print(_t("      Engram 另外每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、"
+             "AI 客户端名称、日期）；这里选择“否”也会关闭它。",
+             "      Engram also sends one anonymous usage ping a day (random install ID, version, OS,"
+             " Python version, AI client name, date); answering no here also turns it off."))
     print(_t("      随时关闭：engram telemetry off\n",
              "      Disable anytime: engram telemetry off\n"))
 
@@ -2583,8 +2570,9 @@ def _run_privacy_defaults(data_dir: str) -> None:
         print(_t("  ✅ 已开启（含每周匿名反馈报告）\n",
                  "  ✅ Enabled (including weekly anonymous feedback reports)\n"))
     else:
-        print(_t("  ℹ️  未开启。可随时运行 engram telemetry on 改变。\n",
-                 "  ℹ️  Not enabled. Run engram telemetry on to change anytime.\n"))
+        _turn_off_usage_ping()
+        print(_t("  ℹ️  未开启，每日使用信号也已关闭。可随时运行 engram telemetry on 改变。\n",
+                 "  ℹ️  Not enabled; the daily usage ping is off too. Run engram telemetry on to change anytime.\n"))
 
 
 # ---------------------------------------------------------------------------
@@ -2682,7 +2670,7 @@ def _existing_engram_tools_values(tools: list[dict]) -> list[str]:
             servers = config.get("mcp_servers", {})
         if not isinstance(servers, dict):
             continue
-        engram = servers.get("engram", {})
+        engram = servers.get(_claude_code_mcp.engram_entry_name(servers) or "engram", {})
         env = engram.get("env", {}) if isinstance(engram, dict) else {}
         if not isinstance(env, dict):
             continue
@@ -2737,6 +2725,182 @@ def _choose_setup_capability_mode(
     return _prompt_setup_capability_mode()
 
 
+def _claude_code_target_line() -> str:
+    """Where `claude mcp add --scope user` puts the entry, for setup's messages."""
+    path = _claude_code_mcp.user_config_path()
+    if _claude_code_mcp.config_dir_override():
+        return _t(f"用户级配置 {path}（来自 CLAUDE_CONFIG_DIR）",
+                  f"user config {path} (from CLAUDE_CONFIG_DIR)")
+    return _t(f"用户级配置 {path}", f"user config {path}")
+
+
+def _print_claude_code_manual(reg) -> None:
+    """The commands a user runs to finish the Claude Code registration by hand."""
+    if reg.detail == "no_cli":
+        print(_t("  ⚠️  Claude Code 需手动完成：未找到 claude 命令。请在终端运行：",
+                 "  ⚠️  Claude Code needs a manual step: the claude command was not found. Run:"))
+    elif reg.detail == "differs":
+        print(_t("  ⚠️  Claude Code 需手动完成：已有一个不同的 engram 条目，未覆盖。要换成本次配置，请运行：",
+                 "  ⚠️  Claude Code needs a manual step: a different engram entry exists and was "
+                 "left as is. To replace it, run:"))
+        print("      claude mcp remove --scope user engram")
+    elif reg.detail == "cmd_unsafe":
+        print(_t("  ⚠️  Claude Code 需手动完成：claude 是经 cmd.exe 运行的 .cmd/.bat 启动脚本，而参数里有 "
+                 "cmd.exe 会改写的字符（如 & % ^ ! \" ( ) |），setup 不自动运行它。请在终端运行：",
+                 "  ⚠️  Claude Code needs a manual step: claude is a .cmd/.bat shim run through cmd.exe "
+                 "and an argument holds characters cmd.exe would rewrite (such as & % ^ ! \" ( ) |), "
+                 "so setup does not run it. Run:"))
+    else:
+        print(_t("  ⚠️  Claude Code 需手动完成，请在终端运行：",
+                 "  ⚠️  Claude Code needs a manual step. Run:"))
+    print(_t(f"      （以下命令按 {_claude_code_mcp.manual_shell()} 的引号写法）",
+             f"      (quoted for {_claude_code_mcp.manual_shell()})"))
+    print(f"      {reg.command}")
+    if reg.hidden_env:
+        keys = ", ".join(reg.hidden_env)
+        print(_t(f"      旧条目还设置了 {keys}：需要的话用 -e KEY=VALUE 一并加上。",
+                 f"      Your old entry also sets {keys}; add them with -e KEY=VALUE if you need them."))
+    if _claude_code_mcp.config_dir_override():
+        print(_t("      （请在设置了相同 CLAUDE_CONFIG_DIR 的终端里运行。）",
+                 "      (Run it in a shell with the same CLAUDE_CONFIG_DIR.)"))
+
+
+def _report_claude_code_registration(reg) -> None:
+    status = reg.status
+    if status in ("added", "replaced"):
+        print(_t(f"  ✅ Claude Code 已通过 claude 命令注册 Engram（{_claude_code_target_line()}）",
+                 f"  ✅ Claude Code: Engram registered with the claude command ({_claude_code_target_line()})"))
+    elif status == "unchanged":
+        print(_t("  ✅ Claude Code 已注册 Engram（配置一致，未改动）",
+                 "  ✅ Claude Code: Engram already registered (same entry, left unchanged)"))
+    elif status == "present":
+        print(_t(f"  ✅ Claude Code 已注册 Engram（名称 {reg.name}），不再重复添加",
+                 f"  ✅ Claude Code: Engram already registered (as {reg.name}); not adding another entry"))
+    elif status == "kept":
+        print(_t("  ℹ️  Claude Code：保留了你现有的 engram 条目（与本次配置不同）",
+                 "  ℹ️  Claude Code: kept your existing engram entry (it differs from this setup)"))
+    elif status == "conflict":
+        print(_t("  ⚠️  Claude Code 需手动完成：已有名为 engram 的条目，但它不是 Engram（启动的是别的服务器），"
+                 "保留未动，也没有另加条目。请先给它改名或删除，再重新运行 engram setup。",
+                 "  ⚠️  Claude Code needs a manual step: an entry named engram exists but it is not Engram "
+                 "(it starts another server); it was left alone and nothing was added. Rename or remove "
+                 "it, then run engram setup again."))
+    elif status == "failed":
+        detail = f": {reg.detail}" if reg.detail else ""
+        print(_t(f"  ❌ Claude Code：claude mcp add 失败{detail}",
+                 f"  ❌ Claude Code: claude mcp add failed{detail}"))
+        _print_claude_code_manual(reg)
+    else:
+        _print_claude_code_manual(reg)
+
+
+def _register_claude_code(
+    python_path: str,
+    mcp_server_path: str,
+    data_dir: str | None,
+    *,
+    extra_env: dict[str, str] | None = None,
+    engram_tools: str | None = "all",
+    interactive: bool = False,
+):
+    """Register Engram with Claude Code through `claude mcp add --scope user`.
+
+    The entry is the one setup writes for every JSON client. Claude Code's
+    user config is only read (to skip an identical entry); a different
+    ``engram`` entry is replaced only after an interactive yes.
+    """
+
+    def build(existing_env: dict) -> dict:
+        return _engram_server_entry(
+            python_path,
+            mcp_server_path,
+            data_dir,
+            existing_env=existing_env,
+            extra_env=extra_env,
+            engram_tools=engram_tools,
+            store_root=data_dir,
+        )
+
+    def confirm() -> bool:
+        answer = _prompt(_t(
+            "  Claude Code 已有一个不同的 engram 条目。换成本次配置？ 1=替换（推荐）  2=保留现有",
+            "  Claude Code has a different engram entry. Replace it with this setup's? "
+            "1=Replace (recommended)  2=Keep",
+        ), "1")
+        return answer.strip() != "2"
+
+    reg = _claude_code_mcp.register(
+        build,
+        on_differ="ask" if interactive else "keep",
+        confirm_replace=confirm if interactive else None,
+    )
+    _report_claude_code_registration(reg)
+    return reg
+
+
+def _claude_legacy_notice() -> None:
+    print(_t(
+        f"  ⚠️  {_claude_code_mcp.LEGACY_LABEL} 里有 Engram 条目：Claude Code 不会读取该文件"
+        "（旧版 engram setup 写在这里）。",
+        f"  ⚠️  {_claude_code_mcp.LEGACY_LABEL} holds an Engram entry: Claude Code does not read "
+        "that file (older engram setup versions wrote there).",
+    ))
+
+
+def _offer_claude_legacy_cleanup(data_dir: str | None, *, registered: bool, interactive: bool) -> None:
+    """Point at Engram entries in ~/.claude/.mcp.json; remove them only after a yes.
+
+    Offered only once Claude Code has Engram in its user config, and only
+    interactively. Other servers in that file are never touched.
+    """
+    legacy = _claude_code_mcp.read_legacy()
+    if not legacy.has_engram:
+        return
+    _claude_legacy_notice()
+    unmatched = [n for n in legacy.names if n not in legacy.removable]
+    if unmatched:
+        listed = ", ".join(unmatched)
+        print(_t(f"      其中 {listed} 只有名称或只有命令像 Engram，setup 不会移除，请自行检查。",
+                 f"      {listed}: only the name or only the command looks like Engram; setup does not "
+                 "remove it, check it yourself."))
+    if not legacy.removable:
+        return
+    if not registered:
+        print(_t("      完成上面的注册后，可重新运行 engram setup 清理旧条目。",
+                 "      After finishing the registration above, re-run engram setup to remove it."))
+        return
+    if not interactive:
+        print(_t("      旧条目保留未动；交互运行 engram setup 可选择移除它（其它服务器条目不受影响）。",
+                 "      The old entry was left in place; run engram setup interactively to remove it "
+                 "(other servers in that file are kept)."))
+        return
+    names = ", ".join(legacy.removable)
+    answer = _prompt(_t(
+        f"  从 {_claude_code_mcp.LEGACY_LABEL} 移除旧的 Engram 条目（{names}）？其它条目保留。 "
+        "1=移除（推荐）  2=保留",
+        f"  Remove the old Engram entry ({names}) from {_claude_code_mcp.LEGACY_LABEL}? "
+        "Other entries stay. 1=Remove (recommended)  2=Keep",
+    ), "1")
+    if answer.strip() == "2":
+        print(_t("      已保留旧条目。", "      Kept the old entry."))
+        return
+
+    def write(path: Path, text: str) -> None:
+        _write_config_text_with_backup(
+            path, text, backup_root=data_dir, authorized_external_write=True,
+        )
+
+    try:
+        removed = _claude_code_mcp.remove_legacy_entries(write_text=write)
+    except Exception as exc:
+        print(_t(f"  ❌ 移除旧条目失败（{type(exc).__name__}）",
+                 f"  ❌ Could not remove the old entry ({type(exc).__name__})"))
+        return
+    if removed:
+        print(_t(f"  ✅ 已移除旧条目：{', '.join(removed)}（写前已备份）",
+                 f"  ✅ Removed the old entry: {', '.join(removed)} (backed up first)"))
+
+
 def _apply_external_configs(
     tools: list[dict],
     python_path: str,
@@ -2744,9 +2908,17 @@ def _apply_external_configs(
     selected_data_dir: str,
     extra_env: dict[str, str] | None = None,
     engram_tools: str | None = "all",
-) -> tuple[list[str], list[str]]:
+    *,
+    interactive: bool = False,
+) -> tuple[list[str], list[str], list[str]]:
     """Write MCP config + inject instruction snippets/hooks for each detected
-    tool. Returns ``(success_names, failed_names)``.
+    tool. Returns ``(success_names, failed_names, manual_names)``.
+
+    Claude Code is registered through the claude command instead of a file
+    write; when that command is missing (or a different entry is kept in a
+    non-interactive run) it lands in ``manual_names`` with the command printed.
+    ``interactive`` allows the questions about replacing a different Claude
+    Code entry and removing the old ~/.claude/.mcp.json entry.
 
     The caller owns the user-consent decision (interactive confirm or the
     ``--apply-external-config`` flag); this function assumes the write is
@@ -2755,8 +2927,12 @@ def _apply_external_configs(
     """
     success: list[str] = []
     failed: list[str] = []
+    manual: list[str] = []
     configured_tool_ids: list[str] = []
+    claude_reg = None
     for tool in tools:
+        if tool.get("register_via") == "claude_cli":
+            continue  # registered after the file writes below
         try:
             _write_tool_mcp_config(
                 tool,
@@ -2776,6 +2952,36 @@ def _apply_external_configs(
         print(_t(f"  ✅ {name} 已配置", f"  ✅ {name} configured"))
     for name in failed:
         print(_t(f"  ❌ {name} 配置失败", f"  ❌ {name} failed"))
+
+    for tool in tools:
+        if tool.get("register_via") != "claude_cli":
+            continue
+        try:
+            claude_reg = _register_claude_code(
+                python_path,
+                mcp_server_path,
+                selected_data_dir,
+                extra_env=extra_env,
+                engram_tools=engram_tools,
+                interactive=interactive,
+            )
+        except Exception as exc:
+            print(_t(f"  ❌ {tool['name']} 配置失败", f"  ❌ {tool['name']} failed"))
+            failed.append(f"{tool['name']} ({type(exc).__name__})")
+            continue
+        if claude_reg.registered:
+            success.append(tool["name"])
+        elif claude_reg.status in ("manual", "conflict"):
+            manual.append(tool["name"])
+        else:
+            failed.append(f"{tool['name']} (claude mcp add: {claude_reg.detail or 'error'})")
+        if claude_reg.status != "failed":
+            # The snippet and hooks belong to Claude Code either way; with a
+            # manual step pending they take effect once it is done.
+            configured_tool_ids.append(tool["id"])
+        _offer_claude_legacy_cleanup(
+            selected_data_dir, registered=claude_reg.registered, interactive=interactive,
+        )
 
     # Inject instruction snippets into each tool's native instruction file
     # so AI proactively calls Engram (not relying solely on MCP instructions)
@@ -2804,6 +3010,9 @@ def _apply_external_configs(
                  "  📝 Kept your own Engram instruction block (not overwritten):"))
         for path in kept_custom:
             print(f"    {path}")
+        print(_t("    Engram 的默认指令段可能有更新（例如关于记什么的规则）；需要的话请手动合并。",
+                 "    Engram's default block may be newer (for example the rules on what to keep); "
+                 "merge it by hand if you want it."))
     if injected:
         print()
         print(_t("  📝 已注入 AI 指令（确保 AI 主动调用 Engram）：",
@@ -2851,7 +3060,7 @@ def _apply_external_configs(
             print(_t(f"  🔗 已注册 PostCompact 摘要吸收 Hook（v3.30）",
                      f"  🔗 Registered PostCompact summary-absorb hook (v3.30)"))
 
-    return success, failed
+    return success, failed, manual
 
 
 def run_setup(advanced: bool = False, apply_external_config: bool = False) -> None:
@@ -2920,6 +3129,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     tools = _detect_tools()
     success: list[str] = []
     failed: list[str] = []
+    manual: list[str] = []
     external_config_written = False
     if not tools:
         print(_t("  ⚠️  未检测到 AI 工具（Claude Code / Cursor / Claude Desktop）",
@@ -2940,6 +3150,13 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
                 "  Engram will be added to these clients' MCP config (auto-backed-up first):",
             ))
             for tool in tools:
+                if tool.get("register_via") == "claude_cli":
+                    print(_t(
+                        f"      - Claude Code：通过 claude mcp add --scope user engram 注册（{_claude_code_target_line()}）",
+                        f"      - Claude Code: registered with claude mcp add --scope user engram "
+                        f"({_claude_code_target_line()})",
+                    ))
+                    continue
                 print(f"      - {tool['config_path']}")
             ans = _prompt(_t(
                 "  自动写入以上配置？ 1=是，自动配置（推荐）  2=否，仅只读检查",
@@ -2960,12 +3177,18 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
                     f"  🔒 Strict mode (from {source}): client configs get ENGRAM_APPROVAL=strict "
                     "and the read + propose instructions",
                 ))
-            success, failed = _apply_external_configs(
+            success, failed, manual = _apply_external_configs(
                 tools, python_path, mcp_server_path, selected_data_dir,
                 extra_env=extra_env,
                 engram_tools=engram_tools,
+                interactive=not apply_external_config,
             )
             external_config_written = True
+            if manual:
+                print(_t(
+                    f"  ℹ️  需手动完成：{', '.join(manual)}（命令见上）",
+                    f"  ℹ️  Manual step needed: {', '.join(manual)} (command above)",
+                ))
             if failed:
                 print(_t(
                     "  ℹ️  部分客户端写入失败，可稍后重试或手动添加 MCP 配置。",
@@ -2989,10 +3212,11 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
     )
 
     # Step 3 — 隐私偏好
+    # The import offer was made in Step 2 (seed knowledge); not asked twice.
     if advanced:
-        _run_privacy_preferences(selected_data_dir)
+        _run_privacy_preferences(selected_data_dir, offer_import=False)
     else:
-        _run_privacy_defaults(selected_data_dir)
+        _run_privacy_defaults(selected_data_dir, offer_import=False)
 
     # 增强检索收尾：等种子知识录入后再建索引，索引才包含初始知识
     if hybrid_enabled:
@@ -3032,6 +3256,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
         success,
         failed,
         external_config_mode="apply" if external_config_written else "read_only",
+        manual=manual,
     )
 
 
@@ -3041,6 +3266,7 @@ def _save_setup_report(
     success: list[str],
     failed: list[str],
     external_config_mode: str = "apply",
+    manual: list[str] | None = None,
 ) -> None:
     """Save a local setup report for activation funnel tracking.
 
@@ -3064,9 +3290,10 @@ def _save_setup_report(
             "tools_detected": [t.get("name", t.get("id", "?")) for t in detected_tools],
             "tools_configured": success,
             "tools_failed": failed,
+            "tools_manual": list(manual or []),
             "external_config_mode": external_config_mode,
             "language": _lang,
-            "status": "success" if not failed else "partial",
+            "status": "success" if not failed and not manual else "partial",
         }
 
         report_path = Path(data_dir) / "setup_report.jsonl"
@@ -3078,11 +3305,16 @@ def _save_setup_report(
 
 
 def auto_migrate() -> None:
-    """升级后首次启动时静默迁移旧配置，每个版本只运行一次。
+    """升级后首次启动时检查旧配置，每个版本只运行一次。
 
     由 mcp_server.py 在 stdio 模式启动前调用。
     不向 stdout 输出任何内容（避免破坏 MCP 协议）。
     迁移日志写入 ~/.engram/migration.log。
+
+    Config only and idempotent: it writes the ``.migrated_version`` marker, a
+    ``migration.log`` notice when legacy client entries are found, and one
+    ``config/auto_migrate`` audit line per version. It never reads or writes
+    memory content and never changes files outside the store.
     """
     try:
         import os as _os
@@ -3107,6 +3339,15 @@ def auto_migrate() -> None:
         # config writes are explicit setup/doctor actions.
         log_lines: list[str] = []
         for _tool_id, cfg in _tool_configs().items():
+            if cfg.get("register_via") == "claude_cli":
+                # Claude Code: the shared detection; its user config is
+                # parsed only to find Engram; nothing from it is logged.
+                if _claude_code_mcp.detection_status() == "legacy_only":
+                    log_lines.append(
+                        f"  {_claude_code_mcp.LEGACY_LABEL}: holds an Engram entry, but "
+                        f"{cfg['name']} does not read that file; external config left unchanged"
+                    )
+                continue
             fmt = cfg.get("format", "json")
             server_key = cfg.get("server_key", "mcpServers")
             for config_path in cfg["config_paths"]:
@@ -3124,7 +3365,22 @@ def auto_migrate() -> None:
 
         # 写哨兵（无论是否有迁移，都标记当前版本已处理过）
         data_dir.mkdir(parents=True, exist_ok=True)
+        previous = sentinel.read_text(encoding="utf-8").strip() if sentinel.is_file() else ""
         sentinel.write_text(_ver, encoding="utf-8")
+
+        # Audit the run: once per installed version, config only. This step
+        # never reads or writes memory content (lessons, decisions, identity).
+        from piia_engram.audit import AuditLogger, audit_enabled_by_env
+
+        AuditLogger(data_dir / "audit.log", enabled=audit_enabled_by_env()).log(
+            "write",
+            "config/auto_migrate",
+            detail=(
+                f"from={previous or 'none'} to={_ver} "
+                f"legacy_client_entries={len(log_lines)} memory_content=untouched"
+            ),
+            source_tool="mcp_startup",
+        )
 
         # 写迁移日志（仅在有实际变更时）
         if log_lines:
@@ -3189,6 +3445,8 @@ from .cli_commands import (  # noqa: E402,F401 — re-exports
     run_review,
     run_confirm,
     run_anchors,
+    run_pin,
+    run_unpin,
     run_onboard,
     run_onboard_accept,
     _run_telemetry_cli,
@@ -3318,31 +3576,133 @@ def _run_capabilities_cli(args: list[str]) -> int:
     return 0 if compatibility is None or compatibility["compatible"] else 1
 
 
+# Zero-write and machine-facing commands: no update reminder and no usage ping.
+# `doctor` prints its own richer version line, so the generic reminder would
+# double-print. The Dock contract commands are read-only or dry-run-by-default
+# JSON surfaces — the reminder would write .update_check.json into the store
+# (`dock-quality-action` only writes after an explicit --yes, never on its
+# default dry-run).
+_QUIET_COMMANDS = (
+    "doctor", "capabilities", "continuity", "dock-status", "dock-resume", "dock-quality",
+    "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search",
+    "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang",
+    "dock-onboard-scan", "weekly",
+)
+# No usage ping for these either (the update reminder still runs): `telemetry`
+# manages the ping itself; `watcher` is run by autostart / schedulers, which is
+# not use.
+_PING_SKIP_EXTRA = ("telemetry", "watcher")
+# Help and version requests are not use either; every dock-* command is a
+# machine-facing surface, including ones added after this list was written.
+_PING_SKIP_ARGS = ("-h", "--help", "help", "--version", "-V", "version")
+
+
+def _skips_usage_ping(command: str) -> bool:
+    return (command in _QUIET_COMMANDS or command in _PING_SKIP_EXTRA
+            or command in _PING_SKIP_ARGS or command.startswith("dock-"))
+
+
+def _start_usage_ping_cli() -> None:
+    """Daily anonymous usage ping for CLI runs; waits at most 1.5 s at exit."""
+    try:
+        import atexit
+
+        from piia_engram import usage_ping as _usage_ping
+
+        thread = _usage_ping.maybe_send("cli")
+        if thread is not None:
+            def _join() -> None:
+                try:
+                    thread.join(1.5)
+                except BaseException:
+                    pass
+
+            atexit.register(_join)
+    except Exception:
+        pass
+
+
+def _show_usage_notice(stream) -> None:
+    try:
+        from piia_engram import usage_ping as _usage_ping
+
+        _usage_ping.maybe_show_notice(stream)
+    except Exception:
+        pass
+
+
+def _in_cli_origin(func):
+    """Rows written while ``func`` runs are stamped ``provenance.origin = "cli"``."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        from piia_engram.write_provenance import ORIGIN_CLI, origin_scope
+
+        with origin_scope(ORIGIN_CLI):
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+def _run_doctor_cli(args: list[str]) -> int:
+    """engram doctor [--fix] [--days N] [--json]; 2 on a usage error."""
+    fix = "--fix" in args
+    as_json = "--json" in args
+    days = None
+    raw = None
+    for index, arg in enumerate(args):
+        if arg == "--days":
+            raw = args[index + 1] if index + 1 < len(args) else ""
+        elif arg.startswith("--days="):
+            raw = arg[len("--days="):]
+    if raw is not None:
+        from piia_engram.connection_report import MAX_DAYS
+
+        raw = raw.strip()
+        days = int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 6 else 0
+        if not 1 <= days <= MAX_DAYS:
+            print(f"engram doctor: --days needs a whole number from 1 to {MAX_DAYS}", file=sys.stderr)
+            return 2
+    if as_json and fix:
+        print("engram doctor: --json only reports; run --fix separately", file=sys.stderr)
+        return 2
+    if as_json:
+        from piia_engram.doctor import run_doctor_json
+
+        return run_doctor_json(days=days)
+    return run_doctor(fix=fix, days=days)
+
+
+@_in_cli_origin
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
     args = sys.argv[1:]
     # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
-    # `doctor` prints its own richer version line, so skip the generic notice
-    # there to avoid a double-print. The Dock contract commands are read-only or
-    # dry-run-by-default JSON surfaces — the reminder would write .update_check.json
-    # into the store — so skip them too (`dock-quality-action` only writes after
-    # an explicit --yes, never on its default dry-run). Not reached by the MCP entry.
-    if not (args and args[0] in ("doctor", "capabilities", "continuity", "dock-status", "dock-resume", "dock-quality", "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search", "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang", "dock-onboard-scan", "weekly")):
+    # Skipped for _QUIET_COMMANDS. Not reached by the MCP entry.
+    if not (args and args[0] in _QUIET_COMMANDS):
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
             maybe_print_update_notice()
         except Exception:
             pass
-    if not args or args[0] == "setup":
+    is_setup = not args or args[0] == "setup"
+    # Daily usage ping: never for the commands _skips_usage_ping names; for setup
+    # only after its questions (a "no" to statistics must stop the first ping).
+    if not is_setup and not _skips_usage_ping(args[0]):
+        _show_usage_notice(sys.stderr)
+        _start_usage_ping_cli()
+    if is_setup:
         run_setup(
             advanced="--advanced" in args,
             apply_external_config="--apply-external-config" in args,
         )
+        _show_usage_notice(sys.stdout)
+        _start_usage_ping_cli()
     elif args[0] == "doctor":
-        fix = "--fix" in args
-        sys.exit(run_doctor(fix=fix))
+        sys.exit(_run_doctor_cli(args[1:]))
     elif args[0] == "capabilities":
         sys.exit(_run_capabilities_cli(args[1:]))
     elif args[0] == "sessions":
@@ -3353,6 +3713,10 @@ def main() -> None:
         sys.exit(run_confirm(args[1:]))
     elif args[0] == "anchors":
         sys.exit(run_anchors(args[1:]))
+    elif args[0] == "pin":
+        sys.exit(run_pin(args[1:]))
+    elif args[0] == "unpin":
+        sys.exit(run_unpin(args[1:]))
     elif args[0] == "onboard":
         sys.exit(run_onboard(args[1:]))
     elif args[0] == "onboard-accept":
@@ -3447,6 +3811,10 @@ def main() -> None:
         sys.exit(run_conflicts(args[1:]))
     elif args[0] == "reconcile":
         sys.exit(_run_reconcile(args[1:]))
+    elif args[0] == "import-memories":
+        from piia_engram.memory_import import run_cli as _run_import_memories
+
+        sys.exit(_run_import_memories(args[1:]))
     elif args[0] == "integrity":
         sys.exit(_run_integrity(args[1:]))
     elif args[0] == "dashboard":
@@ -3485,6 +3853,8 @@ def main() -> None:
             "  engram doctor           Check config health (all AI tools; no writes to the memory\n"
             "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram doctor --days N  Look back N days (1-3650, default 14) for client calls\n"
+            "  engram doctor --json    Client connections only, as JSON (read-only)\n"
             "  engram capabilities     Content-free runtime capability fingerprint (--json/--require)\n"
             "  engram status           Show a redacted install + memory health summary\n"
             "  engram status --html    Write a local redacted status page\n"
@@ -3494,11 +3864,14 @@ def main() -> None:
             "  engram sessions         List saved cross-tool agent sessions\n"
             "  engram sessions show <id>  Print one saved session\n"
             "  engram review           List staging knowledge awaiting review\n"
+            "  engram review interactive  Decide pending proposals one at a time (a/r/s/k/v/q)\n"
             "  engram review show <id> Inspect one review item\n"
             "  engram review approve <id> --yes  Promote staging item\n"
             "  engram review archive <id> --yes  Archive review item\n"
             "  engram confirm <id> --by human|test|anchor  Owner-confirm freshness provenance\n"
             "  engram anchors check   Owner-run anchor revalidation for the current repo\n"
+            "  engram pin <id>         Pin a trusted entry: kept and shown first (--list, --kind)\n"
+            "  engram unpin <id>       Remove a pin\n"
             "  engram onboard [--root PATH]  Scan repo anchors -> staging candidate repo-facts\n"
             "  engram onboard-accept --all [--yes]  Verify & accept repo-fact candidate(s) (single: <id>)\n"
             "  engram playbook install <builtin-name> [--yes]\n"
@@ -3509,6 +3882,8 @@ def main() -> None:
             "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
             "  engram backup-plan      Metadata-only local backup plan (--json for raw)\n"
             "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"
+            "  engram import-memories  Import other AI tools' memories into the review queue\n"
+            "                          (lists them first; --dry-run / --yes / --source)\n"
             "  engram retention plan   What the capacity rules would move next (read-only; restore <id>)\n"
             "  engram export-agents-md Export verified, non-sensitive knowledge as an AGENTS.md block\n"
             "  engram recall           Single-call owner recall digest (--project/--query/--json)\n"

@@ -88,6 +88,13 @@
           "required": false,
           "default": false,
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"
@@ -169,6 +176,20 @@
           "annotation": "bool",
           "required": false,
           "default": false,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
           "kind": "positional_or_keyword"
         }
       ],
@@ -301,6 +322,20 @@
           "required": false,
           "default": false,
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes",
+          "annotation": "str",
+          "required": false,
+          "default": "",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "supersedes_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"
@@ -311,6 +346,13 @@
           "name": "item_id",
           "annotation": "str",
           "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "expected_version",
+          "annotation": "int | None",
+          "required": false,
           "default": null,
           "kind": "positional_or_keyword"
         }
@@ -1274,6 +1316,13 @@
           "required": false,
           "default": false,
           "kind": "positional_or_keyword"
+        },
+        {
+          "name": "expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
         }
       ],
       "returns": "str"
@@ -1378,6 +1427,20 @@
           "name": "secondary_id",
           "annotation": "str",
           "required": true,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "primary_expected_version",
+          "annotation": "int | None",
+          "required": false,
+          "default": null,
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "secondary_expected_version",
+          "annotation": "int | None",
+          "required": false,
           "default": null,
           "kind": "positional_or_keyword"
         }
@@ -1775,6 +1838,13 @@
           "annotation": "int",
           "required": false,
           "default": "_DEFAULT_MAX_FIELD_CHARS",
+          "kind": "positional_or_keyword"
+        },
+        {
+          "name": "include_superseded",
+          "annotation": "bool",
+          "required": false,
+          "default": false,
           "kind": "positional_or_keyword"
         }
       ],
