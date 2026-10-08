@@ -4,6 +4,7 @@ import atexit
 import os
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -166,6 +167,24 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
 
     monkeypatch.setattr(_claude_code_mcp, "cli_path", lambda: None)
     monkeypatch.setattr(_claude_code_mcp, "run_cli", _no_real_claude)
+    try:
+        yield
+    finally:
+        # Stop test-owned sessions before the next test changes the store root.
+        # Keep heartbeat behaviour enabled during tests that exercise it.
+        heartbeats = []
+        for thread in threading.enumerate():
+            if thread.name != "engram-heartbeat":
+                continue
+            target = getattr(thread, "_target", None)
+            tracker = getattr(target, "__self__", None)
+            if getattr(tracker, "_heartbeat_thread", None) is not thread:
+                continue
+            tracker._stop_event.set()
+            heartbeats.append(thread)
+        for thread in heartbeats:
+            thread.join(timeout=3.0)
+            assert not thread.is_alive(), "test session heartbeat did not stop"
 
 
 @pytest.fixture

@@ -325,11 +325,13 @@ def test_atomic_write_through_a_symlink_keeps_the_link(tmp_path: Path):
     home.mkdir()
     link = home / "client.json"
     link.symlink_to(real)
+    original_target = os.readlink(link)
 
     file_safety.atomic_write_text(link, '{"a": 1}\n')
 
     assert link.is_symlink()
-    assert Path(os.readlink(link)) == real
+    assert os.readlink(link) == original_target
+    assert link.resolve() == real.resolve()
     assert json.loads(real.read_text(encoding="utf-8")) == {"a": 1}
     assert sorted(p.name for p in home.iterdir()) == ["client.json"]
     assert sorted(p.name for p in real_dir.iterdir()) == ["client.json"]
