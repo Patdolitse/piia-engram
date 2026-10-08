@@ -18,6 +18,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- Native backup exports refuse destinations inside the store or over managed files, including link aliases. Default backups go to a sibling `<store-name>_exports` directory.
 - Codex setup migrates legacy inline-table MCP entries with a pre-write backup, preserving user environment settings and other servers.
 - Setup prints the Claude Code terminal restart hint once.
 - `engram stats` skips all growth-metric requests when `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` explicitly allows requests for that invocation without enabling telemetry.

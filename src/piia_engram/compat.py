@@ -216,6 +216,11 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
         Dict with file paths and status.
     """
     out = Path(output_dir)
+    from .store_paths import export_destination
+
+    export_destination(engram.root, out)
+    for name in ('SOUL.md', 'MEMORY.md', 'USER.md'):
+        export_destination(engram.root, out / name)
     out.mkdir(parents=True, exist_ok=True)
     exported = []
 

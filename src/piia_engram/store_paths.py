@@ -24,3 +24,18 @@ def confined_path(base: Path, *parts: str) -> Path:
     if resolved == resolved_base or not resolved.is_relative_to(resolved_base):
         raise ValueError("path is outside its store directory")
     return path
+
+
+def export_destination(root: Path, path: Path) -> Path:
+    """Reject backups over store data, following directory and file aliases."""
+    resolved = path.resolve()
+    bases = [root.resolve()]
+    # A managed directory may itself be a junction outside the root.
+    bases.extend(p.resolve() for p in root.iterdir() if p.is_dir())
+    if any(resolved == base or resolved.is_relative_to(base) for base in bases):
+        raise ValueError('Export destination must be outside the Engram store directory')
+    for managed in root.rglob('*'):
+        if managed.is_file() and (managed.resolve() == resolved or
+                                 (path.is_file() and path.samefile(managed))):
+            raise ValueError('Export destination must not replace a managed store file')
+    return path

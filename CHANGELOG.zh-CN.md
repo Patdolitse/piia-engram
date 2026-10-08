@@ -18,6 +18,7 @@
 
 ### 修复
 
+- 原生备份拒绝写入数据目录内或覆盖受管理文件，包含链接别名；默认备份存到数据目录旁的 `<store-name>_exports` 目录。
 - Codex setup 支持迁移旧名称的 inline-table MCP 配置，写前备份，保留用户环境变量和其它服务器。
 - setup 的 Claude Code 终端重启提示只显示一次。
 - `DO_NOT_TRACK=1` 或 `ENGRAM_TELEMETRY=0` 时，`engram stats` 不发出任何增长指标请求；显式 `--online` 只允许本次联网查询，不开启遥测。

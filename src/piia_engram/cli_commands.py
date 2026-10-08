@@ -3439,7 +3439,7 @@ def _run_dock_export(args: list[str]) -> int:
     to a single JSON backup via ``export_all`` and emits the path. This is an
     explicit WRITE action — it produces a backup file (handle as sensitive) — and
     is NOT zero-write like dock-resume/dock-search. ``--output`` overrides the
-    default location (``<engram>/exports/engram_backup_<date>.json``).
+    default location (``<store-name>_exports/engram_backup_<date>.json`` beside the store).
     """
     import os as _os
     from piia_engram.core import Engram
