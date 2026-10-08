@@ -18,6 +18,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- Identity approval saves a recoverable intent before changing values; retrying approval or `engram doctor --fix` finishes interrupted approvals, and rejection cannot contradict an approval already in progress.
+- Batch identity previews simulate changes in application order and refuse unsupported marks consistently with application.
+- Native backups preserve hash-only identity rejection records. New fingerprints include the original value, allowing conflict recovery against a changed value while retaining vetoes against identical changes.
 - Native backup exports refuse destinations inside the store or over managed files, including link aliases. Default backups go to a sibling `<store-name>_exports` directory.
 - Codex setup migrates legacy inline-table MCP entries with a pre-write backup, preserving user environment settings and other servers.
 - Setup prints the Claude Code terminal restart hint once.

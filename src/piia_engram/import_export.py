@@ -43,7 +43,7 @@ from .storage import (
 _TOMBSTONE_FIELDS = ("id", "kind", "scope", "h1", "h2", "hv", "rejected_at", "via", "prior_rejection_id")
 
 
-_TOMBSTONE_KINDS = frozenset({"lesson", "decision", "playbook"})
+_TOMBSTONE_KINDS = frozenset({"lesson", "decision", "playbook", "identity"})
 _TOMBSTONE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _TOMBSTONE_HASH_RE = re.compile(r"[0-9a-f]{64}")
 _TOMBSTONE_SCOPE_MAX = 128
@@ -72,7 +72,8 @@ def _clean_tombstone(record: Any) -> dict | None:
     kind = record.get("kind")
     if not isinstance(kind, str) or kind not in _TOMBSTONE_KINDS:  # type first: a list is unhashable
         return None
-    if isinstance(hv, bool) or not isinstance(hv, int) or hv not in _tombstones.MATCHED_HASH_VERSIONS:
+    versions = (3, _tombstones.IDENTITY_HASH_VERSION) if kind == 'identity' else (2, 3)
+    if isinstance(hv, bool) or not isinstance(hv, int) or hv not in versions:
         return None
     for key in ("h1", "h2"):
         value = record.get(key)
@@ -120,9 +121,10 @@ def _union_key(record: Any) -> tuple | None:
     if not isinstance(record, dict):
         return None
     hv, scope, h1 = record.get("hv"), record.get("scope", "global"), record.get("h1")
-    if isinstance(hv, bool) or not isinstance(hv, int) or not isinstance(scope, str) or not isinstance(h1, str):
+    if not isinstance(record.get('kind'), str) or isinstance(hv, bool) or not isinstance(hv, int) \
+            or not isinstance(scope, str) or not isinstance(h1, str):
         return None
-    return (hv, scope, h1)
+    return (record.get('kind'), hv, scope, h1)
 
 
 def _new_tombstones(existing: list[dict], incoming: list[dict]) -> list[dict]:
@@ -135,7 +137,7 @@ def _new_tombstones(existing: list[dict], incoming: list[dict]) -> list[dict]:
     keys = {key for key in (_union_key(r) for r in existing) if key is not None}
     out: list[dict] = []
     for record in incoming:
-        key = (record.get("hv"), record.get("scope", "global"), record.get("h1"))
+        key = _union_key(record)
         if record["id"] in ids or key in keys:
             continue
         ids.add(record["id"])

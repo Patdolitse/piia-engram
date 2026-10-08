@@ -35,7 +35,8 @@ FILENAME = "tombstones.jsonl"
 # are still compared, with v2 hashes, so earlier rejections keep refusing. A record
 # from any other version never matches; doctor reports it.
 HASH_VERSION = 3
-MATCHED_HASH_VERSIONS = (2, 3)
+IDENTITY_HASH_VERSION = 4
+MATCHED_HASH_VERSIONS = (2, 3, 4)
 _FIELD_SEP = "\x1f"
 
 _MARKDOWN_CHARS = set("`*_#>|~^")
@@ -87,8 +88,10 @@ def claim_fields(kind: str, row: dict) -> tuple[str, ...]:
     """The fields a claim is made of: a lesson summary; a decision's question (else
     its title) and choice; a playbook's title and step actions."""
     if kind == "identity":
-        return (str(row.get("field") or ""), json.dumps(row.get("updates", {}), sort_keys=True,
-                                                       ensure_ascii=False, separators=(",", ":")))
+        def canonical(value):
+            return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return (str(row.get("field") or ""), canonical(row.get("updates", {})),
+                canonical(row.get('before', {})), canonical(sorted(row.get('missing_before', []))))
     if kind == "decision":
         return (str(row.get("question") or row.get("title") or ""), str(row.get("choice") or ""))
     if kind == "playbook":
@@ -148,6 +151,14 @@ def claim_hashes_for_version(kind: str, row: dict, version: Any) -> tuple[str, s
     v2 records at all; an identical re-proposal of the rejected row is still
     refused by the retired-twin check (``duplicate_retired``).
     """
+    if kind == 'identity':
+        if version == IDENTITY_HASH_VERSION:
+            return claim_hashes(kind, row)
+        if version == 3:
+            # Earlier identity rejections did not retain a base value. Keep
+            # their veto until the Owner explicitly withdraws it.
+            return _hash_pair(_FIELD_SEP.join(claim_fields(kind, row)[:2]))
+        return None
     if version == HASH_VERSION:
         return claim_hashes(kind, row)
     if version == 2:
@@ -189,7 +200,8 @@ def _matched_version(record: dict) -> Any:
     version = record.get("hv")
     if isinstance(version, bool) or not isinstance(version, int):
         return None
-    return version if version in MATCHED_HASH_VERSIONS else None
+    versions = (3, IDENTITY_HASH_VERSION) if record.get('kind') == 'identity' else (2, 3)
+    return version if version in versions else None
 
 
 def lookup(root, kind: str, row: dict) -> dict | None:
@@ -260,7 +272,7 @@ def _append_locked(root, kind: str, row: dict, item_id: str, *, via: str, prior_
         "scope": scope_of(row),
         "h1": h1,
         "h2": h2,
-        "hv": HASH_VERSION,
+        "hv": IDENTITY_HASH_VERSION if kind == 'identity' else HASH_VERSION,
         "rejected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "via": via,
     }

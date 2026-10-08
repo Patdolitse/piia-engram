@@ -1016,6 +1016,20 @@ def _run_governance_visibility_check(eng) -> int:
     return 0
 
 
+def _run_identity_recovery_check(eng, *, fix: bool = False) -> int:
+    """Report interrupted local identity approvals, or finish their saved intent."""
+    pending = [r for r in eng.get_identity_proposals() if r.get('status') == 'applying']
+    if not pending:
+        return 0
+    if fix:
+        results = eng.recover_identity_proposals()
+        failed = sum(r['status'] not in {'applied', 'already_applied'} for r in results)
+        print(f"    [fixed] Identity approvals recovered: {len(results) - failed}; unresolved: {failed}")
+        return failed
+    print(f"    [!!] Interrupted identity approvals: {len(pending)}; run 'engram doctor --fix' or retry approval")
+    return len(pending)
+
+
 def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int:
     """运行功能性验证：MCP server 能否启动、知识库能否读写、quick_context 是否可用。
 
@@ -1048,6 +1062,12 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
         print(f"    [!!] Engram init failed: {exc}")
         problems += 1
         return problems
+
+    try:
+        problems += _run_identity_recovery_check(eng, fix=fix)
+    except Exception as exc:
+        print(f"    [!!] Identity approval recovery failed: {exc}")
+        problems += 1
 
     # 2.5 v4.21 capacity: pools, archive, interrupted imports (read-only)
     try:

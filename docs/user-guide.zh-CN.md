@@ -140,7 +140,11 @@ staged 条目始终在你掌控之中：
   `engram review export --out <dir>`，再运行
   `engram review apply <marks.json> --operator <name> --yes`；身份只支持 approve/reject/skip。
   拒绝不改已批准身份，拒绝记录不保存正文。相关原值被本地修改后，批准会返回
-  `identity_conflict`；请拒绝旧提案，再基于当前值重新提案。本地 setup 和
+  `identity_conflict`；请拒绝旧提案，再基于当前值重新提案。拒绝指纹包含原值：
+  对不同原值请求相同新值可以重新提案，对相同原值的相同修改仍会被拒绝，备份恢复后也一样。
+  旧拒绝记录没有原值指纹，仍需用 `engram review untombstone <id>` 显式撤销拒绝。
+  批准被中断时提案保持 `applying`；重试批准或运行 `engram doctor --fix` 完成它。
+  恢复前不能拒绝该提案；后续本地修改会保留，并报告 `identity_conflict`。本地 setup 和
   `engram dock-set-lang` 等 Owner 命令仍直接生效。
 
 - `review_staging(action="list")`——查看待审内容（冷启动 `get_resume_brief` 也会带出

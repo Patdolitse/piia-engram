@@ -47,7 +47,12 @@ def _matches(current, values, missing=()):
 class IdentityReviewMixin:
     def get_identity_proposals(self, *, include_decided: bool = False) -> list[dict]:
         """Local review view; pending identity is never used by automatic recall."""
-        return [r for r in _rows(self) if include_decided or r.get("status") == "pending"]
+        return [r for r in _rows(self) if include_decided or r.get("status") in {"pending", "applying"}]
+
+    def recover_identity_proposals(self) -> list[dict]:
+        """Finish durable approval intents locally; leave conflicting edits intact."""
+        return [self.review_identity_proposal(r['id'], 'approve', expected_version=r['version'])
+                for r in self.get_identity_proposals() if r.get('status') == 'applying']
 
     def propose_identity(self, field: str, updates: dict, source_tool: str = "") -> dict:
         """Queue a proposed identity patch; do not change approved identity."""
@@ -93,7 +98,8 @@ class IdentityReviewMixin:
                                              dry_run=dry_run, via=via)
 
     def _review_identity_proposal(self, item_id: str, action: str, *, expected_version: int | None = None,
-                                  dry_run: bool = False, via: str = "cli:owner") -> dict:
+                                  dry_run: bool = False, via: str = "cli:owner",
+                                  preview: IdentityPreview | None = None) -> dict:
         """Approve/reject under identity and rejection locks, with old-value guards."""
         if review_boundary.mcp_origin() and not dry_run:
             return review_boundary.refusal(item_id, action=action)
@@ -111,20 +117,29 @@ class IdentityReviewMixin:
             if expected_version is not None and row.get("version") != expected_version:
                 return result("version_conflict")
             terminal = "approved" if action == "approve" else "rejected"
-            if row.get("status") != "pending":
+            if row.get('status') == 'applying' and action == 'reject':
+                return result('approval_in_progress')
+            if row.get("status") not in {"pending", "applying"}:
                 return result("already_applied" if row.get("status") == terminal else "already_decided")
             stone = tombstones.by_id(self.root, item_id)
             if action == "approve" and stone:
                 return result("rejected_before")
             if action == "approve":
-                current = getattr(self, "get_" + row["field"])()
+                current = preview.current(row['field']) if preview is not None else getattr(self, "get_" + row["field"])()
                 before = _matches(current, row["before"], row.get("missing_before", ()))
                 after = _matches(current, row["after"])
                 if not before and not after:
                     return result("identity_conflict")
             if dry_run:
+                if preview is not None:
+                    preview.decide(row, action, current if action == 'approve' else None)
                 return result("planned")
             if action == "approve":
+                if row['status'] == 'pending':
+                    # Persist the intent, patch, original values and reviewed
+                    # proposal version under the same locks BEFORE identity.
+                    row['status'] = 'applying'
+                    _save(self, rows)
                 if not after:
                     kwargs = {"source_tool": row.get("source_tool", "")} if row["field"] == "profile" else {}
                     updates = deepcopy(row["after"])
@@ -145,6 +160,33 @@ class IdentityReviewMixin:
             return result("applied", True)
 
         if dry_run:
-            return decide(_rows(self))
+            return decide(preview.rows if preview is not None else _rows(self))
         with hold_directory_lock(self._knowledge_dir), hold_directory_lock(self._identity_dir):
             return decide(_rows(self))
+
+
+class IdentityPreview:
+    """A read-only simulation shared by every identity mark in a batch."""
+
+    def __init__(self, eng):
+        self.eng = eng
+        self.rows = _rows(eng)
+        self.values = {}
+        self.written = set()
+
+    def current(self, field):
+        if field not in self.values:
+            self.values[field] = deepcopy(getattr(self.eng, 'get_' + field)())
+        # Preferences can still be backed by the legacy work_style file.
+        if field == 'preferences' and not _read_json(self.eng._identity_dir / 'preferences.json') \
+                and 'work_style' in self.values and field not in self.written:
+            old = self.values['work_style']
+            return {'work_patterns': old.get('preferences', {}),
+                    'communication': old.get('communication', ''), 'tool_preferences': {}} if old else {}
+        return self.values[field]
+
+    def decide(self, row, action, current):
+        if action == 'approve':
+            self.values[row['field']] = {**current, **deepcopy(row['after'])}
+            self.written.add(row['field'])
+        row['status'] = 'approved' if action == 'approve' else 'rejected'
