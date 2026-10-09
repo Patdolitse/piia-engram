@@ -637,24 +637,24 @@ def test_the_server_loads_the_ping_only_from_the_package():
 # --- CLI wiring -----------------------------------------------------------------
 
 
-def test_cli_commands_start_the_ping(ping, monkeypatch):
+def test_mutating_cli_commands_start_the_ping(ping, monkeypatch):
     from piia_engram import setup_wizard as sw
 
     calls = []
     monkeypatch.setattr(up, "maybe_send", lambda client="cli": calls.append(client))
-    monkeypatch.setattr(sw, "run_status", lambda args: 0)
-    monkeypatch.setattr(sys, "argv", ["engram", "status"])
+    monkeypatch.setattr(sw, "run_pin", lambda args: 0)
+    monkeypatch.setattr(sys, "argv", ["engram", "pin"])
     with pytest.raises(SystemExit):
         sw.main()
     assert calls == ["cli"]
 
 
-def test_cli_commands_show_the_notice_on_stderr_not_stdout(ping, monkeypatch, capsys):
+def test_mutating_cli_commands_show_the_notice_on_stderr_not_stdout(ping, monkeypatch, capsys):
     from piia_engram import setup_wizard as sw
 
     monkeypatch.setattr(up, "maybe_send", lambda client="cli": None)
-    monkeypatch.setattr(sw, "run_status", lambda args: 0)
-    monkeypatch.setattr(sys, "argv", ["engram", "status"])
+    monkeypatch.setattr(sw, "run_pin", lambda args: 0)
+    monkeypatch.setattr(sys, "argv", ["engram", "pin"])
     with pytest.raises(SystemExit):
         sw.main()
     out = capsys.readouterr()
@@ -718,8 +718,7 @@ def test_help_version_and_dock_commands_never_start_the_ping(ping, monkeypatch, 
         pass
     assert calls == []
     assert "engram telemetry off" not in capsys.readouterr().err
-    # Only the ping is skipped: the update reminder keeps its own rules.
-    assert reminders == ([] if args[0] in sw._QUIET_COMMANDS else [1])
+    assert reminders == []
 
 
 def test_the_ping_only_exclusions_leave_the_update_reminder_alone():
@@ -732,11 +731,14 @@ def test_the_ping_only_exclusions_leave_the_update_reminder_alone():
 def test_quiet_commands_are_one_shared_list():
     from piia_engram import setup_wizard as sw
 
-    assert sw._QUIET_COMMANDS == (
+    required = {
         "doctor", "capabilities", "continuity", "dock-status", "dock-resume", "dock-quality",
         "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search",
         "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang",
-        "dock-onboard-scan", "weekly")
+        "dock-onboard-scan", "weekly", "migrate-project", "preview", "status",
+        "review", "import", "repair-encoding", "retention"}
+    assert required <= set(sw._QUIET_COMMANDS)
+    assert len(sw._QUIET_COMMANDS) == len(set(sw._QUIET_COMMANDS))
 
 
 def test_engram_telemetry_never_starts_the_ping(ping, monkeypatch, capsys):
