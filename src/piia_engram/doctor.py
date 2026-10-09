@@ -948,6 +948,13 @@ def _run_doctor_config_checks(fix: bool = False, days: int | None = None) -> int
 def _print_connection_report(root, days: int | None = None) -> None:
     """Which clients are configured and which called Engram lately (read-only)."""
     from piia_engram import connection_report as _connections
+    from piia_engram.hooks.spool import backlog
+
+    queue = backlog(Path(root))
+    age = queue["oldest_age_seconds"]
+    W._safe_print(f"  Hook spool: {queue['pending']} pending ({queue['pending_bytes']} bytes), "
+                  f"oldest age {age if age is not None else '-'} s, "
+                  f"{queue['quarantined']} quarantined, {queue['partial']} partial")
 
     days = _connections.DEFAULT_DAYS if days is None else days
     print()
@@ -973,6 +980,8 @@ def run_doctor_json(days: int | None = None) -> int:
     days = _connections.DEFAULT_DAYS if days is None else days
     try:
         report = _connections.build_report(Path(_engram_root()), days=days)
+        from piia_engram.hooks.spool import backlog
+        report["hook_spool"] = backlog(Path(_engram_root()))
     except Exception as exc:  # the message may hold a private path: name the type only
         print(json.dumps({"error": type(exc).__name__, "read_only": True}))
         return 1

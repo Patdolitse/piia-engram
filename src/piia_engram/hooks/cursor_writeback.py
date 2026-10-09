@@ -1,9 +1,4 @@
-"""Cursor end-of-session hook: optional staging-only Engram writeback.
-
-This hook is intentionally off by default. It writes only when
-``ENGRAM_CURSOR_WRITEBACK=1`` (or true/on/yes) is present, and then delegates to
-``extract_session_insights`` so every captured item lands in staging for review.
-"""
+"""Opt-in Cursor sessionEnd: queue bounded input for deferred staging-only extraction. No memory-store operations run in the client lifecycle."""
 
 from __future__ import annotations
 
@@ -61,48 +56,23 @@ def _extract_summary(hook_input: dict) -> str:
 
 
 def main() -> int:
-    if not _enabled():
-        return 0
-    if os.environ.get("ENGRAM_CURSOR_WRITEBACK_ACTIVE") == "1":
-        return 0
-    os.environ["ENGRAM_CURSOR_WRITEBACK_ACTIVE"] = "1"
-
+    active = False
     try:
-        try:
-            raw = sys.stdin.read()
-            hook_input = json.loads(raw) if raw.strip() else {}
-        except (json.JSONDecodeError, OSError):
+        from . import _cursor_payload
+        _cursor_payload.apply_argv_env(sys.argv[1:])
+        _cursor_payload.reconfigure_stdin_utf8()
+        if not _enabled() or os.environ.get("ENGRAM_CURSOR_WRITEBACK_ACTIVE") == "1":
             return 0
-        if not isinstance(hook_input, dict):
-            return 0
-
-        summary = _extract_summary(hook_input)
-        if not summary:
-            return 0
-
-        try:
-            from piia_engram.core import Engram
-
-            result = Engram().extract_session_insights(
-                summary, source_tool="cursor", force_staging=True
-            )
-        except Exception as exc:
-            log_failure("cursor_writeback", "extract_session_insights failed", exc)
-            return 0
-
-        if os.environ.get("ENGRAM_CURSOR_WRITEBACK_DEBUG", "").strip().lower() in _TRUTHY:
-            safe = {
-                "saved_lessons": result.get("saved_lessons", 0),
-                "saved_decisions": result.get("saved_decisions", 0),
-                "duplicates": result.get("duplicates", 0),
-                "skipped": result.get("skipped", 0),
-                "tier": "staging",
-            }
-            print(json.dumps(safe, ensure_ascii=False))
+        os.environ["ENGRAM_CURSOR_WRITEBACK_ACTIVE"] = "1"
+        active = True
+        from ._producer import cursor_event
+        return cursor_event("cursor_writeback", "sessionEnd")
+    except Exception as exc:
+        log_failure("cursor_writeback", "hook failed (" + type(exc).__name__ + ")")
         return 0
     finally:
-        os.environ.pop("ENGRAM_CURSOR_WRITEBACK_ACTIVE", None)
-
+        if active:
+            os.environ.pop("ENGRAM_CURSOR_WRITEBACK_ACTIVE", None)
 
 if __name__ == "__main__":
     raise SystemExit(main())

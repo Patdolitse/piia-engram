@@ -10,12 +10,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Added
 
+- Local `engram hooks drain [--dry-run] [--json]` and read-only doctor queue
+  diagnostics. MCP startup and tool calls never drain queued hooks.
+
 - Agent-friendly `engram setup --non-interactive`: read-only plan by default,
   explicit `--apply`, client filtering, output language, versioned JSON, and
   partial/usage exit codes. Reuses configuration backups and Claude Code CLI
   registration without identity changes, memory imports, or proposal approvals.
 - Public `llms.txt` and bilingual agent-install instructions with a documented
   setup JSON contract.
+
+### Changed
+
+- Write hooks publish atomic local events and exit without waiting for store locks;
+  offline processing retries failures, deduplicates event IDs, quarantines malformed
+  or overflow events, and preserves staging-only knowledge review.
+- SessionStart uses read-only store access with a one-second application budget
+  and a fail-soft continue response. Weekly hints are omitted from this path.
 
 ## [4.23.0] - 2026-10-09
 

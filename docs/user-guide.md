@@ -450,3 +450,24 @@ More cross-tool questions are answered in the
 - [Honest comparison](honest-comparison.md) — where Engram sits among memory
   databases, repo rule files, and native tool memories
 - [Architecture](architecture.md) — how it works inside
+
+## Hook reliability and offline processing
+
+Claude Code Stop/PreCompact/PostCompact and Cursor stop/sessionEnd write hooks now publish a small local event and exit with status 0. They do not initialize the memory store or wait for its locks. Cursor knowledge writeback remains disabled unless explicitly enabled. Checkpoints and compact daily logs are deferred; extracted knowledge always enters staging for owner review, including strict mode.
+
+Process the queue when convenient:
+
+```sh
+engram hooks drain --dry-run --json
+engram hooks drain
+engram hooks drain --json
+engram doctor --json
+```
+
+`--dry-run` reports counts only and writes nothing. A normal drain processes oldest events first; repeated event IDs do not create duplicate proposals or archival entries. The command returns 1 on a retryable processing failure or a busy processor, 2 for invalid arguments, otherwise 0. A successful drain can still report quarantined malformed events; inspect that count. Doctor reports pending count/bytes, oldest pending age in seconds, quarantine count and incomplete files without draining. Existing local staging extraction paths (including enabled watcher writeback) also attempt a drain. MCP startup and MCP tool calls never drain; if those are your only operations, run the local drain command yourself.
+
+Events live under `<store>/hooks/spool/`, with a cap of 1,000 pending events or 16 MiB and a 128 KiB event limit. Overflow moves the oldest pending files to `quarantine/` with reason sidecars; malformed events go there too. Concurrent publishers can briefly exceed the pending cap while the spool maintenance lock is busy; the next publisher/drain enforces it. Quarantine and completion receipts are retained and excluded from that cap. Inspect quarantine explicitly; keep receipts to preserve event-ID dedup. Interrupted `.partial` files are counted separately and retained for inspection. Store/disk errors leave pending events available for retry; if publication itself fails, the hook records a best-effort diagnostic in `<store>/logs/hooks.log`, or `<store-name>.hooks.log` beside an inaccessible store. If both locations are unwritable, local capture cannot be guaranteed.
+
+Transcript references are local-only and must remain readable until processing; a path reference does not freeze a transcript rewritten by compaction. The processor freezes its bounded input before its first store mutation, so interrupted retries use that same input. No new network requests or client commands are introduced. Protect spool/quarantine files like session data; they use the same local filesystem access boundary as existing hook captures.
+
+SessionStart continues to return resume context synchronously, using read-only store access and a fixed one-second application budget. Timeout/read failure emits the existing continue response with no context and exits 0. The budget starts after Python/module loading; operating-system startup is outside it. Weekly hint generation is omitted from this deadline path; `engram weekly` remains available.

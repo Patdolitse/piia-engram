@@ -745,6 +745,13 @@ class ContextMixin:
         text never enters the audit log (metadata-only), and extraction
         metadata carries no evidence span.
         """
+        # Only existing local staging paths service the offline hook queue.
+        # MCP calls and startup retain their previous behaviour.
+        if force_staging and not getattr(self, "_read_only", False):
+            from .write_provenance import current, ORIGIN_MCP
+            if current().get("origin") != ORIGIN_MCP:
+                from .hooks.spool import drain
+                drain(self.root, engram=self)
         if not summary or not summary.strip():
             return {
                 "saved_lessons": 0,

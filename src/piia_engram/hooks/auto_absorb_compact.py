@@ -1,24 +1,4 @@
-"""Claude Code PostCompact hook: absorb compact summary into Engram daily log.
-
-v3.30 mechanism (R4) — fires AFTER Claude Code compacts the transcript.
-The compacted transcript's opening entry is an AI-generated summary of
-everything that was thrown away; this hook captures that summary and
-appends it to the per-project daily log so it survives across sessions.
-
-v3.31 P0-2: this hook is intentionally narrow now — daily log archival
-only. The companion ``agent`` hook (configured via ``setup_wizard``'s
-PostCompact registration) owns semantic extraction (lessons/decisions
-via LLM reasoning). Previously this script ALSO called
-``extract_session_insights`` which duplicated the agent hook's work and
-double-wrote the staging tier. Now: agent → semantic lessons/decisions;
-this script → raw daily log preservation. They no longer step on each
-other.
-
-Invoked as ``python -m piia_engram.hooks.auto_absorb_compact``.
-
-Re-entry guard: exits silently when ``CLAUDE_INVOKED_BY`` starts with
-``engram_`` (same recursion-break protocol as the other Engram hooks).
-"""
+"""Claude Code PostCompact: queue a transcript reference for deferred daily-log archival. Semantic extraction remains outside this archival hook."""
 
 from __future__ import annotations
 
@@ -93,69 +73,18 @@ def _extract_compact_summary(transcript_path: str) -> str:
     return ""
 
 
-def main() -> None:
-    _apply_argv_env(sys.argv[1:])
-
-    # Re-entry guard — same protocol as auto_save_on_stop.py
-    if os.environ.get("CLAUDE_INVOKED_BY", "").startswith("engram_"):
+def main() -> int:
+    try:
+        _apply_argv_env(sys.argv[1:])
         if os.environ.get("CLAUDE_INVOKED_BY") == "engram_recursive":
-            return
-        os.environ["CLAUDE_INVOKED_BY"] = "engram_recursive"
-
-    try:
-        raw = sys.stdin.read()
-        if not raw.strip():
-            return
-        hook_input = json.loads(raw)
-    except (json.JSONDecodeError, OSError):
-        return
-
-    cwd = hook_input.get("cwd", "")
-    transcript_path = hook_input.get("transcript_path", "")
-
-    if not transcript_path:
-        return
-
-    summary = _extract_compact_summary(transcript_path)
-    if not summary:
-        return
-
-    # Truncate at 3000 chars to keep daily log entries reasonable.
-    # Compact summaries can be very long for sessions that accumulated
-    # thousands of turns before compaction.
-    MAX_SUMMARY_CHARS = 3000
-    if len(summary) > MAX_SUMMARY_CHARS:
-        summary = summary[:MAX_SUMMARY_CHARS] + "\n\n…（已截断）"
-
-    try:
-        from piia_engram.core import Engram
-
-        engram = Engram()
-
-        # 1. Append to daily log as a "compact" event
-        content = "[PostCompact Hook 自动记录]\n"
-        content += f"工作目录: {cwd}\n"
-        content += f"压缩摘要长度: {len(summary)} 字符\n\n"
-        content += summary
-
-        engram.append_daily_log(
-            project_folder=cwd or "",
-            content=content,
-            event_type="compact",
-            source_tool="claude_code",
-        )
-
-        # v3.31 P0-2: semantic extraction (lessons/decisions) is now the
-        # exclusive responsibility of the PostCompact ``agent`` hook
-        # registered alongside this command hook. Calling
-        # extract_session_insights here would double-write the staging
-        # tier — see hooks audit decision for v3.31.
-
+            return 0
+        if os.environ.get("CLAUDE_INVOKED_BY", "").startswith("engram_"):
+            os.environ["CLAUDE_INVOKED_BY"] = "engram_recursive"
+        from ._producer import claude_event
+        return claude_event("claude_compact")
     except Exception as exc:
-        # Hooks must never block Claude Code — but failures must not be
-        # invisible either: leave a breadcrumb in hooks.log.
-        log_failure("auto_absorb_compact", "daily log append failed", exc)
-
+        log_failure("auto_absorb_compact", "hook failed (" + type(exc).__name__ + ")")
+        return 0
 
 if __name__ == "__main__":
     main()

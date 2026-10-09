@@ -183,93 +183,44 @@ class TestPostCompactMainFlow:
         auto_absorb_compact.main()
 
     def test_calls_append_daily_log_only(self, tmp_path, monkeypatch):
-        """v3.31 P0-2: full happy path now writes daily log ONLY.
-
-        Semantic extraction (lessons/decisions) is the exclusive
-        responsibility of the PostCompact ``agent`` hook registered
-        alongside this command hook. extract_session_insights must NOT
-        be called here — that was the v3.30 double-write bug.
-        """
+        """Capture does no store work; drain archives once without extracting knowledge."""
+        import io
         from piia_engram.hooks import auto_absorb_compact
-
-        # Create a fake compacted transcript
+        from piia_engram.hooks.spool import drain
+        from piia_engram.core import Engram
+        summary = "This is a comprehensive summary " * 10
         transcript = tmp_path / "transcript.jsonl"
-        summary = "This is a comprehensive summary " * 10  # ~330 chars
-        entry = {"type": "assistant", "content": summary}
-        transcript.write_text(json.dumps(entry) + "\n", encoding="utf-8")
-
-        stdin_data = json.dumps({
-            "cwd": str(tmp_path),
-            "transcript_path": str(transcript),
-            "session_id": "test-session",
-        })
-
+        transcript.write_text(json.dumps({"content": summary}) + "\n", encoding="utf-8")
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
         monkeypatch.setenv("CLAUDE_INVOKED_BY", "")
-        monkeypatch.setattr("sys.argv", ["prog"])
-        monkeypatch.setattr("sys.stdin", type("F", (), {"read": lambda self: stdin_data})())
-
-        # Mock the Engram class — Engram is imported lazily inside main()
-        # via ``from piia_engram.core import Engram``, so we patch at the
-        # module level in piia_engram.core.
-        mock_engram = MagicMock()
-        mock_engram.append_daily_log.return_value = {
-            "file": str(tmp_path / "daily.md"),
-            "project_folder": str(tmp_path),
-            "event_type": "compact",
-            "created": True,
-        }
-
-        with patch("piia_engram.core.Engram", return_value=mock_engram):
-            auto_absorb_compact.main()
-
-        # Verify daily log was called with "compact" event type
-        mock_engram.append_daily_log.assert_called_once()
-        call_kwargs = mock_engram.append_daily_log.call_args
-        assert call_kwargs.kwargs.get("event_type") == "compact" or (
-            len(call_kwargs.args) >= 3 and call_kwargs.args[2] == "compact"
-        )
-        assert call_kwargs.kwargs.get("source_tool") == "claude_code" or (
-            len(call_kwargs.args) >= 4 and call_kwargs.args[3] == "claude_code"
-        )
-
-        # v3.31 P0-2: extract_session_insights MUST NOT be called by the
-        # command hook — agent hook owns that.
-        mock_engram.extract_session_insights.assert_not_called()
+        monkeypatch.setattr("sys.argv", ["hook"])
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"cwd": str(tmp_path), "transcript_path": str(transcript)})))
+        with patch("piia_engram.core.Engram") as backend:
+            assert auto_absorb_compact.main() == 0
+            backend.assert_not_called()
+        with patch.object(Engram, "extract_session_insights") as extraction:
+            assert drain()["processed"] == 1
+            extraction.assert_not_called()
+        files = list((tmp_path / "store" / "daily").rglob("*.md"))
+        assert len(files) == 1
+        text = files[0].read_text(encoding="utf-8")
+        assert "[compact]" in text and "claude_code" in text and summary in text
 
     def test_truncates_very_long_summaries(self, tmp_path, monkeypatch):
-        """Summaries exceeding 3000 chars should be truncated."""
+        import io
         from piia_engram.hooks import auto_absorb_compact
-
+        from piia_engram.hooks.spool import drain
         transcript = tmp_path / "transcript.jsonl"
-        # 5000 chars → well above the 3000 limit
-        summary = "X" * 5000
-        entry = {"type": "assistant", "content": summary}
-        transcript.write_text(json.dumps(entry) + "\n", encoding="utf-8")
-
-        stdin_data = json.dumps({
-            "cwd": str(tmp_path),
-            "transcript_path": str(transcript),
-        })
+        transcript.write_text(json.dumps({"content": "X" * 5000}) + "\n", encoding="utf-8")
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
         monkeypatch.setenv("CLAUDE_INVOKED_BY", "")
-        monkeypatch.setattr("sys.argv", ["prog"])
-        monkeypatch.setattr("sys.stdin", type("F", (), {"read": lambda self: stdin_data})())
-
-        mock_engram = MagicMock()
-        mock_engram.append_daily_log.return_value = {"file": "", "project_folder": "", "event_type": "compact", "created": True}
-        mock_engram.extract_session_insights.return_value = {}
-
-        with patch("piia_engram.core.Engram", return_value=mock_engram):
-            auto_absorb_compact.main()
-
-        # The content passed to daily log should be truncated
-        call_args = mock_engram.append_daily_log.call_args
-        content = call_args.kwargs.get("content") or call_args.args[1]
-        # The truncation marker should be present
-        assert "已截断" in content
-        # Total content (with header) should be well under 5000+header
-        # The summary portion should be ≤3000 + truncation marker
-        assert len(content) < 4000
-
+        monkeypatch.setattr("sys.argv", ["hook"])
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"transcript_path": str(transcript)})))
+        assert auto_absorb_compact.main() == 0
+        assert drain()["processed"] == 1
+        text = next((tmp_path / "store" / "daily").rglob("*.md")).read_text(encoding="utf-8")
+        assert "已截断" in text
+        assert len(text) < 4000
     def test_argv_env_promotion(self):
         """--env KEY=VAL pairs should be promoted to os.environ."""
         from piia_engram.hooks.auto_absorb_compact import _apply_argv_env
