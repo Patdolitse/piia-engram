@@ -1800,12 +1800,45 @@ def _toml_statement_lines(lines):
         yield line, statement
 
 
+def _toml_owner_values(server):
+    """Only launch keys belong to setup; all remaining values belong to the Owner."""
+    if not isinstance(server, dict):
+        raise _ManualTomlStep('Engram server is not a table')
+    owner = {k: v for k, v in server.items() if k not in {'command', 'args', 'env'}}
+    env = server.get('env', {})
+    if not isinstance(env, dict):
+        raise _ManualTomlStep('Engram env is not a table')
+    preserved = {k: v for k, v in env.items()
+                 if k not in _SETUP_MANAGED_ENV_KEYS | _NEVER_CARRIED_ENV_KEYS}
+    if preserved:
+        owner['env'] = preserved
+    return owner
+
+
+def _merge_toml_owner(target, incoming, path=()):
+    for key, value in incoming.items():
+        if key not in target:
+            # Copy nested dictionaries before merging additional legacy entries.
+            target[key] = _merge_toml_owner({}, value, (*path, key)) if isinstance(value, dict) else value
+        elif isinstance(target[key], dict) and isinstance(value, dict):
+            _merge_toml_owner(target[key], value, (*path, key))
+        elif not _toml_values_identical(target[key], value):
+            raise _ManualTomlStep('Conflicting Owner key: ' + '.'.join((*path, key)))
+    return target
+
+
 def _toml_unrelated_values(config, replaced_names):
-    """Exclude only the server entries setup is allowed to replace."""
+    """Compare peer values AND all Owner values on the canonical/legacy server."""
     remaining = dict(config)
     servers = remaining.get('mcp_servers')
     if isinstance(servers, dict):
         peers = {key: value for key, value in servers.items() if key not in replaced_names}
+        owner = {}
+        for name in replaced_names:
+            if name in servers:
+                _merge_toml_owner(owner, _toml_owner_values(servers[name]))
+        if owner:
+            peers['engram'] = owner
         if peers:
             remaining['mcp_servers'] = peers
         else:
@@ -1828,10 +1861,32 @@ def _toml_values_identical(before, after):
     return before == after
 
 
+def _toml_value(value):
+    """Losslessly serialize parser-produced TOML values, including unknown Owner keys."""
+    from datetime import date, datetime, time
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, (date, datetime, time)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return '[' + ', '.join(_toml_value(v) for v in value) + ']'
+    if isinstance(value, dict):
+        return '{ ' + ', '.join(_toml_key(k) + ' = ' + _toml_value(v) for k, v in value.items()) + ' }'
+    raise _ManualTomlStep('Unsupported Owner TOML value')
+
+
+def _toml_key(key):
+    return key if re.fullmatch(r'[A-Za-z0-9_-]+', key) else json.dumps(key, ensure_ascii=False)
+
+
 def _print_codex_manual_change(entry, reason):
     print(reason)
-    print(_t('  请将 Engram 条目合并为 engram，保留所有现有环境变量（包括 ENGRAM_APPROVAL）。参考：',
-             '  Merge Engram entries into engram and keep existing env, including ENGRAM_APPROVAL. Example:'))
+    print(_t('  请仅修改以下启动键，将 Engram 条目合并为 engram，保留所有 Owner 控制和环境变量；冲突须手动解决。参考：',
+             '  Change only these launch keys, merge Engram entries into engram, and keep all Owner controls and env; resolve conflicts manually. Example:'))
     print('[mcp_servers.engram]')
     print('command = ' + json.dumps(entry['command'], ensure_ascii=False))
     print('args = ' + json.dumps(entry['args']))
@@ -1857,6 +1912,7 @@ def _write_mcp_config_toml(
     ``preview`` validates and returns the candidate without writing it.
     """
     existing_env: dict = {}
+    existing_owner: dict = {}
     try:
         # This check also covers creating a new config on Python 3.10.
         _parse_toml('', require_complete=True)
@@ -1873,13 +1929,21 @@ def _write_mcp_config_toml(
         existing_config = _read_mcp_config_for_write(config_path, fmt="toml")
         existing_servers = existing_config.get("mcp_servers", {})
         existing_servers = existing_servers if isinstance(existing_servers, dict) else {}
-        # Legacy-only env keys survive; the explicit canonical env wins ties.
+        # Managed launch env uses the canonical entry; Owner conflicts refuse.
         for name in ['piia-engram', *LEGACY_SERVER_NAMES, 'engram']:
             server = existing_servers.get(name)
             if name != 'engram' and not _claude_code_mcp.launches_engram(server):
                 continue
             if isinstance(server, dict):
                 replaced_names.add(name)
+                try:
+                    _merge_toml_owner(existing_owner, _toml_owner_values(server))
+                except _ManualTomlStep as exc:
+                    entry = _engram_server_entry(python_path, mcp_server_path, data_dir,
+                                                existing_env=existing_env, extra_env=extra_env,
+                                                engram_tools=engram_tools)
+                    _print_codex_manual_change(entry, str(exc) + '; config was left unchanged.')
+                    raise
                 if isinstance(server.get('env'), dict):
                     existing_env.update(server['env'])
 
@@ -1897,10 +1961,11 @@ def _write_mcp_config_toml(
         '[mcp_servers.engram]',
         f'command = {toml_string(python_path)}',
         f'args = ["-m", "piia_engram.mcp_server"]',
-        '',
-        '[mcp_servers.engram.env]',
-        'PYTHONIOENCODING = "utf-8"',
     ]
+    for key, value in existing_owner.items():
+        if key != 'env':
+            engram_block.append(_toml_key(key) + ' = ' + _toml_value(value))
+    engram_block.extend(['', '[mcp_servers.engram.env]', 'PYTHONIOENCODING = "utf-8"'])
     selected_engram_tools = (
         existing_env.get("ENGRAM_TOOLS")
         if engram_tools is None and existing_env.get("ENGRAM_TOOLS")
@@ -1920,9 +1985,16 @@ def _write_mcp_config_toml(
     preserved_search = (extra_env or {}).get("ENGRAM_SEARCH") or existing_env.get("ENGRAM_SEARCH")
     if preserved_search:
         engram_block.append(f'ENGRAM_SEARCH = {toml_string(str(preserved_search))}')
-    for key, value in _carried_env(existing_env, store_root=preserved_data_dir or file_safety_root).items():
-        toml_key = key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else toml_string(key)
-        engram_block.append(f'{toml_key} = {toml_string(value)}')
+    carried = dict(existing_owner.get('env', {}))
+    if _snippet_strict(preserved_data_dir or file_safety_root):
+        if 'ENGRAM_APPROVAL' in carried and carried['ENGRAM_APPROVAL'] != 'strict':
+            entry = _engram_server_entry(python_path, mcp_server_path, data_dir,
+                                        existing_env=existing_env, engram_tools=engram_tools)
+            _print_codex_manual_change(entry, 'Conflicting ENGRAM_APPROVAL; config was left unchanged.')
+            raise _ManualTomlStep('Conflicting Owner ENGRAM_APPROVAL')
+        carried['ENGRAM_APPROVAL'] = 'strict'
+    for key, value in carried.items():
+        engram_block.append(_toml_key(key) + ' = ' + _toml_value(value))
 
     in_server_table = False
     skip_section = False
@@ -1952,15 +2024,7 @@ def _write_mcp_config_toml(
             in_server_table = section == ('mcp_servers',)
             target_section = bool(section and len(section) >= 2 and section[0] == 'mcp_servers'
                                   and section[1] in replaced_names)
-            skip_section = target_section and (len(section) == 2 or section[2] == 'env')
-            if target_section and not skip_section and section[1] != 'engram':
-                # Preserve client-specific tool settings under the canonical
-                # server. Conflicting subtables fail final validation safely.
-                tail = re.search(r'\]\s*(#.*)?$', line)
-                comment = (' ' + tail.group(1)) if tail and tail.group(1) else ''
-                keys = ('mcp_servers', 'engram', *section[2:])
-                line = '[' + '.'.join(k if re.fullmatch(r'[A-Za-z0-9_-]+', k)
-                                      else toml_string(k) for k in keys) + ']' + comment
+            skip_section = target_section
         if skip_section:
             continue
         # Inline tables in [mcp_servers] are complete single-line values. Remove
@@ -1980,6 +2044,10 @@ def _write_mcp_config_toml(
     parsed_candidate = _parse_toml(candidate, require_complete=True)
     # Validate the exact input used for rewriting, as well as the candidate.
     parsed_input = _parse_toml('\n'.join(lines), require_complete=True)
+    # Adding the strict-store latch is intentional; existing Owner env values
+    # still must match exactly, just like every other control in the entry.
+    if carried.get('ENGRAM_APPROVAL') == 'strict' and 'ENGRAM_APPROVAL' not in existing_owner.get('env', {}):
+        parsed_input.setdefault('mcp_servers', {}).setdefault('engram', {}).setdefault('env', {})['ENGRAM_APPROVAL'] = 'strict'
     if not _toml_values_identical(
             _toml_unrelated_values(parsed_input, replaced_names),
             _toml_unrelated_values(parsed_candidate, replaced_names)):
