@@ -595,6 +595,8 @@ You can also expose composable capability modes such as knowledge management, go
 
 **Importing from other AI tools:** Engram never reads other AI tools' memory or rule files on its own: not at server start, not on cold start, not at session end. Run `engram import-memories` to bring them in; it lists what it found first (`--dry-run` stops there), then adds them to the review queue after you confirm, and writes a receipt to `import_receipts/` in the store. `ENGRAM_MCP_STARTUP_SYNC` is still accepted but no longer does anything; `ENGRAM_RECONCILE=0` turns reading other AI tools' files off entirely. `ENGRAM_EPHEMERAL=1` skips the startup config check in container/ephemeral clients.
 
+MCP startup never imports other tools' memories or changes knowledge or identity content. Startup and read tools may still write session checkpoints, usage records, audit records and access metadata; they are not zero-write operations.
+
 ### Tier-1 Core (19 tools — daily workflow)
 
 | Tool | Purpose |

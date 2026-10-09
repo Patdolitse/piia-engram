@@ -283,7 +283,7 @@ Set `ENGRAM_TOOLS=all` to expose the full tool surface (review, health, link/unl
 - **stdio** (default) — one piia-engram process per AI tool, isolated FDs, fastest
 - **SSE** (`piia-engram serve --transport sse`) — shared HTTP/SSE instance; binds to `127.0.0.1` by default. Binding to `0.0.0.0` emits a stderr warning and requires `--token` (`secrets.compare_digest` check). `ENGRAM_CORS_ORIGINS` env var configures allowed origins.
 
-MCP startup does not read other AI tools' memory or config files and writes no memory content; neither do cold start, reads or session closeout. Importing them is the explicit `engram import-memories` command (preview first, then the review queue, with a receipt and an audit line). `ENGRAM_MCP_STARTUP_SYNC` is accepted for compatibility and has no effect. Stdio `auto_migrate()` remains synchronous and config-only: once per installed version it notes legacy client entries in `migration.log` and records an audit line; `ENGRAM_EPHEMERAL=1` skips it for container/ephemeral clients.
+MCP startup never imports other tools' memories or changes knowledge or identity content; startup and read tools may still write session checkpoints, usage records, audit records and access metadata. Cold start, reads and session closeout do not scan external client memories. Importing them is the explicit `engram import-memories` command (preview first, then the review queue, with a receipt and an audit line). `ENGRAM_MCP_STARTUP_SYNC` is accepted for compatibility and has no effect. Stdio `auto_migrate()` remains synchronous and config-only: once per installed version it notes legacy client entries in `migration.log` and records an audit line; `ENGRAM_EPHEMERAL=1` skips it for container/ephemeral clients.
 
 ---
 

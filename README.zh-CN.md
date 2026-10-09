@@ -581,6 +581,8 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 **从其它 AI 工具导入：** Engram 不会自己读取其它 AI 工具的记忆或规则文件：MCP server 启动、冷启动、会话收尾都不会。需要时运行 `engram import-memories`：先列出找到的条目（`--dry-run` 只列不写），确认后写入待审区，并在存储目录的 `import_receipts/` 留下导入回执。`ENGRAM_MCP_STARTUP_SYNC` 仍被接受，但已不起作用；`ENGRAM_RECONCILE=0` 会彻底关闭对其它 AI 工具文件的读取。`ENGRAM_EPHEMERAL=1` 会在容器/临时客户端中跳过启动时的配置检查。
 
+MCP 启动从不导入其它工具的记忆，也不改动知识或身份内容；启动和读工具仍可能写入会话检查点、使用记录、审计记录及访问元数据，因此不属于零写入操作。
+
 ### Tier-2 高级工具（40 个 — 知识管理、审查、导入导出）
 
 高级工具包含可选本地集成、owner/admin 工具和维护工具。凡是会导出文件、导入整库、生成审查页面或修改调用方信任级别的工具，都应视为 owner/admin/export surface，而不是普通只读工具。v4.0 起，相关操作合并为带 `mode`/`action` 选择器的单一工具。
