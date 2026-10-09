@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from copy import deepcopy
 
@@ -14,6 +15,107 @@ FIELDS = {"profile": _ALLOWED_PROFILE_FIELDS, "preferences": _ALLOWED_PREFERENCE
           "trust_boundaries": _ALLOWED_TRUST_FIELDS, "quality_standards": _ALLOWED_QUALITY_FIELDS,
           "work_style": frozenset({"preferences", "communication"})}
 BODY_FIELDS = ("before", "after", "updates")
+BACKUP_VERSION = 1
+
+
+def validate_backup(section):
+    """Validate plaintext proposal/recovery records before any import write."""
+    if not isinstance(section, dict) or set(section) != {'schema_version', 'proposals'} \
+            or type(section['schema_version']) is not int or section['schema_version'] != BACKUP_VERSION \
+            or not isinstance(section['proposals'], list):
+        raise ValueError('invalid identity review backup')
+    rows = deepcopy(section['proposals'])
+    ids = set()
+    metadata = {'id', 'version', 'field', 'status', 'tier', 'domain', 'created_at',
+                'source_tool', 'provenance', 'reviewed_at'}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - metadata - set(BODY_FIELDS) - {'missing_before'}:
+            raise ValueError('invalid identity proposal record')
+        item_id = row.get('id')
+        if not isinstance(item_id, str) or not re.fullmatch(r'identity-[0-9a-f]{32}', item_id) or item_id in ids:
+            raise ValueError('invalid or duplicate identity proposal id')
+        ids.add(item_id)
+        field, status = row.get('field'), row.get('status')
+        if not isinstance(field, str) or field not in FIELDS or type(row.get('version')) is not int \
+                or row['version'] < 1 or not isinstance(status, str) \
+                or status not in {'pending', 'applying', 'approved', 'rejected'}:
+            raise ValueError('invalid identity proposal state')
+        tier = 'verified' if status == 'approved' else 'retired' if status == 'rejected' else 'staging'
+        if row.get('tier') != tier or row.get('domain') != 'type:preference':
+            raise ValueError('invalid identity proposal classification')
+        if not isinstance(row.get('created_at'), str) or not row['created_at'] \
+                or not isinstance(row.get('source_tool'), str) or not isinstance(row.get('provenance'), dict):
+            raise ValueError('invalid identity proposal metadata')
+        if status in {'pending', 'applying'}:
+            if any(not isinstance(row.get(k), dict) for k in BODY_FIELDS):
+                raise ValueError('missing identity recovery body')
+            keys = set(row['updates'])
+            if not keys or keys - (FIELDS[field] - {'updated_at', 'migrated_from'}) \
+                    or keys != set(row['before']) or keys != set(row['after']):
+                raise ValueError('invalid identity recovery keys')
+            missing = row.get('missing_before')
+            if not isinstance(missing, list) or any(not isinstance(k, str) for k in missing) \
+                    or len(set(missing)) != len(missing) or set(missing) - keys \
+                    or any(row['before'][k] is not None for k in missing):
+                raise ValueError('invalid missing identity fields')
+            for key in keys:
+                if key != 'description' or field != 'profile':
+                    if row['after'][key] != row['updates'][key]:
+                        raise ValueError('invalid identity recovery patch')
+        elif any(k in row for k in (*BODY_FIELDS, 'missing_before')) \
+                or not isinstance(row.get('reviewed_at'), str) or not row['reviewed_at']:
+            raise ValueError('invalid decided identity record')
+    json.dumps(rows, allow_nan=False)
+    return rows
+
+
+def backup_section(eng):
+    """Pending patches and durable approval intents travel together in native backups."""
+    section = {'schema_version': BACKUP_VERSION, 'proposals': _rows(eng)}
+    section['proposals'] = validate_backup(section)
+    return section
+
+
+def _backup_veto(row, stones):
+    for stone in stones:
+        if stone.get('kind') != 'identity':
+            continue
+        pair = tombstones.claim_hashes_for_version('identity', row, stone.get('hv'))
+        if stone.get('id') == row['id'] or (stone.get('scope', 'global') == 'global'
+                                          and pair and pair[0] == stone.get('h1')):
+            return stone
+    return None
+
+
+def merge_backup_rows(current, incoming, stones):
+    """Keep local decisions/intents, deduplicate patches, and honor restored vetoes."""
+    rows = deepcopy(current)
+    by_id = {r['id']: r for r in rows}
+    body = (*BODY_FIELDS, 'missing_before')
+    for row in incoming:
+        existing = by_id.get(row['id'])
+        if existing is not None:
+            if existing['field'] != row['field'] or existing['version'] != row['version']:
+                raise ValueError('conflicting identity proposal id')
+            if existing['status'] in {'pending', 'applying'} and row['status'] in {'pending', 'applying'} \
+                    and any(existing.get(k) != row.get(k) for k in body):
+                raise ValueError('conflicting identity recovery body')
+            # Restoring a backup never reviews an already pending local proposal.
+            continue
+        if row['status'] in {'pending', 'applying'} and not _backup_veto(row, stones) \
+                and any(r['status'] in {'pending', 'applying'} and r['field'] == row['field']
+                        and all(r.get(k) == row.get(k) for k in body) for r in rows):
+            continue
+        rows.append(deepcopy(row))
+        by_id[row['id']] = rows[-1]
+    for row in rows:
+        if row['status'] in {'pending', 'applying'}:
+            veto = _backup_veto(row, stones)
+            if veto:
+                row.update(status='rejected', tier='retired', reviewed_at=veto.get('rejected_at') or _now_iso())
+                for key in body:
+                    row.pop(key, None)
+    return rows
 
 
 def _rows(eng) -> list[dict]:

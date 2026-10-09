@@ -19,6 +19,7 @@ from . import pinning as _pinning
 from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
 from . import project_snapshots as _project_snapshots
+from . import identity_review as _identity_review
 from .decision_thread import validate_edges
 from .playbooks import PlaybookIdExists, new_playbook_id, playbook_id_key, valid_playbook_id
 from .store_paths import confined_path, export_destination, valid_file_id
@@ -37,6 +38,7 @@ from .storage import (
     _update_json,
     _write_json,
     hold_directory_lock,
+    non_quarantining_reads,
 )
 
 
@@ -1280,17 +1282,20 @@ class ImportExportMixin:
         out = Path(output_path) if output_path else default_dir / (
             f'engram_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
         export_destination(self.root, out)
-        export_stones, skipped_stones = _check_tombstones(_tombstones.load(self.root))
+        # Snapshot approved identity, recovery intents and rejection vetoes
+        # under the same lock order used by local identity review.
+        with hold_directory_lock(self._knowledge_dir), hold_directory_lock(self._identity_dir):
+            export_stones, skipped_stones = _check_tombstones(_tombstones.load(self.root))
+            identity = {
+                'profile': self.get_profile(), 'preferences': self.get_preferences(),
+                'work_style': self.get_work_style(), 'quality_standards': self.get_quality_standards(),
+                'trust_boundaries': self.get_trust_boundaries(),
+            }
+            identity_review = None if exclude_pending else _identity_review.backup_section(self)
         export_data = {
             "schema_version": SCHEMA_VERSION,
             "exported_at": _now_iso(),
-            "identity": {
-                "profile": self.get_profile(),
-                "preferences": self.get_preferences(),
-                "work_style": self.get_work_style(),  # backward compat
-                "quality_standards": self.get_quality_standards(),
-                "trust_boundaries": self.get_trust_boundaries(),
-            },
+            "identity": identity,
             "knowledge": {
                 # Export decrypted plaintext so backups are portable across
                 # different .corpus_salt / ENGRAM_SECRET combinations.
@@ -1336,6 +1341,9 @@ class ImportExportMixin:
             },
         }
 
+        if identity_review is not None:
+            export_data['identity_review'] = identity_review
+
         # 导出所有项目快照
         for f in sorted(self._projects_dir.glob("*.json")):
             data = _read_json(f)
@@ -1370,6 +1378,14 @@ class ImportExportMixin:
         Returns:
             导入结果摘要。
         """
+        with non_quarantining_reads():
+            return self._import_all(input_path, merge=merge, dry_run=dry_run,
+                                    materialize_version_chain=materialize_version_chain,
+                                    allow_over_cap=allow_over_cap)
+
+    def _import_all(self, input_path: str, *, merge: bool, dry_run: bool,
+                    materialize_version_chain: bool, allow_over_cap: bool,
+                    _apply_locked: bool = False) -> dict:
         path = Path(input_path)
         if not path.is_file():
             return {"error": f"文件不存在: {input_path}"}
@@ -1377,6 +1393,16 @@ class ImportExportMixin:
         data = _read_json(path)
         if not data or "schema_version" not in data:
             return {"error": "不是有效的 Engram 备份文件"}
+
+        incoming_review = None
+        if 'identity_review' in data:
+            try:
+                incoming_review = _identity_review.validate_backup(data['identity_review'])
+                incoming_stones = _clean_tombstones(data.get('knowledge', {}).get('tombstones', []))
+                _identity_review.merge_backup_rows(_identity_review._rows(self), incoming_review,
+                                                  _tombstones.load(self.root) + incoming_stones)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                return {'error': 'invalid_identity_review', 'changed': False}
 
         projects = data.get("projects", {})
         if not isinstance(projects, dict):
@@ -1399,6 +1425,9 @@ class ImportExportMixin:
 
         plan = self._build_import_plan(data, merge=merge, input_path=input_path)
         if dry_run:
+            if incoming_review is not None:
+                plan['summary']['identity_review'] = {'records': len(incoming_review),
+                                                       'schema_version': _identity_review.BACKUP_VERSION}
             plan["capacity"] = self._import_capacity_summary(
                 data,
                 merge=merge,
@@ -1408,6 +1437,15 @@ class ImportExportMixin:
                 allow_over_cap=allow_over_cap,
             )
             return plan
+
+        if not _apply_locked:
+            # Revalidate after acquiring the review lock order and retain the
+            # locks throughout merge reads, identity writes and queue restore.
+            # This also protects import's identity merges from local approval.
+            with hold_directory_lock(self._knowledge_dir), hold_directory_lock(self._identity_dir):
+                return self._import_all(input_path, merge=merge, dry_run=False,
+                                        materialize_version_chain=materialize_version_chain,
+                                        allow_over_cap=allow_over_cap, _apply_locked=True)
 
         # Lessons, decisions, their archive segment and relations first, in one
         # locked section: a refused import writes nothing at all.
@@ -1603,6 +1641,13 @@ class ImportExportMixin:
         # Older backups have no tombstones section; the store's own are left alone.
         if isinstance(knowledge.get("tombstones"), list):
             imported.append(self._import_tombstones(knowledge["tombstones"], merge=merge))
+
+        if incoming_review is not None:
+            with hold_directory_lock(self._knowledge_dir), hold_directory_lock(self._identity_dir):
+                rows = _identity_review.merge_backup_rows(_identity_review._rows(self), incoming_review,
+                                                         _tombstones.load(self.root))
+                _identity_review._save(self, rows)
+            imported.append(f'identity_review({len(rows)})')
 
         # Environment (tools registry)
         environment = data.get("environment", {})
