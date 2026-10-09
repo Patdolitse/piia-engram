@@ -1395,14 +1395,18 @@ class ImportExportMixin:
             return {"error": "不是有效的 Engram 备份文件"}
 
         incoming_review = None
-        if 'identity_review' in data:
-            try:
+        try:
+            incoming_stones = _clean_tombstones(data.get('knowledge', {}).get('tombstones', []))
+            if 'identity_review' in data:
                 incoming_review = _identity_review.validate_backup(data['identity_review'])
-                incoming_stones = _clean_tombstones(data.get('knowledge', {}).get('tombstones', []))
-                _identity_review.merge_backup_rows(_identity_review._rows(self), incoming_review,
+            if incoming_review is not None or any(r['kind'] == 'identity' for r in incoming_stones):
+                _identity_review.merge_backup_rows(_identity_review._rows(self), incoming_review or [],
                                                   _tombstones.load(self.root) + incoming_stones)
-            except (ValueError, TypeError, KeyError, AttributeError):
-                return {'error': 'invalid_identity_review', 'changed': False}
+        except _identity_review.IdentityImportConflict as exc:
+            return {'status': 'refused', 'error': 'identity_review_conflict', 'changed': False,
+                    'proposal_ids': exc.proposal_ids, 'message': str(exc)}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return {'error': 'invalid_identity_review', 'changed': False}
 
         projects = data.get("projects", {})
         if not isinstance(projects, dict):
