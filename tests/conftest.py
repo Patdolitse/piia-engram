@@ -3,6 +3,7 @@
 import atexit
 import os
 import shutil
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -193,6 +194,25 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         for thread in heartbeats:
             thread.join(timeout=3.0)
             assert not thread.is_alive(), "test session heartbeat did not stop"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_mcp_transport():
+    """Synthetic server shutdown belongs to one test's transport only.
+
+    main() deliberately leaves the product's write gate closed after its
+    transport returns. Reset that state between independent test sessions,
+    including tests that first import the server after fixture setup.
+    """
+    server = sys.modules.get("piia_engram.mcp_server")
+    if server is not None:
+        server._shutting_down = False
+    try:
+        yield
+    finally:
+        server = sys.modules.get("piia_engram.mcp_server")
+        if server is not None:
+            server._shutting_down = False
 
 
 @pytest.fixture
