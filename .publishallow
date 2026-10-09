@@ -101,6 +101,7 @@ CHANGELOG.zh-CN.md
 # ── Top-level README (bilingual) ────────────────────────────────────
 README.md
 README.zh-CN.md
+llms.txt
 
 # ── User-facing docs (ENUMERATED — see dev-doc review gate above) ────
 # NOTE: release-playbook.md is intentionally NOT here — it's an internal
@@ -149,6 +150,7 @@ docs/runbooks/agent-client-validation.md
 docs/runbooks/memory-lifecycle.md
 docs/runbooks/setup-upgrade-safety.md
 docs/specs/agents-md-export-contract.md
+docs/specs/agent-setup-v1.md
 docs/specs/cursor-stop-hook-governed-writeback-design.md
 docs/specs/dock-m1-contract.md
 docs/specs/knowledge-quality-evaluation.md

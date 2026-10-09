@@ -80,6 +80,24 @@ The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Des
 
 ---
 
+### Let your AI agent install it
+
+Ask your coding agent to install Engram and inspect the plan before applying:
+
+```sh
+pip install piia-engram
+engram setup --non-interactive --json
+engram setup --non-interactive --apply
+engram doctor --json
+```
+
+Setup asks no questions. Use `--clients cursor,codex` to limit clients and
+`--lang zh|en` for output language (default `en`). It configures MCP connections
+with backups, preserves existing tool modes, and never imports memories, writes
+identity/knowledge, or approves proposals. Restart configured clients; exit code
+1 means a manual step remains. See [llms.txt](llms.txt) for agent instructions and
+the [CLI and JSON contract](docs/specs/agent-setup-v1.md) for details.
+
 ## Supported Tools
 
 Evidence levels follow the [agent client validation runbook](docs/runbooks/agent-client-validation.md): L0 = untested, L1 = installed, L2 = read/search observed, L3 = static file bridge, L4 = cross-client continuity.

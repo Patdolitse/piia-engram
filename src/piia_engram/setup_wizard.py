@@ -1649,11 +1649,13 @@ def _write_mcp_config(
     authorized_external_write: bool = False,
     extra_env: dict[str, str] | None = None,
     engram_tools: str | None = "all",
-) -> None:
+    preview: bool = False,
+) -> str | None:
     """将 engram 写入指定工具的 MCP 配置（合并，不覆盖其他工具的配置）。
     同时自动清理已知的旧版 server 名称（piia-pkc 等）。
+
+    ``preview`` returns the merged text without creating directories or files.
     """
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     config = _read_mcp_config_for_write(config_path, fmt="json")
 
     servers = config.get(server_key)
@@ -1704,9 +1706,12 @@ def _write_mcp_config(
         store_root=file_safety_root,
     )
 
+    text = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
+    if preview:
+        return text
     _write_config_text_with_backup(
         config_path,
-        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+        text,
         backup_root=file_safety_root,
         authorized_external_write=authorized_external_write,
     )
@@ -1856,10 +1861,12 @@ def _write_mcp_config_toml(
     authorized_external_write: bool = False,
     extra_env: dict[str, str] | None = None,
     engram_tools: str | None = "all",
-) -> None:
+    preview: bool = False,
+) -> str | None:
     """修复 TOML 格式配置文件中的 engram MCP 条目（如 Codex config.toml）。
 
     策略：原地替换 [mcp_servers.engram] 段，保留文件其余内容不动。
+    ``preview`` validates and returns the candidate without writing it.
     """
     existing_env: dict = {}
     try:
@@ -1996,6 +2003,8 @@ def _write_mcp_config_toml(
             '  ⚠️  Codex needs a manual step: rewriting would change unrelated values; config was left unchanged.'))
         raise _ManualTomlStep('Unrelated TOML values changed; manual configuration is required')
 
+    if preview:
+        return candidate
     _write_config_text_with_backup(
         config_path,
         candidate,
@@ -2015,7 +2024,8 @@ def _write_tool_mcp_config(
     authorized_external_write: bool = False,
     extra_env: dict[str, str] | None = None,
     engram_tools: str | None = "all",
-) -> None:
+    preview: bool = False,
+) -> str | None:
     """Write an MCP config using the target client's declared format."""
     if tool.get("register_via") == "claude_cli":
         # Claude Code's user config is written only by the claude command.
@@ -2024,7 +2034,7 @@ def _write_tool_mcp_config(
             "not by writing its config file"
         )
     if tool.get("format", "json") == "toml":
-        _write_mcp_config_toml(
+        return _write_mcp_config_toml(
             tool["config_path"],
             python_path,
             mcp_server_path,
@@ -2033,9 +2043,9 @@ def _write_tool_mcp_config(
             authorized_external_write=authorized_external_write,
             extra_env=extra_env,
             engram_tools=engram_tools,
+            **({"preview": True} if preview else {}),
         )
-        return
-    _write_mcp_config(
+    return _write_mcp_config(
         tool["config_path"],
         python_path,
         mcp_server_path,
@@ -2045,6 +2055,7 @@ def _write_tool_mcp_config(
         authorized_external_write=authorized_external_write,
         extra_env=extra_env,
         engram_tools=engram_tools,
+        **({"preview": True} if preview else {}),
     )
 
 
@@ -3812,6 +3823,14 @@ def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
     args = sys.argv[1:]
+    # Scriptable setup must dispatch before notices, cache writes or pings.
+    agent_options = {"--non-interactive", "--apply", "--clients", "--lang", "--json"}
+    if args and args[0] == "setup" and any(
+        arg.split("=", 1)[0] in agent_options for arg in args[1:]
+    ):
+        from piia_engram.agent_setup import run_agent_setup
+
+        sys.exit(run_agent_setup(args[1:]))
     # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
     # Skipped for _QUIET_COMMANDS. Not reached by the MCP entry.
     if not (args and args[0] in _QUIET_COMMANDS):
@@ -3980,6 +3999,7 @@ def main() -> None:
             "  engram setup            Interactive setup (read-only for external client configs)\n"
             "  engram setup --apply-external-config  Auto-configure AI clients with backups\n"
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
+            "  engram setup --non-interactive [--apply] [--json] [--clients IDS] [--lang zh|en]\n"
             "  engram doctor           Check config health (all AI tools; no writes to the memory\n"
             "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"

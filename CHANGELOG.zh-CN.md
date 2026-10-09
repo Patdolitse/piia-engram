@@ -6,6 +6,15 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 新增
+
+- 面向 Agent 的 `engram setup --non-interactive`：默认只读计划，显式 `--apply`，
+  支持客户端筛选、输出语言、带版本的 JSON 和部分完成/用法错误退出码。复用配置备份
+  与 Claude Code CLI 注册，不改身份、不导入记忆、不批准提案。
+- 公开 `llms.txt`、中英文 Agent 安装指引及安装 JSON 契约。
+
 ## [4.23.0] - 2026-10-09
 
 ### 不兼容变更

@@ -486,6 +486,7 @@ def register(
     *,
     on_differ: str = "keep",
     confirm_replace: Callable[[], bool] | None = None,
+    preview: bool = False,
 ) -> Registration:
     """Register Engram as Claude Code's user-scope ``engram`` server.
 
@@ -496,8 +497,14 @@ def register(
     A different ``engram`` entry is never replaced silently: ``on_differ`` is
     ``"ask"`` (``confirm_replace()`` decides) or ``"keep"`` (report the
     commands instead). The user config is parsed here, never written.
+    ``preview`` performs the same read-only checks and returns ``planned``
+    when an add could run, without prompts, CLI calls or config mutation.
     """
     state = read_user_config()
+    # A preview cannot probe the CLI. An unparseable user config must remain
+    # untouched by the scriptable installer even when the CLI is available.
+    if preview and state.status == "undetermined":
+        return Registration("manual", detail="undetermined")
     legacy = read_legacy()
     existing_env = {}
     if state.user_entry and isinstance(state.user_entry.get("env"), dict):
@@ -520,7 +527,7 @@ def register(
             return Registration("unchanged")
         if not launches_engram(state.user_entry):
             return Registration("conflict", command=command, hidden_env=hidden, detail="not_engram")
-        if on_differ == "ask" and confirm_replace is not None and confirm_replace():
+        if not preview and on_differ == "ask" and confirm_replace is not None and confirm_replace():
             replacing = True
         else:
             result = manual("differs")
@@ -534,6 +541,9 @@ def register(
     planned = [add_args(wanted)] + ([remove_args()] if replacing else [])
     if cmd_unsafe(exe, [a for argv in planned for a in argv]):
         return manual("cmd_unsafe")
+
+    if preview:
+        return Registration("planned")
 
     if state.status == "undetermined" and not replacing:
         try:

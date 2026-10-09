@@ -81,6 +81,22 @@ pip install piia-engram && engram setup
 
 ---
 
+### 让你的 AI Agent 帮你安装
+
+让编程 Agent 安装 Engram，先查看计划，再执行：
+
+```sh
+pip install piia-engram
+engram setup --non-interactive --json
+engram setup --non-interactive --apply
+engram doctor --json
+```
+
+全程无问答。用 `--clients cursor,codex` 限定客户端，用 `--lang zh|en` 选择输出语言
+（默认 `en`）。只配置 MCP 连接，写入前备份，保留已有工具模式，不导入记忆、
+不写入身份或知识、不批准提案。完成后重启客户端；退出码 1 表示仍有手动步骤。
+Agent 指引见 [llms.txt](llms.txt)，详情见 [CLI 与 JSON 契约](docs/specs/agent-setup-v1.md)。
+
 ## 兼容的 AI 工具
 
 证据等级遵循 [agent 客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0 = 未测试，L1 = 已安装，L2 = 读取/搜索已观察，L3 = 静态文件桥，L4 = 跨客户端连续性。
