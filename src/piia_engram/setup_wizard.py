@@ -1883,10 +1883,24 @@ def _toml_key(key):
     return key if re.fullmatch(r'[A-Za-z0-9_-]+', key) else json.dumps(key, ensure_ascii=False)
 
 
+def _toml_owner_tables(owner, path=('mcp_servers', 'engram')):
+    """Keep nested controls in table form for older client readers too."""
+    lines = []
+    for key, table in owner.items():
+        if key == 'env' and len(path) == 2 or not isinstance(table, dict):
+            continue
+        child = (*path, key)
+        lines.extend(['', '[' + '.'.join(_toml_key(k) for k in child) + ']'])
+        lines.extend(_toml_key(k) + ' = ' + _toml_value(v) for k, v in table.items()
+                     if not isinstance(v, dict))
+        lines.extend(_toml_owner_tables(table, child))
+    return lines
+
+
 def _print_codex_manual_change(entry, reason):
     print(reason)
-    print(_t('  请仅修改以下启动键，将 Engram 条目合并为 engram，保留所有 Owner 控制和环境变量；冲突须手动解决。参考：',
-             '  Change only these launch keys, merge Engram entries into engram, and keep all Owner controls and env; resolve conflicts manually. Example:'))
+    print(_t('  请仅修改以下启动键，将 Engram 条目合并为 engram，保留所有 Owner 控制和环境变量（包括 ENGRAM_APPROVAL）；冲突须手动解决。参考：',
+             '  Change only these launch keys, merge Engram entries into engram, and keep all Owner controls and env, including ENGRAM_APPROVAL; resolve conflicts manually. Example:'))
     print('[mcp_servers.engram]')
     print('command = ' + json.dumps(entry['command'], ensure_ascii=False))
     print('args = ' + json.dumps(entry['args']))
@@ -1963,7 +1977,7 @@ def _write_mcp_config_toml(
         f'args = ["-m", "piia_engram.mcp_server"]',
     ]
     for key, value in existing_owner.items():
-        if key != 'env':
+        if key != 'env' and not isinstance(value, dict):
             engram_block.append(_toml_key(key) + ' = ' + _toml_value(value))
     engram_block.extend(['', '[mcp_servers.engram.env]', 'PYTHONIOENCODING = "utf-8"'])
     selected_engram_tools = (
@@ -1995,6 +2009,7 @@ def _write_mcp_config_toml(
         carried['ENGRAM_APPROVAL'] = 'strict'
     for key, value in carried.items():
         engram_block.append(_toml_key(key) + ' = ' + _toml_value(value))
+    engram_block.extend(_toml_owner_tables(existing_owner))
 
     in_server_table = False
     skip_section = False
@@ -3891,7 +3906,7 @@ def main() -> None:
     _configure_utf8_stdio()
     args = sys.argv[1:]
     # Scriptable setup must dispatch before notices, cache writes or pings.
-    agent_options = {"--non-interactive", "--apply", "--clients", "--lang", "--json"}
+    agent_options = {"--non-interactive", "--apply", "--clients", "--lang", "--json", "--help", "-h"}
     if args and args[0] == "setup" and any(
         arg.split("=", 1)[0] in agent_options for arg in args[1:]
     ):

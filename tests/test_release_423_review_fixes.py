@@ -182,7 +182,7 @@ def test_session_start_worker_corruption_does_not_quarantine(tmp_path, monkeypat
 
 
 @pytest.mark.parametrize('args', [['migrate-project', 'fixture'], ['preview'], ['status'],
-                                  ['--help'], ['capabilities'], ['review', 'export']])
+                                  ['--help'], ['capabilities'], ['review', 'export'], ['setup', '--help']])
 def test_read_only_cli_dispatch_skips_startup_side_effects(monkeypatch, args):
     from piia_engram import update_check
     hits = []
@@ -190,8 +190,8 @@ def test_read_only_cli_dispatch_skips_startup_side_effects(monkeypatch, args):
     monkeypatch.setattr(setup, '_show_usage_notice', lambda *a: hits.append('notice'))
     monkeypatch.setattr(setup, '_start_usage_ping_cli', lambda: hits.append('ping'))
     monkeypatch.setattr(setup, '_configure_utf8_stdio', lambda: None)
-    for name in ('run_preview', 'run_status', 'run_review', '_run_capabilities_cli'):
-        monkeypatch.setattr(setup, name, lambda *a: 0)
+    for name in ('run_preview', 'run_status', 'run_review', '_run_capabilities_cli', 'run_setup'):
+        monkeypatch.setattr(setup, name, lambda *a, **k: 0)
     monkeypatch.setattr(sys, 'argv', ['engram', *args])
     try:
         setup.main()

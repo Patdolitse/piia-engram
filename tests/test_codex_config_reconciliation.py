@@ -50,7 +50,7 @@ def entry(name, form, env):
 @pytest.mark.parametrize('form', ['bare', 'double', 'single'])
 @pytest.mark.parametrize('inline', [False, True])
 @pytest.mark.parametrize('both', [False, True])
-def test_all_key_forms_collapse_aliases_with_canonical_env_precedence(tmp_path, form, inline, both):
+def test_all_key_forms_preserve_owner_env_or_refuse_conflicts(tmp_path, capsys, form, inline, both):
     legacy_env = {'ENGRAM_APPROVAL': 'strict', 'LEGACY_ONLY': 'keep', 'SHARED': 'legacy'}
     canonical_env = {'SHARED': 'canonical', 'CANONICAL_ONLY': 'keep'}
     if inline:
@@ -71,12 +71,19 @@ def test_all_key_forms_collapse_aliases_with_canonical_env_precedence(tmp_path, 
     original = 'model = "example"\n' + original + '[features]\npreview = true\n'
     config = tmp_path / 'config.toml'
     config.write_text(original, encoding='utf-8')
+    if both:
+        with pytest.raises(W._ManualTomlStep, match='env.SHARED'):
+            W._write_mcp_config_toml(config, sys.executable, 'server.py')
+        assert config.read_text(encoding='utf-8') == original
+        assert not list(tmp_path.glob('config.toml.engram-backup.*'))
+        assert '[mcp_servers.engram]' in capsys.readouterr().out
+        return
     W._write_mcp_config_toml(config, sys.executable, 'server.py')
     parsed = W._parse_toml(config.read_text(encoding='utf-8'))
     assert set(parsed['mcp_servers']) == {'engram', 'peer'}
     env = parsed['mcp_servers']['engram']['env']
     assert env['ENGRAM_APPROVAL'] == 'strict' and env['LEGACY_ONLY'] == 'keep'
-    assert env['SHARED'] == ('canonical' if both else 'legacy')
+    assert env['SHARED'] == 'legacy'
     assert parsed['features']['preview'] is True and parsed['model'] == 'example'
     assert next(tmp_path.glob('config.toml.engram-backup.*')).read_text(encoding='utf-8') == original
     first = config.read_bytes()
