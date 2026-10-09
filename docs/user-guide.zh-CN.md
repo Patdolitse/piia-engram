@@ -276,7 +276,10 @@ staged 条目始终在你掌控之中：
 
 **迁移或备份数据：** 复制整个 `~/.engram/` 文件夹即可。那就是你全部的记忆——
 没有云端副本需要对账。JSON 备份（`export_engram`）用本地命令 `engram import <backup.json>`
-导回（默认只预览；`--apply --yes` 才写入，`--overwrite` 为替换）。经 MCP，`import_engram`
+导回（默认只预览；`--apply --yes` 才写入，`--overwrite` 为替换）。本地原生备份还包含带版本的
+身份提案与中断批准意图；恢复不批准待审提案或重复提案，即使用 `--overwrite` 也保留拒绝记录。
+中断批准仍须显式本地重试或运行 `engram doctor --fix`；排除待审内容的 MCP 导出不包含该提案与恢复节。
+经 MCP，`import_engram`
 只能预览导入（`dry_run=true`）；要求真正导入时返回 `local_only`，不写入任何内容。OpenClaw
 文件用 `engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
 导入（默认只预览；`--apply --yes` 才写入）：经验进入待审区并留下回执，USER.md / SOUL.md
