@@ -18,6 +18,7 @@ from . import capacity as _capacity
 from . import pinning as _pinning
 from . import tombstones as _tombstones
 from . import write_provenance as _write_provenance
+from . import project_snapshots as _project_snapshots
 from .decision_thread import validate_edges
 from .playbooks import PlaybookIdExists, new_playbook_id, playbook_id_key, valid_playbook_id
 from .store_paths import confined_path, export_destination, valid_file_id
@@ -1380,13 +1381,21 @@ class ImportExportMixin:
         projects = data.get("projects", {})
         if not isinstance(projects, dict):
             return {"error": "invalid_projects", "changed": False}
-        for pid in projects:
+        for pid, incoming in projects.items():
             if not valid_file_id(pid):
                 return {"error": "invalid_project_id", "changed": False}
             try:
-                confined_path(self._projects_dir, f"{pid}.json")
+                project_path = confined_path(self._projects_dir, f"{pid}.json")
             except ValueError:
                 return {"error": "invalid_project_id", "changed": False}
+            # Validate both sides before planning, knowledge/identity writes,
+            # import receipts or overwrite. Reading corruption never quarantines.
+            try:
+                _project_snapshots.require_writable(incoming)
+                _project_snapshots.require_writable(_project_snapshots.read_raw(project_path))
+            except _project_snapshots.SnapshotMigrationRequired as exc:
+                return {"error": exc.code, "changed": False, "reason": exc.reason,
+                        "hint": "Run engram migrate-project <project> locally; preview and apply the backed-up migration before import."}
 
         plan = self._build_import_plan(data, merge=merge, input_path=input_path)
         if dry_run:
@@ -1619,16 +1628,16 @@ class ImportExportMixin:
         if projects:
             for pid, proj_data in projects.items():
                 proj_path = confined_path(self._projects_dir, f"{pid}.json")
-                if merge and proj_path.exists():
-                    existing = _read_json(proj_path)
-                    merged, _, _ = self._merge_dict_preserving_existing(
-                        existing,
-                        proj_data,
-                        "projects",
-                    )
-                    _write_json(proj_path, merged)
-                else:
-                    _write_json(proj_path, proj_data)
+                def update_project(existing):
+                    _project_snapshots.require_writable(existing)
+                    _project_snapshots.require_writable(proj_data)
+                    if merge:
+                        merged, _, _ = self._merge_dict_preserving_existing(existing, proj_data, "projects")
+                    else:
+                        merged = proj_data
+                    _project_snapshots.require_writable(merged)
+                    return merged
+                _update_json(proj_path, update_project)
             imported.append(f"projects({len(projects)})")
 
         version_chain_materialization = None

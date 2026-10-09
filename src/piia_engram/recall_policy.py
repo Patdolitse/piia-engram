@@ -249,6 +249,20 @@ def is_trusted(row: Mapping[str, Any]) -> bool:
     return _review_state(row).state == TRUSTED
 
 
+def is_reviewed_lineage_source(row: Mapping[str, Any]) -> bool:
+    """Reviewed supersession evidence survives a decision's retirement.
+
+    A retired record is evidence, never current recall content. Its review
+    labels must still pass the same whitelist; pending/unknown labels cannot
+    acquire authority merely by carrying a retired status.
+    """
+    if is_trusted(row):
+        return True
+    if not isinstance(row, Mapping) or _norm(row.get("status")) != "superseded" or row.get("snapshot_of"):
+        return False
+    return is_trusted({**row, "status": "active"})
+
+
 def is_pinned(row: Mapping[str, Any]) -> bool:
     """An Owner pin that counts: ``pinned is True`` on a row whose own labels are trusted."""
     return isinstance(row, Mapping) and row.get("pinned") is True and is_trusted(row)

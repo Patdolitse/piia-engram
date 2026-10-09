@@ -210,7 +210,7 @@ up the new names automatically; hard-coded prompts should be updated with the
 tables above.
 
 **Where is the current tool inventory?** See
-[`tool-surface-analysis.md`](tool-surface-analysis.md) for the full 53-tool
+[`tool-surface-analysis.md`](tool-surface-analysis.md) for the full 59-tool
 surface, governance classes, and tier split.
 
 `supersedes` is internal reviewed version lineage; manual MCP link/unlink is refused. / `supersedes` 是审核后的内部版本谱系，MCP 不允许手工建立或移除。

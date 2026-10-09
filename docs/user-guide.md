@@ -246,14 +246,17 @@ You stay in control of staged items at any time:
   silently executes a workflow — it hands the steps to your AI tool as a passive
   reference and tracks the reported outcome.
 
-What your AI receives follows the same rule everywhere:
+Long-term knowledge and session continuity have separate review boundaries:
 
-- Context it gets without asking (cold start, the resume brief, the
-  session-start hooks, `get_recall`, `get_relevant_knowledge`) holds reviewed,
-  current items only. Items waiting for review, items replaced by a newer
+- The long-term knowledge in automatic context (cold start, the resume brief,
+  session-start hooks), `get_recall` and `get_relevant_knowledge` contains reviewed,
+  current knowledge items only. Items waiting for review, items replaced by a newer
   version and archived items are left out. Recall only trusts items that are
   clearly marked reviewed: an unknown tier, a missing status or a rejected or
   deprecated label keeps an item out.
+- Recent session checkpoints and activity records can also appear in resume
+  briefs and session-start context for continuity, without owner review. They
+  describe recent work and next steps; they are not reviewed long-term knowledge.
 - `search_knowledge` lists items waiting for review in a separate `pending`
   group (each marked `pending_untrusted`), never mixed into the results.
   Replaced items are left out unless you pass `include_superseded=true`.

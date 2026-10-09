@@ -15,7 +15,7 @@ from . import recall_policy as _recall_policy
 from . import review_boundary as _review_boundary
 from . import version_guard as _version_guard
 from . import write_provenance as _write_provenance
-from .storage import _now_iso, overflow_batch
+from .storage import _now_iso, _read_json, SkipWrite, overflow_batch
 
 _ONBOARD_ACCEPT_HINT = "run `engram onboard-accept <id>` locally"
 
@@ -135,14 +135,20 @@ class KnowledgeOpsMixin:
 
     def _retire_superseded_decision(self, old_id: str, new_id: str) -> None:
         """Synchronize an active decision after its reviewed successor's edge lands."""
-        if new_id not in self._reviewed_ids():
-            return
         def retire(rows):
-            successor = next((r for r in rows if r.get("id") == new_id), None)
-            if successor is None:
-                return rows
+            # _update_entries holds the directory lock here. Read the persisted
+            # review labels too: normalization may backfill derived labels.
+            stored = _read_json(self._knowledge_dir / "decisions.json")
+            successor = next((r for r in stored if r.get("id") == new_id), None)
+            if successor is None or not _recall_policy.is_trusted(successor):
+                raise SkipWrite()
+            predecessor = next((r for r in stored if r.get("id") == old_id), None)
+            if _review_boundary.mcp_origin() and not _recall_policy.is_trusted(predecessor):
+                raise SkipWrite()
             for row in rows:
                 if row.get("id") == old_id and row.get("status") in {"active", "current"} and not row.get("snapshot_of"):
+                    # Recheck the predecessor inside the locked mutation. An
+                    # MCP replacement never decides an untrusted proposal.
                     row.update(status="superseded", superseded_by=new_id, superseded_at=_now_iso())
             return rows
         self._update_entries(self._knowledge_dir / "decisions.json", "decision", retire)

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .setup_support import wizard as W
 from .i18n import t as _t
+from .storage import non_quarantining_reads
 
 
 def _detect_installed_tools() -> list[dict]:
@@ -790,6 +791,7 @@ def _run_playbook_index_check(*, fix: bool = False) -> int:
         return 1
 
 
+@non_quarantining_reads()
 def run_doctor(fix: bool = False, days: int | None = None) -> int:
     """Report playbook index drift; --fix reconciles it before client checks."""
     return _run_playbook_index_check(fix=fix) + _run_doctor_config_checks(fix=fix, days=days)
@@ -968,6 +970,7 @@ def _print_connection_report(root, days: int | None = None) -> None:
         W._safe_print(f"    {line}")
 
 
+@non_quarantining_reads()
 def run_doctor_json(days: int | None = None) -> int:
     """``engram doctor --json``: the client connection report as JSON (read-only).
 
@@ -1041,6 +1044,7 @@ def _run_identity_recovery_check(eng, *, fix: bool = False) -> int:
     return len(pending)
 
 
+@non_quarantining_reads()
 def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int:
     """运行功能性验证：MCP server 能否启动、知识库能否读写、quick_context 是否可用。
 
@@ -1663,16 +1667,25 @@ def decision_consistency_check(eng) -> dict:
     try:
         # Ordinary store readers may quarantine corruption. Diagnostics must
         # report it without creating a backup, audit entry or migrated record.
-        rows = [eng._ensure_fields(row, "decision") for row in read_list("decisions.json")]
+        raw_rows = read_list("decisions.json")
+        rows = [eng._ensure_fields(dict(row), "decision") for row in raw_rows]
         edges = validate_edges(read_list("relations.json"))
+        lineage_rows = eng._lineage_authority_rows("decision")
     except (ValueError, UnicodeError, OSError):
         return {"name": "decision_consistency", "status": "WARN", "predecessors": [],
                 "read_only": True, "detail": "Decision consistency inputs cannot be decoded",
                 "hint": "Check local decision/relation backups before repairing; no files were changed."}
-    reviewed = {str(row["id"]) for row in rows if row.get("id") and recall_policy.is_trusted(row)}
+    reviewed = {str(row["id"]) for row in lineage_rows if row.get("id") and recall_policy.is_reviewed_lineage_source(row)}
     index = recall_policy.build_supersede_index(version_chain.honored_edges(edges, reviewed))
     predecessors = sorted(str(r["id"]) for r in rows if r.get("status") in {"active", "current"} and index.successor(r.get("id")))
-    hints = [f"engram conflicts resolve {index.successor(old)} {old} --action supersede --keep {index.successor(old)} --commit --yes" for old in predecessors]
+    def current_successor(old):
+        seen = {old}
+        successor = index.successor(old)
+        while index.successor(successor) and successor not in seen:
+            seen.add(successor)
+            successor = index.successor(successor)
+        return successor
+    hints = [f"engram conflicts resolve {current_successor(old)} {old} --action supersede --keep {current_successor(old)} --commit --yes" for old in predecessors]
     return {"name": "decision_consistency", "status": "WARN" if predecessors else "PASS",
             "predecessors": predecessors, "read_only": True,
             "detail": f"{len(predecessors)} active predecessor(s) with reviewed successors",

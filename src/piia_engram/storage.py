@@ -370,6 +370,23 @@ def _corrupt_copy_exists(path: Path, raw: bytes) -> bool:
     return False
 
 
+_NON_QUARANTINING_READS: ContextVar[bool] = ContextVar("engram_non_quarantining_reads", default=False)
+
+
+@contextmanager
+def non_quarantining_reads() -> Iterator[None]:
+    """Diagnostic scope: report corrupt input without copy/quarantine writes.
+
+    Covers readers in other modules too, including already-imported aliases.
+    Context-local state prevents changing concurrent ordinary recovery reads.
+    """
+    token = _NON_QUARANTINING_READS.set(True)
+    try:
+        yield
+    finally:
+        _NON_QUARANTINING_READS.reset(token)
+
+
 def _read_json(path: Path, *, allow_corrupt: bool = False) -> Any:
     if not path.is_file():
         return {}
@@ -389,6 +406,12 @@ def _read_json(path: Path, *, allow_corrupt: bool = False) -> Any:
     logger.warning(
         "failed to read %s after %d attempts: %s", path.name, _READ_RETRIES, exc
     )
+    if _NON_QUARANTINING_READS.get():
+        if allow_corrupt:
+            return {}
+        raise DataCorruptionError(
+            f"{path.name} is corrupted and cannot be read. No files were changed; check a local backup."
+        ) from exc
     # Genuinely unreadable after retries: back it up so it can be recovered
     # manually, skipping duplicate quarantine copies of identical content.
     try:

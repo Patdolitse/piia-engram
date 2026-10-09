@@ -102,6 +102,56 @@ def test_pending_retired_intermediate_cannot_suppress_trusted_ancestor(tmp_path)
     assert decision_consistency_check(eng)["status"] == "PASS"
 
 
+@pytest.mark.parametrize("labels", [{"memory_state": "staging"}, {"approval_status": "rejected"}])
+def test_mcp_replacement_checks_persisted_untrusted_labels(tmp_path, monkeypatch, labels):
+    from piia_engram import mcp_server as server
+    eng = Engram(root=tmp_path / "store")
+    old = eng.add_decision({"question": "Choose cache policy", "choice": "ttl", "tier": "verified"})
+    path = eng._knowledge_dir / "decisions.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    next(row for row in rows if row["id"] == old["id"]).update(labels)
+    raw_write_json(path, rows)
+    monkeypatch.setattr(server, "_engram", eng)
+    monkeypatch.setattr(server, "_track", lambda *a, **k: None)
+    asyncio.run(server.memory_store(kind="decision", user_confirmed=True, content_json=json.dumps({
+        "question": "Choose cache policy", "choice": "bounded", "supersedes": old["id"],
+        "supersedes_expected_version": eng.mcp_entry_version(old["id"])})))
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    new = next(row for row in rows if row["id"] != old["id"])
+    assert new["tier"] == "staging" and new["pending_supersedes"] == old["id"]
+
+
+@pytest.mark.parametrize("labels", [{"memory_state": "staging"}, {"approval_status": "rejected"}])
+@pytest.mark.parametrize("archived", [False, True])
+def test_retired_lineage_never_overwrites_raw_review_labels(tmp_path, labels, archived):
+    from piia_engram.doctor import decision_consistency_check
+    eng, a, b, c = _historical_three_generations(tmp_path)
+    path = eng._knowledge_dir / "decisions.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    next(row for row in rows if row["id"] == b["id"]).update(labels)
+    if archived:
+        from piia_engram.storage import _append_jsonl_lines
+        retired = next(row for row in rows if row["id"] == b["id"])
+        _append_jsonl_lines(eng._overflow_archive_path("decision"), [json.dumps(retired)])
+        rows = [row for row in rows if row["id"] != b["id"]]
+    raw_write_json(path, rows)
+    assert a["id"] in {row["id"] for row in eng.get_decisions(limit=None, _update_access=False)}
+    assert decision_consistency_check(eng)["status"] == "PASS"
+
+
+def test_reviewed_lineage_survives_retired_intermediate_overflow(tmp_path):
+    from piia_engram.doctor import decision_consistency_check
+    from piia_engram.storage import _append_jsonl_lines
+    eng, a, b, c = _historical_three_generations(tmp_path)
+    path = eng._knowledge_dir / "decisions.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    retired = next(row for row in rows if row["id"] == b["id"])
+    _append_jsonl_lines(eng._overflow_archive_path("decision"), [json.dumps(retired)])
+    raw_write_json(path, [row for row in rows if row["id"] != b["id"]])
+    assert a["id"] not in {row["id"] for row in eng.get_decisions(limit=None, _update_access=False)}
+    assert decision_consistency_check(eng)["predecessors"] == [a["id"]]
+
+
 @pytest.mark.parametrize("merge", [False, True])
 @pytest.mark.parametrize("bad_side", ["existing", "incoming"])
 @pytest.mark.parametrize("layout", [{"snapshot": {"title": "legacy"}},
@@ -136,6 +186,22 @@ def test_migration_refuses_unknown_schema_version_without_relabelling(tmp_path, 
     assert eng.migrate_project_snapshot("example")["error"] == "migration_required"
     assert eng.migrate_project_snapshot("example", apply=True)["error"] == "migration_required"
     assert _files(eng.root) == before
+
+
+@pytest.mark.parametrize("version", [1, "1", "1.0"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_supported_legacy_version_migration_retains_backup_and_body(tmp_path, version, nested):
+    from piia_engram.storage import _project_id
+    eng = Engram(root=tmp_path / "store")
+    path = eng._projects_dir / (_project_id("example") + ".json")
+    body = {"schema_version": version, "title": "legacy", "notes": "retained"}
+    path.write_text(json.dumps({"snapshot": body} if nested else body), encoding="utf-8")
+    before = path.read_bytes()
+    result = eng.migrate_project_snapshot("example", apply=True)
+    assert result["status"] == "migrated"
+    assert Path(result["backup"]).read_bytes() == before
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert migrated == {"schema": "project_snapshot.v2", "title": "legacy", "notes": "retained"}
 
 
 def test_complete_ordinary_doctor_never_attempts_corruption_writes(tmp_path, monkeypatch, capsys):
@@ -179,6 +245,8 @@ def test_complete_ordinary_doctor_never_attempts_corruption_writes(tmp_path, mon
 
 @pytest.mark.parametrize("reply", [json.dumps({"status": "success", "entry": {"summary": "transport_unavailable: literal text"}}),
                                    "Saved entry: transport_unavailable: literal text",
+                                   json.dumps({"status": "success", "entry": {"error": "transport_unavailable: literal text"}}),
+                                   json.dumps({"maintenance": {"sample": {"status": "ok", "error": "transport_unavailable: literal text"}}}),
                                    json.dumps(["transport_unavailable: literal text"])])
 def test_transport_literal_in_success_reply_is_unchanged(reply):
     from piia_engram.transport_errors import guarded_tool
