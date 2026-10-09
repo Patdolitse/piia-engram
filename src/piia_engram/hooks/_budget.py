@@ -16,7 +16,12 @@ def read_with_budget(reader, hook: str) -> str:
 
     def work():
         try:
-            result.append(reader())
+            # ContextVars do not propagate from the hook entry thread. Apply
+            # the corruption policy here, around construction and all reads.
+            from piia_engram.storage import non_quarantining_reads
+
+            with non_quarantining_reads():
+                result.append(reader())
         except Exception as exc:
             log_failure(hook, "resume read failed (" + type(exc).__name__ + ")")
         finally:
