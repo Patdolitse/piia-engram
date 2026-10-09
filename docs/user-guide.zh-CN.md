@@ -359,3 +359,24 @@ AI 可能只把它存进了自己的私有记忆，没存进 Engram。用 `searc
 `wrap_up_session` 是轻量的会话结束保存。默认不会运行完整 reconcile，也不会默认执行外部 AI 记忆或配置的 full reconciliation。
 
 `run_reconcile=True` 仍被接受，但不再导入任何内容。需要导入其它 AI 工具的记忆时，由用户在终端运行 `engram import-memories`（先预览，确认后进入待审区）；普通会话收尾继续保持 lightweight session-end save。
+
+## Hook 可靠性与离线处理
+
+Claude Code 的 Stop/PreCompact/PostCompact 和 Cursor 的 stop/sessionEnd 写入型 hook 现在只发布一个本地小事件，并以状态码 0 退出，不初始化记忆存储，也不等待其锁。Cursor 知识回写仍须显式启用。检查点和压缩日记延后保存；提取出的知识始终进入 staging，由所有者审核，严格模式同样如此。
+
+在方便时处理队列：
+
+```sh
+engram hooks drain --dry-run --json
+engram hooks drain
+engram hooks drain --json
+engram doctor --json
+```
+
+`--dry-run` 只报告数量，不写入任何内容。正常处理按最旧事件优先；相同事件 ID 重放不会重复生成提案或归档记录。可重试失败或处理器忙时命令返回 1，用法错误返回 2，其余返回 0。成功处理也可能报告已隔离的坏事件，请检查该数量。Doctor 只读报告待处理数量/字节数、最旧事件年龄（秒）、隔离数量和不完整文件，不处理队列。已有本地 staging 提取路径（包括已启用的 watcher 回写）也会尝试处理队列。MCP 启动和 MCP 工具调用均不处理；如果只使用这些操作，请自行运行本地 drain 命令。
+
+事件位于 `<store>/hooks/spool/`，待处理上限为 1,000 条或 16 MiB，单事件上限为 128 KiB。超限时最旧文件进入 `quarantine/` 并附原因文件；格式错误事件也进入该目录。并发发布期间，维护锁忙可能造成短暂超限，下一次发布或 drain 会恢复上限。隔离文件和完成凭据保留，不计入待处理上限。请显式检查隔离内容，保留凭据以维持事件 ID 去重。中断留下的 `.partial` 文件单独计数，保留供检查。存储锁、磁盘或处理异常会保留待处理事件供下次重试；若发布本身失败，hook 尽力在 `<store>/logs/hooks.log` 记录诊断，存储不可访问时回退到存储同级的 `<store-name>.hooks.log`。两处均不可写时，无法保证捕获成功。
+
+转录路径引用仅在本机使用，处理前须保持可读；路径引用不能冻结被压缩重写的转录。处理器在首次存储变更前冻结受限输入，中断重试使用同一份输入。不新增网络请求或客户端命令。队列和隔离文件应按会话数据保护，其文件访问边界与原有本地 hook 捕获相同。
+
+SessionStart 仍同步返回接续简报，使用只读存储访问，并设置固定一秒应用预算。超时或读取失败时输出原有 continue 响应（无上下文），以状态码 0 退出。预算从 Python/模块加载后开始，操作系统启动时间不计入。此路径省略周报提示生成，仍可使用 `engram weekly`。

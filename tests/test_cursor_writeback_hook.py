@@ -6,7 +6,10 @@ def _run_hook(monkeypatch, payload: dict):
     from piia_engram.hooks import cursor_writeback
 
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
-    return cursor_writeback.main()
+    result = cursor_writeback.main()
+    from piia_engram.hooks.spool import drain
+    assert drain()["failed"] == 0
+    return result
 
 
 def test_cursor_writeback_disabled_by_default_does_not_write(tmp_path, monkeypatch):

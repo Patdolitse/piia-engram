@@ -90,12 +90,12 @@ class TestHookIntegration:
             "sys.stdin", type("F", (), {"read": lambda self: stdin_data})()
         )
 
-        with patch("piia_engram.core.Engram", side_effect=RuntimeError("boom")):
+        with patch("piia_engram.hooks.spool._publish", side_effect=RuntimeError("boom")):
             auto_absorb_compact.main()  # must not raise
 
         text = _log_path(tmp_path).read_text(encoding="utf-8")
-        assert "[auto_absorb_compact]" in text
-        assert "boom" in text
+        assert "[hook_spool]" in text
+        assert "RuntimeError" in text
 
     def test_auto_save_on_stop_logs_engram_failure(self, tmp_path, monkeypatch):
         from piia_engram.hooks import auto_save_on_stop
@@ -118,9 +118,9 @@ class TestHookIntegration:
             "sys.stdin", type("F", (), {"read": lambda self: stdin_data})()
         )
 
-        with patch("piia_engram.core.Engram", side_effect=RuntimeError("boom")):
+        with patch("piia_engram.hooks.spool._publish", side_effect=RuntimeError("boom")):
             auto_save_on_stop.main()  # must not raise
 
         text = _log_path(tmp_path).read_text(encoding="utf-8")
-        assert "[auto_save_on_stop]" in text
-        assert "boom" in text
+        assert "[hook_spool]" in text
+        assert "RuntimeError" in text

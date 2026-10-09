@@ -10,10 +10,19 @@
 
 ### 新增
 
+- 本地 `engram hooks drain [--dry-run] [--json]` 与 doctor 只读队列诊断。
+  MCP 启动和工具调用均不处理 hook 队列。
+
 - 面向 Agent 的 `engram setup --non-interactive`：默认只读计划，显式 `--apply`，
   支持客户端筛选、输出语言、带版本的 JSON 和部分完成/用法错误退出码。复用配置备份
   与 Claude Code CLI 注册，不改身份、不导入记忆、不批准提案。
 - 公开 `llms.txt`、中英文 Agent 安装指引及安装 JSON 契约。
+
+### 变更
+
+- 写入型 hook 原子发布本地事件后退出，不等待存储锁；离线处理重试失败、按事件 ID
+  去重，将坏事件或超限事件隔离，并保持知识仅进入 staging 待审。
+- SessionStart 使用只读存储访问和一秒应用预算，失败时输出 continue 响应；此路径省略周报提示。
 
 ## [4.23.0] - 2026-10-09
 

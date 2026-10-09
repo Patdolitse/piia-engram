@@ -27,10 +27,10 @@ def _log_dir() -> Path:
     return Path(base).expanduser() / "logs"
 
 
-def log_failure(hook: str, message: str, exc: BaseException | None = None) -> None:
+def log_failure(hook: str, message: str, exc: BaseException | None = None, *, root: Path | None = None) -> None:
     """Append one failure line to hooks.log. Never raises."""
     try:
-        directory = _log_dir()
+        directory = Path(root) / "logs" if root is not None else _log_dir()
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / _LOG_FILE
         try:
@@ -46,4 +46,14 @@ def log_failure(hook: str, message: str, exc: BaseException | None = None) -> No
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(f"{stamp} [{hook}] {detail}\n")
     except Exception:
-        pass
+        # Store itself may be inaccessible. Keep a local sibling diagnostic;
+        # exception messages and payloads are deliberately omitted here.
+        try:
+            base = Path(root) if root is not None else _log_dir().parent
+            fallback = base.with_name(base.name + ".hooks.log")
+            if fallback.exists() and fallback.stat().st_size > _MAX_LOG_BYTES:
+                fallback.unlink()
+            with fallback.open("a", encoding="utf-8") as handle:
+                handle.write(f"{datetime.now().isoformat(timespec='seconds')} [{hook}] {message}\n")
+        except Exception:
+            pass

@@ -3831,6 +3831,10 @@ def main() -> None:
         from piia_engram.agent_setup import run_agent_setup
 
         sys.exit(run_agent_setup(args[1:]))
+    if args and args[0] == "hooks":
+        from piia_engram.hooks.spool import run_cli
+
+        sys.exit(run_cli(args[1:]))
     # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
     # Skipped for _QUIET_COMMANDS. Not reached by the MCP entry.
     if not (args and args[0] in _QUIET_COMMANDS):
@@ -4007,7 +4011,8 @@ def main() -> None:
             "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram doctor --days N  Look back N days (1-3650, default 14) for client calls\n"
-            "  engram doctor --json    Client connections only, as JSON (read-only)\n"
+            "  engram doctor --json    Connections + hook backlog, as JSON (read-only)\n"
+            "  engram hooks drain [--dry-run] [--json]  Process local hook queue into staging\n"
             "  engram capabilities     Content-free runtime capability fingerprint (--json/--require)\n"
             "  engram status           Show a redacted install + memory health summary\n"
             "  engram status --html    Write a local redacted status page\n"

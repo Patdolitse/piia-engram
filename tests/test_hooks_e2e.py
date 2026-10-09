@@ -26,7 +26,7 @@ def _run_hook(module: str, payload: dict, store: Path, cwd: Path) -> subprocess.
     env.pop("CLAUDE_INVOKED_BY", None)
     # encoding must be explicit: the hooks emit UTF-8 (CJK briefs) and the
     # Windows default cp1252 decode raises on CI runners
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, "-m", module],
         input=json.dumps(payload),
         capture_output=True,
@@ -37,6 +37,11 @@ def _run_hook(module: str, payload: dict, store: Path, cwd: Path) -> subprocess.
         timeout=180,
         cwd=str(cwd),
     )
+    if module.endswith("auto_save_on_stop"):
+        from piia_engram.hooks.spool import drain
+        report = drain(store)
+        assert report["failed"] == 0, report
+    return result
 
 
 def _transcript(path: Path, messages: int) -> Path:

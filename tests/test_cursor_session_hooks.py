@@ -10,6 +10,7 @@ class is replaced by a stub, so no test ever touches a real store.
 from __future__ import annotations
 
 import io
+import os
 import json
 import re
 import sys
@@ -50,6 +51,10 @@ def fake_engram(monkeypatch):
         markdown = "# 接续简报\n上次会话进展……"
         raise_on: set[str] = set()
 
+        def __init__(self, root=None, *, read_only=False):
+            self.root = Path(root or os.environ["ENGRAM_DIR"])
+            self._read_only = read_only
+
         def get_resume_brief(self, **kwargs):
             calls.append(("get_resume_brief", kwargs))
             if "get_resume_brief" in self.raise_on:
@@ -69,8 +74,24 @@ def fake_engram(monkeypatch):
             calls.append(("extract_session_insights", kwargs))
 
     monkeypatch.setattr("piia_engram.core.Engram", FakeEngram)
+    from piia_engram.hooks import _processor
+
+    def record_archive(engram, event, content, *, daily=False):
+        assert not daily
+        engram.save_agent_context(
+            tool=event["client"], content=content,
+            session_id=event["prepared"].get("session_id") or "hook-" + event["event_id"],
+            project_folder=event["payload"].get("project_folder", ""))
+
+    monkeypatch.setattr(_processor, "_archive", record_archive)
     return SimpleNamespace(cls=FakeEngram, calls=calls)
 
+
+def _save_and_drain():
+    result = save_mod.main()
+    from piia_engram.hooks.spool import drain
+    drain()
+    return result
 
 def _stdin(monkeypatch, payload) -> None:
     text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
@@ -344,10 +365,9 @@ def test_inject_garbage_stdin_still_emits_valid_json(monkeypatch, capsys, fake_e
 
     out = json.loads(capsys.readouterr().out)
     assert out["continue"] is True
-    # Unknown payload degrades to project_folder="" but the brief still lands.
-    assert _calls(fake_engram, "get_resume_brief") == [
-        {"project_folder": "", "token_budget": 1500}
-    ]
+    # Malformed input takes the bounded error path without reading the store.
+    assert out == {"continue": True}
+    assert _calls(fake_engram, "get_resume_brief") == []
 
 
 def test_inject_reentry_guard(monkeypatch, capsys, fake_engram):
@@ -370,7 +390,7 @@ def test_save_happy_path(monkeypatch, fake_engram):
         {"summary": "做了 A 和 B", "cwd": "E:/proj", "conversation_id": "conv-7"},
     )
 
-    assert save_mod.main() == 0
+    assert _save_and_drain() == 0
 
     saves = _calls(fake_engram, "save_agent_context")
     assert len(saves) == 1
@@ -388,7 +408,7 @@ def test_save_empty_payload_writes_minimal_checkpoint(monkeypatch, fake_engram):
     """Real Cursor sends empty stdin → degrade to a minimal checkpoint, not a skip."""
     _stdin(monkeypatch, {})
 
-    assert save_mod.main() == 0
+    assert _save_and_drain() == 0
 
     saves = _calls(fake_engram, "save_agent_context")
     assert len(saves) == 1
@@ -403,18 +423,18 @@ def test_save_empty_payload_writes_minimal_checkpoint(monkeypatch, fake_engram):
 def test_save_empty_payload_is_debounced(monkeypatch, fake_engram):
     for _ in range(2):
         _stdin(monkeypatch, {})
-        save_mod.main()
+        _save_and_drain()
 
     assert len(_calls(fake_engram, "save_agent_context")) == 1  # second debounced
 
 
 def test_save_empty_payload_session_end_bypasses_debounce(monkeypatch, fake_engram):
     _stdin(monkeypatch, {})
-    save_mod.main()  # stop → minimal save, debounce timestamp recorded
+    _save_and_drain()  # stop → minimal save, debounce timestamp recorded
 
     monkeypatch.setattr(sys, "argv", ["cursor-hook-test", "--event", "sessionEnd"])
     _stdin(monkeypatch, {})
-    save_mod.main()  # final save must not be dropped
+    _save_and_drain()  # final save must not be dropped
 
     saves = _calls(fake_engram, "save_agent_context")
     assert len(saves) == 2
@@ -430,7 +450,7 @@ def test_save_real_cursor_protocol_env_only(monkeypatch, tmp_path: Path, fake_en
     monkeypatch.setenv("CURSOR_PROJECT_DIR", "E:/real/workspace")
 
     _stdin(monkeypatch, {})
-    assert save_mod.main() == 0
+    assert _save_and_drain() == 0
 
     saves = _calls(fake_engram, "save_agent_context")
     assert len(saves) == 1
@@ -442,7 +462,7 @@ def test_save_real_cursor_protocol_env_only(monkeypatch, tmp_path: Path, fake_en
     assert "最小检查点" not in save["content"]  # rich path, not degraded
 
     _stdin(monkeypatch, {})
-    save_mod.main()  # same conversation within the window → debounced
+    _save_and_drain()  # same conversation within the window → debounced
     assert len(_calls(fake_engram, "save_agent_context")) == 1
 
 
@@ -450,17 +470,17 @@ def test_save_engram_failure_is_silent(monkeypatch, fake_engram):
     fake_engram.cls.raise_on = {"save_agent_context"}
     _stdin(monkeypatch, {"summary": "x", "conversation_id": "c"})
 
-    assert save_mod.main() == 0
-    # Failure must not record a debounce timestamp (next attempt may succeed).
-    assert payload_mod.recently_saved("c", 10) is False
+    assert _save_and_drain() == 0
+    # The queued event survives failed processing; debounce prevents duplicate capture.
+    assert payload_mod.recently_saved("c", 10) is True
 
 
 def test_save_debounces_repeat_stop_events(monkeypatch, fake_engram):
     payload = {"summary": "turn 1", "conversation_id": "conv-d"}
     _stdin(monkeypatch, payload)
-    save_mod.main()
+    _save_and_drain()
     _stdin(monkeypatch, {**payload, "summary": "turn 2"})
-    save_mod.main()
+    _save_and_drain()
 
     assert len(_calls(fake_engram, "save_agent_context")) == 1  # second debounced
 
@@ -468,11 +488,11 @@ def test_save_debounces_repeat_stop_events(monkeypatch, fake_engram):
 def test_save_session_end_bypasses_debounce(monkeypatch, fake_engram):
     payload = {"summary": "turn", "conversation_id": "conv-e"}
     _stdin(monkeypatch, payload)
-    save_mod.main()
+    _save_and_drain()
 
     monkeypatch.setattr(sys, "argv", ["cursor-hook-test", "--event", "sessionEnd"])
     _stdin(monkeypatch, {**payload, "summary": "final"})
-    save_mod.main()
+    _save_and_drain()
 
     saves = _calls(fake_engram, "save_agent_context")
     assert len(saves) == 2
@@ -484,14 +504,14 @@ def test_save_debounce_zero_disables(monkeypatch, fake_engram):
     payload = {"summary": "turn", "conversation_id": "conv-z"}
     for _ in range(2):
         _stdin(monkeypatch, payload)
-        save_mod.main()
+        _save_and_drain()
 
     assert len(_calls(fake_engram, "save_agent_context")) == 2
 
 
 def test_save_never_touches_knowledge_paths(monkeypatch, fake_engram):
     _stdin(monkeypatch, {"summary": "anything", "conversation_id": "c1"})
-    save_mod.main()
+    _save_and_drain()
 
     methods = {method for method, _ in fake_engram.calls}
     assert "wrap_up_session" not in methods
@@ -511,7 +531,7 @@ def test_save_transcript_fallback(monkeypatch, tmp_path: Path, fake_engram):
         "workspace_roots": [str(tmp_path)],  # v4.20 containment root
     })
 
-    save_mod.main()
+    _save_and_drain()
 
     saves = _calls(fake_engram, "save_agent_context")
     assert len(saves) == 1
@@ -522,7 +542,7 @@ def test_save_content_keeps_tail_and_is_capped(monkeypatch, fake_engram):
     big = ("早" * 5000) + "结尾标记"
     _stdin(monkeypatch, {"summary": big, "conversation_id": "cap"})
 
-    save_mod.main()
+    _save_and_drain()
 
     content = _calls(fake_engram, "save_agent_context")[0]["content"]
     assert content.endswith("结尾标记")
@@ -532,7 +552,7 @@ def test_save_content_keeps_tail_and_is_capped(monkeypatch, fake_engram):
 def test_save_missing_session_id_gets_hook_fallback(monkeypatch, fake_engram):
     _stdin(monkeypatch, {"summary": "no id here"})
 
-    save_mod.main()
+    _save_and_drain()
 
     save = _calls(fake_engram, "save_agent_context")[0]
     assert save["session_id"].startswith("hook-")
@@ -542,5 +562,5 @@ def test_save_reentry_guard(monkeypatch, fake_engram):
     monkeypatch.setenv("ENGRAM_CURSOR_SAVE_ACTIVE", "1")
     _stdin(monkeypatch, {"summary": "x"})
 
-    assert save_mod.main() == 0
+    assert _save_and_drain() == 0
     assert fake_engram.calls == []
