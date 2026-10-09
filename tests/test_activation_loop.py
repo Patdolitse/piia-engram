@@ -193,8 +193,10 @@ def test_quick_context_refresh_writes_snapshot(tmp_path, monkeypatch):
 def test_stop_hook_source_refreshes_quick_context():
     """The Layer-1 cold-start snapshot must not go stale the moment a session
     ends: the Stop hook refreshes it after saving."""
-    src = (HOOK_DIR / "auto_save_on_stop.py").read_text(encoding="utf-8")
-    assert "refresh_quick_context" in src
+    producer = (HOOK_DIR / "auto_save_on_stop.py").read_text(encoding="utf-8")
+    processor = (HOOK_DIR / "_processor.py").read_text(encoding="utf-8")
+    assert "refresh_quick_context" not in producer
+    assert "refresh_quick_context" in processor
 
 
 def test_setup_closes_with_activation_promise():

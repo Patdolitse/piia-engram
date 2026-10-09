@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ._log import log_failure
+from ..atomic_replace import replace_with_retry
 
 MAX_PENDING_EVENTS = 1000
 MAX_PENDING_BYTES = 16 * 1024 * 1024
@@ -37,7 +38,7 @@ def _publish(path: Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     except Exception:
         # Preserve partial evidence, including disk-full writes, for inspection.
         raise
@@ -79,7 +80,7 @@ def _quarantine(path: Path, reason: str) -> None:
     if destination.exists():
         destination = directory / (uuid.uuid4().hex + "-" + path.name)
     _publish(destination.with_suffix(".reason.json"), _json_bytes({"reason": reason}))
-    os.replace(path, destination)
+    replace_with_retry(path, destination)
 
 
 def _trim(directory: Path) -> int:
