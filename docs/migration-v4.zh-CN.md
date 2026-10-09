@@ -94,7 +94,7 @@ migration）移出 MCP，改为 owner 专用的本地 CLI。
 | `remove_relation(src_id, dst_id, rel)` | `manage_relation(action="unlink", src_id=..., dst_id=..., rel=...)` |
 
 `rel` 为空时表示无类型的双向"另见"（see also）链接；`rel` 取值
-（`led_to` / `supersedes` / `implemented_by`）时表示有类型、有方向的演化边。
+（`led_to` / `implemented_by`）时表示有类型、有方向的演化边。
 
 ### 知识探索（3 → 1）
 
@@ -201,3 +201,5 @@ engram playbook scope resolve <playbook_id> --action accept_global|accept_projec
 **当前完整工具清单在哪？** 见
 [`tool-surface-analysis.md`](tool-surface-analysis.md)，包含完整的 53 工具
 面、治理类别和分层划分。
+
+`supersedes` is internal reviewed version lineage; manual MCP link/unlink is refused. / `supersedes` 是审核后的内部版本谱系，MCP 不允许手工建立或移除。

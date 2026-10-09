@@ -475,7 +475,7 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: Senior Backend Developer)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 18 tools registered
+    [ok] MCP server: 19 tools registered
 
   -- Terminal encoding --
 
@@ -595,7 +595,7 @@ You can also expose composable capability modes such as knowledge management, go
 
 **Importing from other AI tools:** Engram never reads other AI tools' memory or rule files on its own: not at server start, not on cold start, not at session end. Run `engram import-memories` to bring them in; it lists what it found first (`--dry-run` stops there), then adds them to the review queue after you confirm, and writes a receipt to `import_receipts/` in the store. `ENGRAM_MCP_STARTUP_SYNC` is still accepted but no longer does anything; `ENGRAM_RECONCILE=0` turns reading other AI tools' files off entirely. `ENGRAM_EPHEMERAL=1` skips the startup config check in container/ephemeral clients.
 
-### Tier-1 Core (18 tools — daily workflow)
+### Tier-1 Core (19 tools — daily workflow)
 
 | Tool | Purpose |
 |---|---|
@@ -848,11 +848,11 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 Your memories never leave your machine. Engram sends one anonymous usage ping a day (random install ID, version, OS, Python version, AI client name, date) so we know how many installs are active; it never contains memories, file paths, account details or command arguments, and the server does not store IP addresses. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (it is off in CI and in containers); `engram telemetry preview` shows the exact payload. Detailed statistics and feedback reports are separate opt-ins. See **[PRIVACY.md](PRIVACY.md)**.
 
 **How many MCP tools does piia-engram provide?**
-Two tiers, designed so most users only see 18 tools:
+Two tiers, designed so most users only see 19 tools:
 
 | Tier | Tools | What they do | Loaded by |
 |------|-------|-------------|-----------|
-| **Core** | 18 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
+| **Core** | 19 | Identity, knowledge read/write, project context, session recovery, diagnostics | Default |
 | **Advanced** | 40 | Knowledge review, merge, decision threads, permission management, tools registry, import/export, audit | `ENGRAM_TOOLS=all` |
 
 Most users never need to enable Advanced tools — Core covers everyday use.
@@ -969,3 +969,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 [AGPL-3.0](LICENSE). piia-engram is free software. Your AI work identity and memory belong to you.
+
+<!-- MCP tool counts: total=59; Core=19; Advanced=40 -->

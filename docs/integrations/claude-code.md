@@ -52,7 +52,7 @@ setup also writes the Engram block in Claude Code's `CLAUDE.md` and its hooks in
 `settings.json`. Both live in Claude Code's config directory: `~/.claude`, or
 `$CLAUDE_CONFIG_DIR` when that variable is set.
 
-Leave `ENGRAM_TOOLS` unset for the default 18 core tools. Add
+Leave `ENGRAM_TOOLS` unset for the default 19 core tools. Add
 `ENGRAM_TOOLS=all` only when you intentionally need review, import/export,
 tool-registry, or governance maintenance surfaces.
 

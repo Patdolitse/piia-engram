@@ -44,8 +44,8 @@ Device B:  engram import <file>              -> metadata-only merge preview
            engram import <file> --apply --yes -> owner-confirmed local merge
 ```
 
-`export_engram` / `import_engram` exist and are owner-gated
-(`maybe_refuse_owner_write` for import, export-owner gating for export). The
+`export_engram` is owner-gated. MCP `import_engram` only previews; applying a
+full-backup import is an explicit local Owner command. The
 current implementation adds local **dry-run merge planning**, restores the v2
 identity sections (`preferences`, `trust_boundaries`) from full backups, and
 surfaces same-key divergent lessons/decisions as reviewable version-chain
@@ -71,11 +71,12 @@ conflict metadata before the owner applies. Merge mode preserves existing
 non-empty local identity/project fields and only fills missing values or merges
 list/dict additions. Same-summary lessons and same-question decisions with
 different semantic fields are flagged as `review_version_chain_candidate` with
-ids and changed field names only; content values are withheld. The later
-version-chain increment should reuse Phase 6's `version_chain` + typed
-`supersedes` edges and Phase 8's `reconcile_proposal` so divergent candidates
-can be materialized as reviewable versions and resolved by the owner rather
-than silently clobbering a local edit (S5).
+ids and changed field names only; content values are withheld. Explicit local
+`engram import <backup.json> --apply --yes --materialize-version-chain`
+materializes divergent candidates as versions. Reviewed versions retire the
+predecessor; pending versions carry `pending_supersedes` until local approval.
+Retries recognize an already-materialized version rather than creating another
+copy. This preserves local edits until the Owner chooses a successor (S5).
 
 ## 4. Privacy boundaries
 
@@ -98,8 +99,8 @@ than silently clobbering a local edit (S5).
 2. Import-as-proposal: `import_engram(..., dry_run=True)` or
    `engram import <backup.json>` reports metadata-only add/skip/conflict counts
    before any Engram data write. (Implemented, local only.)
-3. Conflict materialization via `supersedes` edges on explicit apply. (Future
-   work; current apply remains conservative and non-destructive for conflicts.)
+3. Conflict materialization via `supersedes` edges on explicit local apply with
+   `--materialize-version-chain`. (Implemented; pending candidates wait for review.)
 4. Optional owner-configured remote transport (owner's bucket/git), opt-in,
    audited — only after 1–3 are validated.
 

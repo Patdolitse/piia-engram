@@ -51,7 +51,7 @@ engram setup
 MCP 连接前请你一键确认**。每次外部写入都先备份，选"否"则所有配置原封不动。
 非交互/CI 场景用 `engram setup --apply-external-config` 跳过确认。
 
-默认你会得到 **18 个核心 MCP 工具**（`ENGRAM_TOOLS=core`）——足够覆盖安装、
+默认你会得到 **19 个核心 MCP 工具**（`ENGRAM_TOOLS=core`）——足够覆盖安装、
 首个价值、日常召回、会话收尾。进阶工具集（审查队列、导入导出、治理、迁移、
 Playbook 管理）默认关闭，需要时用 `ENGRAM_TOOLS=all` 开启。
 
