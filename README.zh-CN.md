@@ -127,7 +127,7 @@ Agent 指引见 [llms.txt](llms.txt)，详情见 [CLI 与 JSON 契约](docs/spec
 
 | | 当前仓库 / 开发事实 |
 |---|---|
-| 版本口径 | **v4.23.0**（2026-10-09 已核验；最新公开包以 PyPI badge / GitHub Releases 为准）|
+| 版本口径 | **v4.23.0**（2026-10-10 已核验；最新公开包以 PyPI badge / GitHub Releases 为准）|
 | 支持 AI 工具 | **16** 个（不同客户端证据等级不同；见支持工具表和客户端验证 runbook）|
 | MCP 工具 | **19 个核心**（默认加载）+ **40 个高级**（`ENGRAM_TOOLS=all` 开启）|
 | 知识类型 | **3** 种（经验教训、关键决策、操作手册 Playbook）|

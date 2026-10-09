@@ -6,73 +6,48 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Added
-
-- Local `engram hooks drain [--dry-run] [--json]` and read-only doctor queue
-  diagnostics. MCP startup and tool calls never drain queued hooks.
-
-- Agent-friendly `engram setup --non-interactive`: read-only plan by default,
-  explicit `--apply`, client filtering, output language, versioned JSON, and
-  partial/usage exit codes. Reuses configuration backups and Claude Code CLI
-  registration without identity changes, memory imports, or proposal approvals.
-- Public `llms.txt` and bilingual agent-install instructions with a documented
-  setup JSON contract.
-
-### Changed
-
-- Deferred hooks retain unreadable transcripts, continue after event-specific
-  failures, quarantine missing references after three failures or seven days,
-  and validate required prepared fields before processing. Write-hook stdin is
-  bounded by 128 KiB and one second. Checkpoint digests preserve the project
-  revision captured at first deferred preparation across retries.
-- Write hooks publish atomic local events and exit without waiting for store locks;
-  offline processing retries failures, deduplicates event IDs, quarantines malformed
-  or overflow events, and preserves staging-only knowledge review.
-- SessionStart uses read-only store access with a one-second application budget
-  and a fail-soft continue response. Weekly hints are omitted from this path.
-
-## [4.23.0] - 2026-10-09
+## [4.23.0] - 2026-10-10
 
 ### Breaking changes
 
-- Project snapshot writes reject nested legacy layouts, mixed fields and unknown schemas; preview with `engram migrate-project`, then confirm a backed-up local migration.
-- Backup imports validate incoming and existing project snapshots before any changes, including overwrite imports. Snapshot migration accepts only documented v1 version markers (`1`, `"1"`, `"1.0"`); unknown markers require a supported backup.
-
-- Identity changes proposed by AI tools through MCP `update_identity`, including trust-boundary changes, wait for local review in every mode while approved values stay in use; migrate by comparing values with `engram review show <id>` and deciding with `engram review interactive`.
-- OpenClaw `USER.md` and `SOUL.md` imports create pending identity proposals, including with `--apply --yes`; migrate by reviewing and approving the imported proposals with `engram review` before expecting identity changes to take effect.
-- Native backup exports refuse destinations inside the store or over managed files, including link aliases; migrate by choosing a destination outside the store or using the default sibling `<store-name>_exports` directory.
+- Identity changes proposed by AI tools through MCP `update_identity`, including trust boundaries, wait for local review in every mode while approved values stay in use; migrate with `engram review show <id>` and `engram review interactive`.
+- OpenClaw `USER.md` and `SOUL.md` imports create pending identity proposals even with `--apply --yes`; review and approve them locally before expecting identity changes to take effect.
+- Project snapshot writes reject nested legacy layouts, mixed fields and unsupported schemas; preview with `engram migrate-project`, then confirm a local migration that preserves a backup.
+- Backup imports validate incoming and existing project snapshots before any changes, including overwrite imports; migrate supported v1 markers (`1`, `"1"`, `"1.0"`) locally and use a supported backup for unknown markers.
+- Native backup exports refuse destinations inside the store or over managed files, including link aliases; choose an external destination or the default sibling `<store-name>_exports` directory.
 
 ### Added
 
-- Identity proposals appear in local review, interactive review and exported marks, with the current and proposed values available through `engram review show <id>`.
+- `engram setup --non-interactive` gives agents a read-only installation plan by default, with explicit `--apply`, client selection, output language, versioned JSON and distinct partial-completion and usage-error exit codes.
+- `llms.txt`, bilingual agent installation guides and the setup JSON contract document automated installation.
+- Identity proposals appear in local and interactive review and exported marks, with current and proposed values available through `engram review show <id>`.
+- `engram hooks drain [--dry-run] [--json]` processes deferred hook events locally, and doctor reports the queue without writing to it.
 
 ### Changed
 
+- Writing hooks atomically publish durable local events and exit without waiting for storage locks; local draining retries failures, deduplicates event IDs, quarantines malformed or excess events and keeps extracted knowledge in staging.
+- Deferred hooks retain unreadable transcripts, continue after individual failures, quarantine missing references after three failed attempts or seven days, validate prepared fields and preserve the project revision captured on first preparation.
+- Writing hooks limit stdin to 128 KiB and one second, while SessionStart uses a read-only store and a one-second application budget with a continue response on failure and no weekly hints.
+- MCP startup and tool calls leave the hook queue for local draining, and non-interactive setup preserves installation backups without changing identity, importing memories or approving proposals.
 - `engram stats` makes no growth-metric requests with `DO_NOT_TRACK=1` or `ENGRAM_TELEMETRY=0`; `--online` permits requests for that invocation without enabling telemetry.
-- Claude Code handshake, write provenance and doctor activity use consistent self-reported client labels, including older `claude-cli` and `claude_cli` checkpoint directories, without treating the labels as proof of identity or authorization.
+- Claude Code handshake, provenance and doctor activity use consistent self-reported labels with legacy checkpoint compatibility, without treating labels as identity or authorization proof.
 
 ### Fixed
 
-- Identity approval can recover after interruption by retrying approval or running `engram doctor --fix`, and a rejection cannot override an approval already in progress.
-- Batch identity previews follow application order, preserve legacy preference fallbacks for no-op approvals and reject unsupported marks consistently with application; if a relevant local value changes, request a fresh proposal after `identity_conflict`.
-- Native backups preserve hash-only identity rejection records, and rejection fingerprints allow a fresh proposal after the original value changes while retaining vetoes against identical changes.
-- Codex setup combines bare and quoted Engram entries in table or inline-table form, preserves existing environment values and legacy-only keys, and backs up and validates TOML before writing; without a complete parser or when an unrelated value would change, it leaves the configuration unchanged and provides a manual step.
-- Setup prints the Claude Code terminal restart hint once.
-
-- Retrying an older hook event preserves the newer session digest and next action.
-- MCP replacements of pending or otherwise untrusted decisions remain proposals; retirement rechecks review protection under the write lock.
-- Reviewed supersession ancestry survives retired intermediates, keeping older decisions out of current recall; doctor detects historical three-generation inconsistencies.
-- Ordinary doctor and capacity diagnostics report corrupted files without quarantine copies or other store writes.
-- Transport guidance normalizes exceptions and structured errors while preserving successful content and non-JSON replies verbatim.
-- User guides distinguish reviewed long-term knowledge from recent session checkpoints and activity records included for continuity without owner review; current migration inventories list 59 tools while retaining the historical v4.0 count.
-- Reviewed decision replacements synchronize predecessor state; historical inconsistencies stay out of current recall and doctor reports a local repair without writes.
-- Registry verification uses the v0.1 API and checks package versions and the latest marker; timeouts, unexpected shapes and mismatches fail clearly.
-- Doctor and setup import in either order while retaining compatibility exports.
-- Observable transport loss returns `transport_unavailable` with retry guidance, without automatic reconnects.
-- Capacity previews count future timestamps only from persisted data, avoiding false warnings when normalization crosses a second boundary.
-- Current documentation agrees on 59 MCP tools (Core 19 / Advanced 40) and clarifies decision threads, import candidates and client evidence.
+- Interrupted identity approval can recover through a matching approval retry or `engram doctor --fix`, and rejection cannot override approval already in progress.
+- Batch identity previews follow application order, preserve legacy preference fallbacks and reject unsupported marks consistently; request a fresh proposal after `identity_conflict` caused by a relevant local change.
+- Native backups preserve hash-only identity rejection records and allow a fresh proposal after the original value changes while retaining vetoes against identical changes.
+- Codex setup combines bare and quoted table or inline-table Engram entries, preserves environment values and legacy-only keys, and validates backed-up TOML before writing or providing manual steps.
+- Setup shows the Claude Code terminal restart hint once and safely emits help as UTF-8 on Windows consoles.
+- Retrying older hook events preserves newer session digests and next actions, with processing receipts persisted before event removal.
+- Decision replacements hold the shared knowledge lock through version, pin and review checks, successor persistence, relation publication and retirement; stale versions write no semantic changes and pinned or untrusted targets keep proposal behavior.
+- Reviewed supersession ancestry survives retired intermediates and portable backup roundtrips, excludes immutable revision snapshots from exports and keeps older decisions out of current recall.
+- Reviewed decision replacements synchronize predecessor state, while doctor identifies historical inconsistencies and offers local repair commands without changing the store.
+- Ordinary doctor and capacity diagnostics report damaged files without quarantine copies or store writes, and doctor and setup import in either order while retaining compatibility exports.
+- Registry verification uses the v0.1 API and validates package versions and the latest marker, with clear failures for timeouts, unexpected shapes and mismatches.
+- Observable transport loss returns `transport_unavailable` with retry guidance and preserves shutdown write boundaries, without automatic reconnects or changes to successful replies.
+- Capacity previews count future timestamps from persisted data, avoiding false warnings when normalization crosses a second boundary.
+- Current documentation agrees on 59 MCP tools (Core 19 / Advanced 40) and distinguishes reviewed long-term knowledge from session checkpoints and activity records used for continuity without owner review.
 
 ### Release Evidence
 
@@ -94,7 +69,7 @@ See the [release evidence declarations](release-evidence/README.md) for the chec
   - **Migration:** approve the replacements you want with `engram review`.
 - Engram chooses a fresh id for each new MCP playbook, ignoring the caller's `id`, and refuses local inserts with an id already in use (`id_exists`).
   - **Migration:** take the id from the reply instead of choosing one.
-- Cold start, resume briefs, hooks and recall provide reviewed, current memory only; `search_knowledge` separates untrusted proposals into `pending` and returns replaced items in `superseded` only with `include_superseded=true`, as described in the [user guide](docs/user-guide.md#4-governance-and-approval-ai-suggests-you-review-what-matters).
+- Long-term knowledge in cold start, resume briefs, hooks and recall contains reviewed, current entries only; `search_knowledge` separates untrusted proposals into `pending` and returns replaced items in `superseded` only with `include_superseded=true`, as described in the [user guide](docs/user-guide.md#4-governance-and-approval-ai-suggests-you-review-what-matters).
   - **Migration:** clients that read `search_knowledge` should read the `pending` group separately and not treat it as reviewed; a `{"tier": "staging"}` filter now fills the `pending` group.
 - Starting the MCP server, cold start and `wrap_up_session` do not automatically import other AI tools' memory or rule files, even with `ENGRAM_MCP_STARTUP_SYNC` or `run_reconcile=True`.
   - **Migration:** run `engram import-memories` when you want to bring them in; they go to the review queue with a receipt.
