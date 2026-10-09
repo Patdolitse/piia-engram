@@ -129,7 +129,23 @@ class KnowledgeOpsMixin:
                 continue
             seen.add(node)
             stack.extend(adjacency.get(node, []))
-        return store.add_relation(head_id, "supersedes", snapshot_id)
+        added = store.add_relation(head_id, "supersedes", snapshot_id)
+        self._retire_superseded_decision(snapshot_id, head_id)
+        return added
+
+    def _retire_superseded_decision(self, old_id: str, new_id: str) -> None:
+        """Synchronize an active decision after its reviewed successor's edge lands."""
+        if new_id not in self._reviewed_ids():
+            return
+        def retire(rows):
+            successor = next((r for r in rows if r.get("id") == new_id), None)
+            if successor is None:
+                return rows
+            for row in rows:
+                if row.get("id") == old_id and row.get("status") in {"active", "current"} and not row.get("snapshot_of"):
+                    row.update(status="superseded", superseded_by=new_id, superseded_at=_now_iso())
+            return rows
+        self._update_entries(self._knowledge_dir / "decisions.json", "decision", retire)
 
     _HISTORY_BODY_FIELDS: dict[str, tuple[str, ...]] = {
         "lesson": ("summary", "detail", "domain"),

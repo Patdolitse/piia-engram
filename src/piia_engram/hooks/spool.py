@@ -268,6 +268,10 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                     report["quarantined_now"] += 1
                 except Exception as exc:
                     report["failed"] += 1
+                    from ..transport_errors import transport_failure
+                    failure = transport_failure(exc)
+                    if failure:
+                        report.update(failure)
                     log_failure("hook_spool", "drain deferred (" + type(exc).__name__ + ")", root=root)
                     if _shared_storage_failure(exc):
                         break

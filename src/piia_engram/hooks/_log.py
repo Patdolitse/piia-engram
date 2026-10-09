@@ -40,7 +40,9 @@ def log_failure(hook: str, message: str, exc: BaseException | None = None, *, ro
             pass
         detail = message
         if exc is not None:
-            last = traceback.format_exception_only(type(exc), exc)[-1].strip()
+            from ..transport_errors import transport_failure
+            failure = transport_failure(exc)
+            last = (failure["error"] + ": " + failure["hint"]) if failure else traceback.format_exception_only(type(exc), exc)[-1].strip()
             detail = f"{message}: {last}"
         stamp = datetime.now().isoformat(timespec="seconds")
         with open(path, "a", encoding="utf-8") as handle:

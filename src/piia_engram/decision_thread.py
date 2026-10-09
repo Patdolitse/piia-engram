@@ -1,4 +1,4 @@
-"""c0 — Decision Threads (scaffold).
+"""Decision thread graph reconstruction.
 
 The differentiation layer (design doc §1.c): reconstruct *how a decision
 evolved* — idea → ... → decision → implementation → outcome — across
@@ -13,10 +13,9 @@ Relations are **typed and directed** (unlike core's untyped, symmetric
 - ``implemented_by``: D implemented_by I — decision D was realized by I (forward)
 - ``supersedes``    : N supersedes O — N replaces O; O becomes obsolete
 
-Scope of THIS scaffold: pure graph logic over a supplied set of edges +
-entries — fully testable in isolation. Where typed edges are stored in
-``~/.engram`` and the MCP/CLI surface (`get_decision_thread`) are the next
-increment; the live store is untouched here.
+Pure graph logic over supplied edges and entries. RelationStore persists
+edges; Engram.get_decision_thread composes this graph with local records.
+The MCP surface exposes it through get_decisions(thread_seed_id=...).
 """
 
 from __future__ import annotations

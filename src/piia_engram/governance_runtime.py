@@ -553,9 +553,9 @@ def govern_write_ack(
     their confirmation — e.g. ``merge_knowledge`` → ``{primary_title,
     secondary_title}``; ``link_knowledge`` → ``"Linked: <title> ↔ <title>"``;
     ``update_playbook`` → ``"Playbook 已更新: <title>"``. A low-trust agent that
-    guesses an ID could read the title back through the "write" tool. a0 does
-    not yet gate the *write permission* (that is the later write-policy phase),
-    but the *response* must never disclose stored text above the ceiling.
+    guesses an ID could read the title back through the "write" tool. Write
+    permission is checked before the mutation; the acknowledgement also must
+    never disclose stored text above the caller's sensitivity ceiling.
 
     ``private-self`` owners get the full ack. Lower tiers get a title/body-free
     confirmation. Error payloads carry only caller-supplied IDs/shapes and pass

@@ -5122,8 +5122,8 @@ def _parse_conflict_resolve_args(args: list[str]) -> tuple[dict, str | None]:
 
 
 def _find_decision_by_id(eng, item_id: str) -> dict | None:
-    for decision in eng.get_decisions(limit=None, _update_access=False):
-        if str(decision.get("id")) == str(item_id):
+    for decision in eng._read_entries(eng._knowledge_dir / "decisions.json", "decision", migrate=False):
+        if str(decision.get("id")) == str(item_id) and decision.get("status") in {"active", "current"}:
             return decision
     return None
 

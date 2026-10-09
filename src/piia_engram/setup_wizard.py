@@ -33,11 +33,7 @@ if __name__ == "__main__":
 LEGACY_SERVER_NAMES = ["piia-pkc", "piia_pkc", "piia-pkc-mcp"]
 
 
-def _module_src_dir(mcp_server_path: str) -> str:
-    """Return the source root containing the piia_engram package."""
-    if "\\" in mcp_server_path or re.match(r"^[A-Za-z]:[\\/]", mcp_server_path):
-        return str(PureWindowsPath(mcp_server_path).parent.parent)
-    return str(Path(mcp_server_path).parent.parent)
+from .setup_support import _module_src_dir  # backward-compatible re-export
 
 # ---------------------------------------------------------------------------
 # i18n — 双语支持（中文/English）
@@ -53,16 +49,7 @@ from piia_engram.tool_surface import (
 _lang = "zh"  # 默认中文，setup 开始时由用户选择
 
 
-def _safe_print(text: str) -> None:
-    """Print with fallback for consoles that can't handle certain Unicode chars (e.g. Windows GBK)."""
-    try:
-        print(text)
-    except UnicodeEncodeError:
-        # Strip chars the console encoding can't handle
-        import sys
-        enc = sys.stdout.encoding or "ascii"
-        safe = text.encode(enc, errors="ignore").decode(enc)
-        print(safe)
+from .setup_support import _safe_print  # backward-compatible re-export
 
 
 def _is_utf8_encoding(encoding: str | None) -> bool:
@@ -3992,6 +3979,25 @@ def main() -> None:
         sys.exit(run_audit(_governance_root()))
     elif args[0] == "verify-ledger":
         sys.exit(run_verify_ledger(_governance_root()))
+    elif args[0] == "migrate-project":
+        import argparse
+        from piia_engram.core import Engram
+        parser = argparse.ArgumentParser(prog="engram migrate-project")
+        parser.add_argument("project")
+        parser.add_argument("--apply", action="store_true")
+        parser.add_argument("--yes", action="store_true")
+        parser.add_argument("--prefer", choices=["nested", "top-level"], default="")
+        options = parser.parse_args(args[1:])
+        if options.apply and not options.yes:
+            parser.error("--apply requires --yes after reviewing the preview")
+        eng = Engram(read_only=not options.apply)
+        from piia_engram.project_snapshots import migrate
+        from piia_engram.storage import _project_id_aliases
+        paths = [eng._projects_dir / f"{pid}.json" for pid in _project_id_aliases(options.project)]
+        path = next((p for p in paths if p.is_file()), paths[0])
+        result = migrate(eng.root, path, apply=options.apply, prefer=options.prefer)
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if result.get("error") else 0)
     elif args[0] == "watcher":
         from piia_engram.watcher.install import run_watcher_cli
 
@@ -4012,6 +4018,7 @@ def main() -> None:
             "  engram doctor --fix     Auto-repair any issues found\n"
             "  engram doctor --days N  Look back N days (1-3650, default 14) for client calls\n"
             "  engram doctor --json    Connections + hook backlog, as JSON (read-only)\n"
+            "  engram migrate-project <project> [--apply --yes] [--prefer nested|top-level]\n"
             "  engram hooks drain [--dry-run] [--json]  Process local hook queue into staging\n"
             "  engram capabilities     Content-free runtime capability fingerprint (--json/--require)\n"
             "  engram status           Show a redacted install + memory health summary\n"
@@ -4089,6 +4096,19 @@ def main() -> None:
         )
         sys.exit(0)
 
+
+_command_main = main
+
+def main() -> None:
+    try:
+        _command_main()
+    except Exception as exc:
+        from piia_engram.transport_errors import transport_failure
+        failure = transport_failure(exc)
+        if failure:
+            print(json.dumps(failure), file=sys.stderr)
+            raise SystemExit(1)
+        raise
 
 if __name__ == "__main__":
     main()

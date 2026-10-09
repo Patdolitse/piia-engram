@@ -1,4 +1,4 @@
-"""a0 — Agent Access Governance (scaffold).
+"""Agent access governance policy.
 
 The enforcement arm of Engram's "neutral custodian" stance: every time an AI
 tool (agent) asks Engram for context, this layer decides *what it may see*,
@@ -20,7 +20,7 @@ DESIGN NOTES / honest boundaries (see design doc §1.a):
   Engram. Keeping policy here and wiring there lets this module stay pure and
   fully testable without standing up the MCP server.
 
-Scope of THIS scaffold: trust-level classification, the sensitivity gate,
+This module implements: trust-level classification, the sensitivity gate,
 the disclosure receipt, and an append-only hash-chained ledger — all pure /
 file-backed and fully testable without touching the Engram instance.
 """

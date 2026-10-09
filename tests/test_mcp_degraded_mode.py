@@ -98,6 +98,7 @@ def test_clean_shutdown_tolerates_none_engram():
 
     original_engram = S._engram
     original_session = S._session
+    original_shutdown = S._shutting_down
     try:
         S._engram = None
         # Should not raise
@@ -105,6 +106,7 @@ def test_clean_shutdown_tolerates_none_engram():
     finally:
         S._engram = original_engram
         S._session = original_session
+        S._shutting_down = original_shutdown
 
 
 def test_server_start_tolerates_none_engram(monkeypatch):
