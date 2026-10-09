@@ -924,8 +924,6 @@ def _engram_clean_shutdown() -> None:
     this function runs to completion, the next Engram() init will read
     last_clean_exit=True and not warn.
     """
-    global _shutting_down
-    _shutting_down = True
     try:
         _session.auto_save()
     except Exception:
@@ -1707,6 +1705,8 @@ def main() -> None:
     (zero pre-install) or a plain ``piia-engram-mcp`` in the client config.
     Equivalent to ``python -m piia_engram.mcp_server``; both paths call here.
     """
+    global _shutting_down
+    _shutting_down = False
     _configure_utf8_stdio()
     args = _parse_args()
 
@@ -1782,9 +1782,15 @@ def main() -> None:
             )
 
         import uvicorn
-        uvicorn.run(starlette_app, host=args.host, port=args.port)
+        try:
+            uvicorn.run(starlette_app, host=args.host, port=args.port)
+        finally:
+            _shutting_down = True
     else:
-        mcp.run(transport="stdio")
+        try:
+            mcp.run(transport="stdio")
+        finally:
+            _shutting_down = True
 
 
 if __name__ == "__main__":

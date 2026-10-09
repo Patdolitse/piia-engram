@@ -378,3 +378,68 @@ def test_anyio_and_grouped_transport_failures():
     assert transport_failure(anyio.ClosedResourceError())["error"] == "transport_unavailable"
     if sys.version_info >= (3, 11):
         assert transport_failure(ExceptionGroup("group", [BrokenPipeError()]))["error"] == "transport_unavailable"
+
+
+def test_cleanup_helper_does_not_close_an_active_mcp_server(tmp_path, monkeypatch):
+    import asyncio
+    from piia_engram import mcp_server as server
+    eng = Engram(root=tmp_path / "store")
+    monkeypatch.setattr(server, "_engram", eng)
+    monkeypatch.setattr(server, "_shutting_down", False)
+    monkeypatch.setattr(server._session, "auto_save", lambda: None)
+    server._engram_clean_shutdown()
+    result = asyncio.run(server.save_project_snapshot("example", '{"title":"still active"}'))
+    assert "transport_unavailable" not in result
+    assert eng.get_project_snapshot("example")["title"] == "still active"
+
+
+def test_doctor_compatibility_facade_preserves_monkeypatch_assignment(monkeypatch):
+    from piia_engram import doctor, setup_wizard
+    original = setup_wizard._safe_print
+    fake = lambda text: None
+    monkeypatch.setattr(doctor.W, "_safe_print", fake)
+    assert setup_wizard._safe_print is fake
+    monkeypatch.undo()
+    assert setup_wizard._safe_print is original
+    fake2 = lambda text: None
+    monkeypatch.setattr(setup_wizard, "_safe_print", fake2)
+    assert doctor.W._safe_print is fake2
+
+
+def test_readme_core_tables_list_the_actual_core_registry():
+    import re
+    from piia_engram.tool_surface import TIER1_TOOLS
+    for name in ("README.md", "README.zh-CN.md"):
+        text = (Path(__file__).parents[1] / name).read_text(encoding="utf-8")
+        part = text[text.index("### Tier-1"):text.index("### Tier-2")]
+        assert set(re.findall(r"^\| `(\w+)`", part, re.M)) == set(TIER1_TOOLS)
+
+
+def test_readme_evidence_levels_agree_with_runbook():
+    root = Path(__file__).parents[1]
+    for name in ("README.md", "README.zh-CN.md"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "L5" in text and "L0 = untested" not in text
+        assert "L2 end-to-end verified (hermes" not in text
+        assert "L2 端到端验证（hermes" not in text
+
+
+@pytest.mark.parametrize("filename", ["decisions.json", "relations.json"])
+def test_decision_consistency_check_never_quarantines_corrupt_input(tmp_path, filename):
+    from piia_engram.doctor import decision_consistency_check
+    eng, _ = _decision_pair(tmp_path)
+    (eng._knowledge_dir / filename).write_bytes(b"{broken")
+    before = {str(p): p.read_bytes() for p in eng.root.rglob("*") if p.is_file()}
+    result = decision_consistency_check(Engram(root=eng.root, read_only=True))
+    assert result["status"] == "WARN" and result["read_only"] is True
+    assert {str(p): p.read_bytes() for p in eng.root.rglob("*") if p.is_file()} == before
+
+
+def test_nested_unknown_schema_migration_refuses_to_relabel(tmp_path):
+    from piia_engram.storage import _project_id
+    eng = Engram(root=tmp_path / "store")
+    path = eng._projects_dir / (_project_id("example") + ".json")
+    path.write_text('{"snapshot":{"schema":"project_snapshot.v99","title":"unknown"}}', encoding="utf-8")
+    before = path.read_bytes()
+    assert eng.migrate_project_snapshot("example", apply=True)["error"] == "migration_required"
+    assert path.read_bytes() == before

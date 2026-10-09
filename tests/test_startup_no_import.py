@@ -114,6 +114,9 @@ def _start_server(monkeypatch) -> None:
     monkeypatch.setattr(mcp_server, "_configure_utf8_stdio", lambda: None)
     monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: None)
     mcp_server.main()
+    # The stub transport returns immediately; keep this synthetic session open
+    # for the tool calls below, and restore the original flag during teardown.
+    monkeypatch.setattr(mcp_server, "_shutting_down", False)
     # Wait for anything the start scheduled in the background.
     for thread in threading.enumerate():
         if thread is not threading.current_thread() and thread.name.startswith("engram-startup"):
@@ -126,6 +129,7 @@ def _run(coro):
 
 @pytest.fixture
 def store(tmp_path, monkeypatch, other_ai_tools_home) -> Path:
+    monkeypatch.setattr(mcp_server, "_shutting_down", False)
     root = tmp_path / "store"
     monkeypatch.setenv("ENGRAM_DIR", str(root))
     monkeypatch.setenv("ENGRAM_AUDIT", "1")  # the real default; reads are audited

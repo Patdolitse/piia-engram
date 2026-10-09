@@ -88,6 +88,8 @@ def migrate(root, path, *, apply=False, prefer=""):
             raise SnapshotMigrationRequired("unsupported snapshot schema; restore a valid backup")
         top = {k:v for k,v in data.items() if k not in (*NESTED_KEYS, "schema", "schema_version", "migration")}
         nested = deepcopy(data[nested_keys[0]]) if nested_keys else {}
+        if nested.get("schema") not in (None, SCHEMA, "project_snapshot.v1"):
+            raise SnapshotMigrationRequired("unsupported nested snapshot schema; restore a valid backup")
         conflicts = sorted(k for k in nested if k in top and nested[k] != top[k])
         if conflicts and not prefer:
             raise SnapshotMigrationRequired("conflicting fields: " + ", ".join(conflicts))

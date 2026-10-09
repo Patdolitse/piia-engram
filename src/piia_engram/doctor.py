@@ -1650,8 +1650,27 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
 
 def decision_consistency_check(eng) -> dict:
     """Read-only diagnostic for historical active predecessors; never repairs."""
-    rows = eng._read_entries(eng._knowledge_dir / "decisions.json", "decision", migrate=False)
-    index = eng._recall_supersede_index()
+    from . import recall_policy, version_chain
+    from .governance_store import validate_edges
+
+    def read_list(name):
+        path = eng._knowledge_dir / name
+        data = json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else []
+        if not isinstance(data, list) or any(not isinstance(row, dict) for row in data):
+            raise ValueError("invalid diagnostic input")
+        return data
+
+    try:
+        # Ordinary store readers may quarantine corruption. Diagnostics must
+        # report it without creating a backup, audit entry or migrated record.
+        rows = [eng._ensure_fields(row, "decision") for row in read_list("decisions.json")]
+        edges = validate_edges(read_list("relations.json"))
+    except (ValueError, UnicodeError, OSError):
+        return {"name": "decision_consistency", "status": "WARN", "predecessors": [],
+                "read_only": True, "detail": "Decision consistency inputs cannot be decoded",
+                "hint": "Check local decision/relation backups before repairing; no files were changed."}
+    reviewed = {str(row["id"]) for row in rows if row.get("id") and recall_policy.is_trusted(row)}
+    index = recall_policy.build_supersede_index(version_chain.honored_edges(edges, reviewed))
     predecessors = sorted(str(r["id"]) for r in rows if r.get("status") in {"active", "current"} and index.successor(r.get("id")))
     hints = [f"engram conflicts resolve {index.successor(old)} {old} --action supersede --keep {index.successor(old)} --commit --yes" for old in predecessors]
     return {"name": "decision_consistency", "status": "WARN" if predecessors else "PASS",

@@ -27,4 +27,10 @@ class _WizardFacade:
         # Resolve only when a check runs, after module initialization completes.
         return getattr(importlib.import_module("piia_engram.setup_wizard"), name)
 
+    def __setattr__(self, name, value):
+        setattr(importlib.import_module("piia_engram.setup_wizard"), name, value)
+
+    def __delattr__(self, name):
+        delattr(importlib.import_module("piia_engram.setup_wizard"), name)
+
 wizard = _WizardFacade()
