@@ -928,10 +928,14 @@ class Engram(
         if _review_boundary.mcp_origin():
             return self.propose_identity("work_style", updates)
         updates = self._repair_incoming_text(dict(updates))
-        style = self.get_work_style()
-        style.update(updates)
-        style["updated_at"] = _now_iso()
-        _write_json(self._identity_dir / "work_style.json", style)
+        def _mutate(style):
+            if not isinstance(style, dict):
+                style = {}
+            style.update(updates)
+            style["updated_at"] = _now_iso()
+            return style
+
+        _update_json(self._identity_dir / "work_style.json", _mutate, default={})
 
     # -- Preferences (v2.0, replaces work_style) --
 
