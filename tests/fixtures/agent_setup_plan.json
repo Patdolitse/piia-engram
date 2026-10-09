@@ -1,0 +1,16 @@
+{
+  "schema_id": "piia-engram/setup",
+  "schema_version": 1,
+  "mode": "plan",
+  "language": "en",
+  "result": "ok",
+  "exit_code": 0,
+  "store": {"path": "~/.engram", "status": "missing", "writes": []},
+  "clients": [{
+    "id": "cursor", "name": "Cursor", "detected": false, "selected": false,
+    "config_path": "~/.cursor/mcp.json", "action": "none",
+    "result": "not_detected", "reason": "not_detected", "writes": [],
+    "commands": [], "manual_command": null
+  }],
+  "next_steps": ["Install or open a supported client, then run setup again."]
+}
