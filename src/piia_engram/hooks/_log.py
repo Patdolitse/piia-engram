@@ -47,6 +47,7 @@ def log_failure(hook: str, message: str, exc: BaseException | None = None, *, ro
         stamp = datetime.now().isoformat(timespec="seconds")
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(f"{stamp} [{hook}] {detail}\n")
+            handle.flush()
     except Exception:
         # Store itself may be inaccessible. Keep a local sibling diagnostic;
         # exception messages and payloads are deliberately omitted here.
@@ -57,5 +58,6 @@ def log_failure(hook: str, message: str, exc: BaseException | None = None, *, ro
                 fallback.unlink()
             with fallback.open("a", encoding="utf-8") as handle:
                 handle.write(f"{datetime.now().isoformat(timespec='seconds')} [{hook}] {message}\n")
+                handle.flush()
         except Exception:
             pass

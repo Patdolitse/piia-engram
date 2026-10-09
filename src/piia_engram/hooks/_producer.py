@@ -5,6 +5,7 @@ import os
 import json
 import sys
 import threading
+import time
 
 from . import _cursor_payload as payload
 from ._log import log_failure
@@ -15,15 +16,13 @@ MAX_INPUT_BYTES = MAX_EVENT_BYTES
 
 
 def _capture_failure(kind: str, exc: Exception) -> None:
-    diagnostic = threading.Thread(target=log_failure,
-                                  args=(kind, "capture failed (" + type(exc).__name__ + ")"),
-                                  daemon=True)
-    diagnostic.start()
-    diagnostic.join(0.025)
+    # Finish the diagnostic before the entry point returns and exits.
+    log_failure(kind, "capture failed (" + type(exc).__name__ + ")")
 
 
 def _read_input() -> dict:
     """Bound bytes and elapsed time even if the writer never closes its pipe."""
+    deadline = time.monotonic() + INPUT_BUDGET_SECONDS
     finished = threading.Event()
     result = []
 
@@ -54,7 +53,8 @@ def _read_input() -> dict:
             finished.set()
 
     threading.Thread(target=read, name="engram-hook-input", daemon=True).start()
-    if not finished.wait(INPUT_BUDGET_SECONDS):
+    diagnostic_reserve = min(0.025, INPUT_BUDGET_SECONDS / 4)
+    if not finished.wait(max(0, deadline - time.monotonic() - diagnostic_reserve)):
         raise TimeoutError("hook input deadline exceeded")
     raw = result[0]
     if isinstance(raw, Exception):
