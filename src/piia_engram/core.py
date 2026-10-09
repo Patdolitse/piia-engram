@@ -3069,52 +3069,55 @@ class Engram(
             supersedes_box["target"] = auto_supersedes_target
             return decisions
 
-        outcome = self._update_entries(path, "decision", _mutate_decisions, capacity_ctx=decision_ctx)
-        result = result_box["result"]
-        if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
-            return result
-        _gate_note = result_box.get("gate_note", _gate_note)
-        title = new_decision.get("question", "") or new_decision.get("title", "")
-        if _audit_metadata_only:
-            self._audit.log(
-                "write", "knowledge/decisions",
-                detail=f"[{_gate_note}] [metadata-only]",
-                source_tool=new_decision.get("source_tool", ""),
-            )
-        else:
-            self._audit.log(
-                "write", "knowledge/decisions",
-                detail=f"[{_gate_note}] {title[:100]}",
-                source_tool=new_decision.get("source_tool", ""),
-            )
+        from .storage import hold_directory_lock
 
-        # Auto-supersedes: build a directed edge in the decision thread.
-        # Priority: (1) explicit ``supersedes`` field in the input,
-        #           (2) auto-detected same-question conflict (different choice).
-        # Best-effort: a failed edge write must NEVER block the decision write.
-        # Unreviewed decisions (queued, or placed in the archive) only carry
-        # ``pending_supersedes``; the edge is written when they are promoted.
-        supersedes_id = new_decision.get("supersedes") or supersedes_box.get("target")
-        if supersedes_id and _capacity.pool_of(new_decision) == _capacity.POOL_V:
-            try:
-                target_decision = self._supersede_target_row(new_decision, str(supersedes_id))
-                if target_decision is not None:
-                    # v4.19.1: decision-thread edges are INTERNAL version
-                    # lineage — write via RelationStore directly (the
-                    # caller-facing add_relation now refuses supersedes).
-                    from .governance_store import RelationStore as _RS
+        with hold_directory_lock(self._knowledge_dir, timeout=30):
+            outcome = self._update_entries(path, "decision", _mutate_decisions, capacity_ctx=decision_ctx)
+            result = result_box["result"]
+            if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
+                return result
+            _gate_note = result_box.get("gate_note", _gate_note)
+            title = new_decision.get("question", "") or new_decision.get("title", "")
+            if _audit_metadata_only:
+                self._audit.log(
+                    "write", "knowledge/decisions",
+                    detail=f"[{_gate_note}] [metadata-only]",
+                    source_tool=new_decision.get("source_tool", ""),
+                )
+            else:
+                self._audit.log(
+                    "write", "knowledge/decisions",
+                    detail=f"[{_gate_note}] {title[:100]}",
+                    source_tool=new_decision.get("source_tool", ""),
+                )
 
-                    self._commit_version_edge(str(new_decision["id"]), str(supersedes_id))
-                    self._audit.log(
-                        "write",
-                        "knowledge/relations",
-                        detail=f"{new_decision['id']} supersedes {supersedes_id} (decision thread)",
-                    )
-                    self._unpin_superseded(str(supersedes_id), str(new_decision["id"]))
-            except Exception:
-                pass  # edge is advisory; the decision itself is the hard write
+            # Auto-supersedes: build a directed edge in the decision thread.
+            # Priority: (1) explicit ``supersedes`` field in the input,
+            #           (2) auto-detected same-question conflict (different choice).
+            # The shared lock remains held through edge publication and retirement.
+            # Unreviewed decisions (queued, or placed in the archive) only carry
+            # ``pending_supersedes``; the edge is written when they are promoted.
+            supersedes_id = new_decision.get("supersedes") or supersedes_box.get("target")
+            if supersedes_id and _capacity.pool_of(new_decision) == _capacity.POOL_V:
+                try:
+                    target_decision = self._supersede_target_row(new_decision, str(supersedes_id))
+                    if target_decision is not None:
+                        # v4.19.1: decision-thread edges are INTERNAL version
+                        # lineage — write via RelationStore directly (the
+                        # caller-facing add_relation now refuses supersedes).
+                        from .governance_store import RelationStore as _RS
 
-        return self._with_capacity_result(new_decision, outcome)
+                        self._commit_version_edge(str(new_decision["id"]), str(supersedes_id))
+                        self._audit.log(
+                            "write",
+                            "knowledge/relations",
+                            detail=f"{new_decision['id']} supersedes {supersedes_id} (decision thread)",
+                        )
+                        self._unpin_superseded(str(supersedes_id), str(new_decision["id"]))
+                except Exception:
+                    pass  # edge is advisory; the decision itself is the hard write
+
+            return self._with_capacity_result(new_decision, outcome)
 
     def get_decisions(
         self,
