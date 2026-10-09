@@ -1295,19 +1295,19 @@ class ImportExportMixin:
                 # Export decrypted plaintext so backups are portable across
                 # different .corpus_salt / ENGRAM_SECRET combinations.
                 # The backup file itself should be protected by the user.
-                # v4.19.1: export HEADs only — superseded snapshots are local
-                # history artifacts (reachable via get_knowledge_history), not
-                # part of the portable backup.
+                # Retired predecessors retain reviewed lineage authority in a
+                # portable backup; immutable revision snapshots remain local
+                # history (reachable via get_knowledge_history).
                 "lessons": [
                     l for l in self._read_entries(
                         self._knowledge_dir / "lessons.json", "lesson")
-                    if l.get("status") != "superseded" and "snapshot_of" not in l
+                    if "snapshot_of" not in l
                     and not (exclude_pending and l.get("tier") == "staging")
                 ],
                 "decisions": [
                     d for d in self._read_entries(
                         self._knowledge_dir / "decisions.json", "decision")
-                    if d.get("status") != "superseded" and "snapshot_of" not in d
+                    if "snapshot_of" not in d
                     and not (exclude_pending and d.get("tier") == "staging")
                 ],
                 "domains": self.get_domains(),
@@ -1325,11 +1325,11 @@ class ImportExportMixin:
             },
             "projects": {},
             # Rows the per-type cap moved out of the active knowledge files
-            # (HEADs only, like the knowledge section above).
+            # (including retired predecessors, excluding revision snapshots).
             "overflow_archive": {
                 kind + "s": [
                     row for row in self._read_overflow_archive(kind)
-                    if row.get("status") != "superseded" and "snapshot_of" not in row
+                    if "snapshot_of" not in row
                     and not (exclude_pending and row.get("tier") == "staging")
                 ]
                 for kind in ("lesson", "decision")
