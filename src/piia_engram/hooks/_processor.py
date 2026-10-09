@@ -249,13 +249,22 @@ def _archive(engram, event, content: str, *, daily: bool = False) -> None:
         if marker not in existing:
             _publish(path, (existing + entry + marker + "\n").encode("utf-8"))
     if not daily:
-        from ..storage import _atomic_write_json
+        from ..storage import _update_json, SkipWrite
         digest = engram._build_checkpoint_digest(
             content, tool=event["client"], session_id=session_id, project_folder=project,
             generated_at=event["created_at"], project_revision=event["prepared"].get("project_revision"),
             revision_captured_at=event["prepared"].get("project_revision_captured_at", ""))
         if engram._digest_has_session_signal(digest):
-            _atomic_write_json(engram._session_digest_path(event["client"], session_id), digest)
+            def replace_digest(existing):
+                previous_time = existing.get("generated_at")
+                if previous_time:
+                    previous_time = datetime.fromisoformat(previous_time.replace("Z", "+00:00"))
+                    incoming_time = datetime.fromisoformat(event["created_at"].replace("Z", "+00:00"))
+                    if previous_time.tzinfo is None or incoming_time < previous_time:
+                        raise SkipWrite()
+                return digest
+            # Comparison and replacement share the directory/session write lock.
+            _update_json(engram._session_digest_path(event["client"], session_id), replace_digest)
 
 
 def _snapshot(engram, cwd: str) -> None:

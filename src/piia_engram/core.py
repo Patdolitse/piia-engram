@@ -2068,10 +2068,14 @@ class Engram(
         for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
             path = self._knowledge_dir / name
             raw = _read_json(path) if path.is_file() else []
-            rows = self._entries_for_locked_mutation(raw if isinstance(raw, list) else [], kind)
+            rows = self._entries_for_locked_mutation(deepcopy(raw) if isinstance(raw, list) else [], kind)
             pools = Counter(_capacity.pool_of(row) for row in rows)
             future = 0
-            for row in rows:
+            # Only persisted timestamps are evidence. Normalization may backfill
+            # a missing timestamp after the report's initial clock sample.
+            for row in raw if isinstance(raw, list) else []:
+                if not isinstance(row, dict):
+                    continue
                 times = (_capacity.parse_time(row.get(f)) for f in self._CAPACITY_TIME_FIELDS)
                 if any(t is not None and t > now for t in times):
                     future += 1
@@ -3064,9 +3068,7 @@ class Engram(
                     # caller-facing add_relation now refuses supersedes).
                     from .governance_store import RelationStore as _RS
 
-                    _RS(self.root).add_relation(
-                        str(new_decision["id"]), "supersedes", str(supersedes_id)
-                    )
+                    self._commit_version_edge(str(new_decision["id"]), str(supersedes_id))
                     self._audit.log(
                         "write",
                         "knowledge/relations",
@@ -3092,7 +3094,10 @@ class Engram(
         path = self._knowledge_dir / "decisions.json"
         decisions = self._read_entries(path, "decision", migrate=_migrate_fields)
         result = []
+        supersede_index = self._recall_supersede_index()
         for decision in decisions:
+            if supersede_index.successor(decision.get("id")):
+                continue
             if decision.get("status") != "active":
                 continue
             if tier is not None and (decision.get("tier") or decision.get("memory_state")) != tier:
@@ -3377,20 +3382,24 @@ class Engram(
     ) -> None:
         """Save project metadata and advance its canonical checkpoint.
 
-        Legacy top-level fields remain merge-compatible. When ``current_state``
+        Recognized top-level fields remain merge-compatible. When ``current_state``
         is supplied, it is replaced as one structured value and the previous
         state moves to bounded history; omitted state fields therefore cannot
         survive through a shallow merge.
         """
         pid = _project_id(project_folder)
         path = self._projects_dir / f"{pid}.json"
+        from .project_snapshots import read_raw, require_writable
+        require_writable(data)
+        require_writable(read_raw(path))
         legacy_default: dict = {}
         if not path.exists():
             for alias in _project_id_aliases(project_folder):
                 if alias == pid:
                     continue
-                candidate = _read_json(self._projects_dir / f"{alias}.json")
-                if isinstance(candidate, dict) and candidate:
+                candidate = read_raw(self._projects_dir / f"{alias}.json")
+                if candidate:
+                    require_writable(candidate)
                     legacy_default = candidate
                     break
         data = self._repair_incoming_text(dict(data))
@@ -3400,8 +3409,7 @@ class Engram(
             raise ValueError("current_state must be an object")
 
         def _mutate(existing):
-            if not isinstance(existing, dict):
-                existing = {}
+            require_writable(existing)
             now = _now_iso()
             old_checkpoint = existing.get("checkpoint")
             if not isinstance(old_checkpoint, dict):
@@ -3454,20 +3462,34 @@ class Engram(
                 existing["created_at"] = now
             return existing
 
-        _update_json(path, _mutate, default=legacy_default)
+        from .storage import DataCorruptionError
+        from .project_snapshots import SnapshotMigrationRequired
+        try:
+            _update_json(path, _mutate, default=legacy_default)
+        except DataCorruptionError as exc:
+            raise SnapshotMigrationRequired("snapshot became corrupt before the write lock") from exc
 
     def get_project_snapshot(self, project_folder: str) -> dict:
+        from .project_snapshots import read_snapshot
         for pid in _project_id_aliases(project_folder):
-            data = _read_json(self._projects_dir / f"{pid}.json")
+            data = read_snapshot(self._projects_dir / f"{pid}.json")
             if data:
                 return data
         return {}
+
+    def migrate_project_snapshot(self, project_folder: str, *, apply: bool = False, prefer: str = "") -> dict:
+        """Preview or apply an explicit local snapshot migration with a backup."""
+        from .project_snapshots import migrate
+        paths = [self._projects_dir / f"{pid}.json" for pid in _project_id_aliases(project_folder)]
+        path = next((p for p in paths if p.is_file()), paths[0])
+        return migrate(self.root, path, apply=apply, prefer=prefer)
 
     def list_projects(self) -> list[dict]:
         """List all known projects with basic info."""
         result = []
         for f in sorted(self._projects_dir.glob("*.json")):
-            data = _read_json(f)
+            from .project_snapshots import read_snapshot
+            data = read_snapshot(f)
             if data:
                 result.append({
                     "id": f.stem,
@@ -3475,6 +3497,7 @@ class Engram(
                     "title": data.get("title", ""),
                     "updated_at": data.get("updated_at", ""),
                     "session_count": data.get("session_count", 0),
+                    **({"migration": data["migration"]} if "migration" in data else {}),
                 })
         return result
 
@@ -3513,7 +3536,7 @@ STORE_WRITE_METHODS = frozenset({
     "soft_archive_knowledge_tier", "unlink_knowledge", "update_decision", "update_domain",
     "update_execution_step", "update_knowledge", "update_lesson", "update_playbook",
     "update_preferences", "update_profile", "update_quality_standards", "update_tool",
-    "update_trust_boundaries", "update_work_style", "recover_identity_proposals",
+    "update_trust_boundaries", "update_work_style", "recover_identity_proposals", "migrate_project_snapshot",
 })
 
 READ_ONLY_SAFE_METHODS = frozenset({

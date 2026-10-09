@@ -159,12 +159,20 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     # Claude Code: never the real config dir, and never the real `claude`
     # command (it would edit the real ~/.claude.json). Tests that exercise the
     # command replace these seams with a recorder or a fake executable.
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(isolated_home / ".claude"))
+    monkeypatch.setenv("LOCALAPPDATA", str(ping_profile / "AppData" / "Local"))
     from piia_engram import claude_code_mcp as _claude_code_mcp
 
     def _no_real_claude(*_args, **_kwargs):
         raise AssertionError("tests must not run the real claude command")
 
+    original_override = _claude_code_mcp.config_dir_override
+    baseline_override = str(isolated_home / ".claude")
+    # Default-layout tests exercise fallback under their own isolated HOME.
+    # Keep the explicit baseline env for subprocesses, while honoring any
+    # test that deliberately supplies a distinct override directory.
+    monkeypatch.setattr(_claude_code_mcp, "config_dir_override", lambda:
+        None if os.environ.get("CLAUDE_CONFIG_DIR") == baseline_override else original_override())
     monkeypatch.setattr(_claude_code_mcp, "cli_path", lambda: None)
     monkeypatch.setattr(_claude_code_mcp, "run_cli", _no_real_claude)
     try:

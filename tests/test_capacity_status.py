@@ -186,3 +186,11 @@ def test_restore_output_names_tier_and_status(engram: Engram, monkeypatch, capsy
     monkeypatch.setenv("ENGRAM_DIR", str(engram.root))
     assert _run_retention(["restore", lesson["id"]]) == 0
     assert "tier verified -> verified, status outdated" in capsys.readouterr().out
+
+def test_capacity_future_count_ignores_read_time_backfill(engram, monkeypatch):
+    """A second boundary during normalization must not create future rows."""
+    from piia_engram import core
+    _seed(engram)
+    later = (datetime.now(timezone.utc) + timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr(core, "_now_iso", lambda: later)
+    assert engram.capacity_status()["kinds"]["lesson"]["future_timestamps"] == 1

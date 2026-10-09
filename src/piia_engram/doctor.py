@@ -13,7 +13,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from . import setup_wizard as W
+from .setup_support import wizard as W
 from .i18n import t as _t
 
 
@@ -971,8 +971,8 @@ def _print_connection_report(root, days: int | None = None) -> None:
 def run_doctor_json(days: int | None = None) -> int:
     """``engram doctor --json``: the client connection report as JSON (read-only).
 
-    Only this section: it reads the store directory and the client config files
-    directly and opens nothing for writing (no Engram instance, no version check).
+    Reads connection evidence, hook backlog and decision consistency. The
+    consistency check uses a read-only Engram handle; no version check runs.
     """
     from piia_engram import connection_report as _connections
     from piia_engram.storage import _engram_root
@@ -982,6 +982,8 @@ def run_doctor_json(days: int | None = None) -> int:
         report = _connections.build_report(Path(_engram_root()), days=days)
         from piia_engram.hooks.spool import backlog
         report["hook_spool"] = backlog(Path(_engram_root()))
+        from piia_engram.core import Engram
+        report["decision_consistency"] = decision_consistency_check(Engram(root=Path(_engram_root()), read_only=True))
     except Exception as exc:  # the message may hold a private path: name the type only
         print(json.dumps({"error": type(exc).__name__, "read_only": True}))
         return 1
@@ -1076,6 +1078,12 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
         problems += _run_identity_recovery_check(eng, fix=fix)
     except Exception as exc:
         print(f"    [!!] Identity approval recovery failed: {exc}")
+        problems += 1
+
+    finding = decision_consistency_check(eng)
+    print(f"    [{finding['status']}] Decision consistency: {finding['detail']}")
+    if finding["hint"]:
+        print("         Local repair: " + finding["hint"])
         problems += 1
 
     # 2.5 v4.21 capacity: pools, archive, interrupted imports (read-only)
@@ -1638,3 +1646,23 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
 
     print()
     return problems
+
+
+def decision_consistency_check(eng) -> dict:
+    """Read-only diagnostic for historical active predecessors; never repairs."""
+    rows = eng._read_entries(eng._knowledge_dir / "decisions.json", "decision", migrate=False)
+    index = eng._recall_supersede_index()
+    predecessors = sorted(str(r["id"]) for r in rows if r.get("status") in {"active", "current"} and index.successor(r.get("id")))
+    hints = [f"engram conflicts resolve {index.successor(old)} {old} --action supersede --keep {index.successor(old)} --commit --yes" for old in predecessors]
+    return {"name": "decision_consistency", "status": "WARN" if predecessors else "PASS",
+            "predecessors": predecessors, "read_only": True,
+            "detail": f"{len(predecessors)} active predecessor(s) with reviewed successors",
+            "hint": "; ".join(hints)}
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Read-only Engram diagnostics")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    raise SystemExit(run_doctor_json() if args.json else run_doctor())

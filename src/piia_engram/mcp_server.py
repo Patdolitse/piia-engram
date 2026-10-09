@@ -26,6 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 _write_operation_lock = threading.RLock()
+_shutting_down = False
 
 
 def _configure_utf8_stdio() -> None:
@@ -58,7 +59,10 @@ def _current_client_info() -> tuple[str, str]:
         info = getattr(params, "clientInfo", None) if params is not None else None
         if info is not None:
             return str(getattr(info, "name", "") or ""), str(getattr(info, "version", "") or "")
-    except Exception:
+    except Exception as exc:
+        from piia_engram.transport_errors import transport_failure, TransportUnavailable
+        if transport_failure(exc):
+            raise TransportUnavailable("MCP session closed") from exc
         pass  # not inside a request
     return "", ""
 
@@ -74,6 +78,9 @@ def _locked_engram_call(fn, *args, **kwargs):
     with _write_operation_lock, _write_provenance.origin_scope(
         _write_provenance.ORIGIN_MCP, client_name=client_name, client_version=client_version,
     ):
+        if _shutting_down:
+            from piia_engram.transport_errors import TransportUnavailable
+            raise TransportUnavailable("server is shutting down")
         return fn(*args, **kwargs)
 
 
@@ -917,6 +924,8 @@ def _engram_clean_shutdown() -> None:
     this function runs to completion, the next Engram() init will read
     last_clean_exit=True and not warn.
     """
+    global _shutting_down
+    _shutting_down = True
     try:
         _session.auto_save()
     except Exception:
@@ -1281,6 +1290,19 @@ mcp = FastMCP(
     instructions=server_instructions(),
 )
 
+# Preserve schemas and direct-call helpers while normalizing observable loss.
+from piia_engram.transport_errors import guarded_tool as _guarded_tool
+_original_tool = mcp.tool
+
+def _transport_tool(*args, **kwargs):
+    register = _original_tool(*args, **kwargs)
+    def decorate(fn):
+        guarded = _guarded_tool(fn, shutting_down=lambda: _shutting_down and TOOL_GOVERNANCE_CLASS.get(fn.__name__) in WRITE_GATE_CLASSES_MUTATING)
+        return register(guarded)
+    return decorate
+
+mcp.tool = _transport_tool
+
 
 def _apply_tool_tier() -> None:
     """Filter registered MCP tools according to ENGRAM_TOOLS capability modes."""
@@ -1371,6 +1393,10 @@ def _validate_path(value: str, *, allow_empty: bool = False) -> str | None:
 
 def _safe_err(exc: Exception) -> str:
     """Return a sanitized error message without internal filesystem paths."""
+    from piia_engram.transport_errors import transport_failure
+    failure = transport_failure(exc)
+    if failure:
+        return failure["error"] + ": " + failure["hint"]
     msg = str(exc)
     # Strip any Windows/Unix absolute paths from the message
     msg = re.sub(r'\\\\[^\\\r\n]+\\[^\\\r\n]+(?:\\[^\\\r\n]+)*', '<path>', msg)

@@ -1,6 +1,6 @@
 """v4.0 hybrid search — rebuildable SQLite index over the JSON store.
 
-Recorded architecture (decisions d49043029e53 + a1309293caf5):
+Architecture:
 
 - **JSON stays the single source of truth.** This SQLite file
   (``search_index.db``) is a *rebuildable* index: deleting it loses
@@ -14,17 +14,15 @@ Recorded architecture (decisions d49043029e53 + a1309293caf5):
     2. ``fts`` — full-text via FTS5 ``unicode61`` (ships with sqlite,
        zero extra deps).
     3. ``vector`` — sqlite-vec + FastEmbed (all-MiniLM-L6-v2), OPTIONAL
-       (the ``[vector]`` extra). Lands in the next v4.0 increment; this
-       module already probes for it and leaves the RRF call ready to take
-       a third ranking.
+       (the ``[vector]`` extra). When installed, changed documents are
+       embedded incrementally and the vector ranking joins RRF fusion.
 
 RRF is rank-based, so it fuses signals on different score scales with no
 ``alpha`` to tune — only the standard constant ``k=60``.
 
-Scope of THIS increment: the zero-dep core (RRF + FTS5 index) that can be
-fully tested without optional deps. It is intentionally standalone and
-NOT yet wired into ``search_knowledge`` — the cutover is a later step so
-the stable keyword path is untouched while this is validated.
+``search_knowledge`` uses this index when ``ENGRAM_SEARCH=hybrid``.
+Without optional vector dependencies the keyword and FTS5 rankings still
+work; the default search mode retains the keyword path.
 
 Known limitation (documented, not hidden): ``unicode61`` does not segment
 CJK text — a run of Chinese characters becomes one token. The existing

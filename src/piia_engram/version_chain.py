@@ -1,4 +1,4 @@
-"""Version-chain read/report scaffold (Phase 6).
+"""Version-chain read/report helpers.
 
 A *pure*, store-free read layer over the typed knowledge edges already produced
 by :mod:`decision_thread` (``led_to`` / ``implemented_by`` / ``supersedes``).
@@ -20,7 +20,7 @@ Design constraints (mirrors ``recall.py`` / ``decision_thread.py``):
 - stdlib only, side-effect free, safe to unit-test with fixtures.
 - never reads the store; callers pass already-loaded ``edges`` + ``entries``.
 - never mutates inputs; returns fresh dicts/lists.
-- this is a *read/report* scaffold: it proposes nothing destructive and writes
+- this is a *read/report* layer: it proposes nothing destructive and writes
   nothing. General agent-facing version writes remain deferred; owner-confirmed
   import materialization may now populate richer version metadata
   (``parent_id`` / ``root_id`` / ``supersedes``). This layer still treats

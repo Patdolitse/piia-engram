@@ -654,26 +654,26 @@ async def manage_relation(
 ) -> str:
     """知识关系统一入口：建立或移除条目间关联（无类型双向 / 有类型有向）。 / Unified knowledge relations: create or remove links between items (untyped bidirectional, or typed directed).
 
-    用途：rel 留空时管理无类型、双向的"see also"关联；rel 取 led_to / supersedes /
+    用途：rel 留空时管理无类型、双向的"see also"关联；rel 取 led_to /
     implemented_by 时管理有类型、有方向的演进边，用于重建"想法 → 决策 → 实现"
     决策链（喂给 get_decisions 的 thread_seed_id 分支）；内部 supersedes 链仅由版本
     更新维护，不能手工建立或移除，其他关系的 unlink 幂等。
     Purpose: with rel empty this manages the untyped bidirectional "see also"
-    link; with rel set (led_to / supersedes / implemented_by) it manages the
+    link; with rel set (led_to / implemented_by) it manages the
     typed, directed evolution edge consumed by decision threads
     (get_decisions thread_seed_id); internal supersedes lineage cannot be
     manually added or removed, and unlink is idempotent for other relations.
 
     rel 取值 / values:
       - led_to：src 引出 / 导致 dst（src led to dst）
-      - supersedes：src 取代 / 推翻 dst（src replaces dst; dst becomes obsolete）
+      - supersedes：内部谱系，仅由审核后的修订维护；MCP 手工关联会被拒绝。 / Internal lineage maintained by reviewed revisions; manual MCP links are refused.
       - implemented_by：决策 src 由 dst 实现（decision src realized by dst）
 
     Args:
         action: link（建立）| unlink（移除，幂等）。 / link (create) | unlink (remove, idempotent).
         src_id: 源条目 ID（无类型关联时即第一个条目）。 / Source item ID (first item for untyped links).
         dst_id: 目标条目 ID（无类型关联时即第二个条目）。 / Target item ID (second item for untyped links).
-        rel: 留空 = 无类型双向；led_to / supersedes / implemented_by = 有类型有向。 / Empty = untyped bidirectional; led_to / supersedes / implemented_by = typed directed.
+        rel: 留空 = 无类型双向；led_to / implemented_by = 有类型有向。 / Empty = untyped bidirectional; led_to / implemented_by = typed directed.
     """
     # a4: write-path governance gate — must run unconditionally BEFORE action
     # validation so a low-trust caller gets a governance refusal, never an
