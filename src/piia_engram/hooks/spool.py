@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import os
 import re
 import time
@@ -16,6 +17,8 @@ from ..atomic_replace import replace_with_retry
 MAX_PENDING_EVENTS = 1000
 MAX_PENDING_BYTES = 16 * 1024 * 1024
 MAX_EVENT_BYTES = 128 * 1024
+MAX_MISSING_TRANSCRIPT_ATTEMPTS = 3
+MAX_MISSING_TRANSCRIPT_AGE_SECONDS = 7 * 86400
 KINDS = {"claude_stop": "claude_code", "claude_compact": "claude_code",
          "cursor_save": "cursor", "cursor_writeback": "cursor"}
 _DRAINING = ContextVar("hook_spool_draining", default=False)
@@ -154,6 +157,37 @@ class PoisonEvent(ValueError):
     """Malformed envelope; processing errors are retryable instead."""
 
 
+def _shared_storage_failure(exc: Exception) -> bool:
+    """Only known shared failures stop unrelated events, including wrapped locks."""
+    import portalocker
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, portalocker.LockException):
+            return True
+        if isinstance(exc, OSError) and (
+            exc.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
+            or getattr(exc, "winerror", None) in {39, 112}
+        ):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+def _retry_missing_transcript(path: Path, event: dict) -> bool:
+    event["transcript_missing_attempts"] = event.get("transcript_missing_attempts", 0) + 1
+    _publish(path, _json_bytes(event))
+    age = time.time() - datetime.fromisoformat(event["created_at"]).timestamp()
+    reason = ""
+    if age >= MAX_MISSING_TRANSCRIPT_AGE_SECONDS:
+        reason = "transcript-missing-age-limit"
+    elif event["transcript_missing_attempts"] >= MAX_MISSING_TRANSCRIPT_ATTEMPTS:
+        reason = "transcript-missing-retry-limit"
+    if reason:
+        _quarantine(path, reason)
+    return bool(reason)
+
+
 def _read_event(path: Path) -> dict:
     try:
         if path.stat().st_size > MAX_EVENT_BYTES:
@@ -188,13 +222,10 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
         with _lock(directory):
             report["quarantined_now"] += _trim(directory)
             for path in _files(directory):
+                event = None
+                phase = "read"
                 try:
                     event = _read_event(path)
-                except PoisonEvent:
-                    _quarantine(path, "invalid-event")
-                    report["quarantined_now"] += 1
-                    continue
-                try:
                     receipt = directory / "receipts" / (event["event_id"] + ".json")
                     if receipt.exists():
                         # Validate receipts; corruption must fail closed, never discard work.
@@ -203,9 +234,19 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                             raise ValueError("invalid receipt")
                         report["duplicates"] += 1
                     else:
-                        from ._processor import prepare, process
-                        if "prepared" not in event:
+                        from ._processor import prepare, process, validate_payload, freeze_checkpoint_provenance
+                        phase = "prepare"
+                        changed = "prepared" not in event
+                        if changed:
                             event["prepared"] = prepare(event, root, engram)
+                        try:
+                            validate_payload(event)
+                        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                            raise PoisonEvent("invalid prepared fields") from exc
+                        phase = "provenance"
+                        changed = freeze_checkpoint_provenance(event, root, engram) or changed
+                        phase = "publish"
+                        if changed:
                             # Frozen input replaces the inline source, avoiding a second
                             # copy of a maximum-size Unicode summary in the envelope.
                             event["payload"].pop("summary", None)
@@ -214,20 +255,33 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                             if len(data) > MAX_EVENT_BYTES:
                                 raise PoisonEvent("prepared event oversize")
                             _publish(path, data)
+                        phase = "process"
                         process(event, root, engram)
+                        phase = "receipt"
                         receipt.parent.mkdir(exist_ok=True)
                         _publish(receipt, _json_bytes({"event_id": event["event_id"],
                                                       "processed_at": datetime.now(timezone.utc).isoformat()}))
                         report["processed"] += 1
                     path.unlink()  # only after durable receipt
                 except PoisonEvent:
-                    _quarantine(path, "invalid-prepared-event")
+                    _quarantine(path, "invalid-event" if phase == "read" else "invalid-prepared-event")
                     report["quarantined_now"] += 1
                 except Exception as exc:
                     report["failed"] += 1
                     log_failure("hook_spool", "drain deferred (" + type(exc).__name__ + ")", root=root)
-                    # Disk/store failures are often shared: avoid repeated lock waits in this run.
-                    break
+                    if _shared_storage_failure(exc):
+                        break
+                    if phase == "prepare" and isinstance(exc, FileNotFoundError) and event is not None:
+                        try:
+                            if _retry_missing_transcript(path, event):
+                                report["quarantined_now"] += 1
+                        except Exception as retry_exc:
+                            log_failure("hook_spool", "retry tracking failed (" +
+                                        type(retry_exc).__name__ + ")", root=root)
+                            if _shared_storage_failure(retry_exc):
+                                break
+                    # Input and event-specific processing failures keep their file,
+                    # without a receipt, while healthy events continue this batch.
     except Exception as exc:
         import portalocker
         if isinstance(exc, portalocker.LockException):

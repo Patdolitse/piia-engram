@@ -455,6 +455,8 @@ More cross-tool questions are answered in the
 
 Claude Code Stop/PreCompact/PostCompact and Cursor stop/sessionEnd write hooks now publish a small local event and exit with status 0. They do not initialize the memory store or wait for its locks. Cursor knowledge writeback remains disabled unless explicitly enabled. Checkpoints and compact daily logs are deferred; extracted knowledge always enters staging for owner review, including strict mode.
 
+Write-hook stdin is limited to 128 KiB and a one-second read deadline after module loading. An open pipe, oversized input or read error produces a best-effort local diagnostic and exit status 0, without publishing an incomplete event.
+
 Process the queue when convenient:
 
 ```sh
@@ -469,5 +471,9 @@ engram doctor --json
 Events live under `<store>/hooks/spool/`, with a cap of 1,000 pending events or 16 MiB and a 128 KiB event limit. Overflow moves the oldest pending files to `quarantine/` with reason sidecars; malformed events go there too. Concurrent publishers can briefly exceed the pending cap while the spool maintenance lock is busy; the next publisher/drain enforces it. Quarantine and completion receipts are retained and excluded from that cap. Inspect quarantine explicitly; keep receipts to preserve event-ID dedup. Interrupted `.partial` files are counted separately and retained for inspection. Store/disk errors leave pending events available for retry; if publication itself fails, the hook records a best-effort diagnostic in `<store>/logs/hooks.log`, or `<store-name>.hooks.log` beside an inaccessible store. If both locations are unwritable, local capture cannot be guaranteed.
 
 Transcript references are local-only and must remain readable until processing; a path reference does not freeze a transcript rewritten by compaction. The processor freezes its bounded input before its first store mutation, so interrupted retries use that same input. No new network requests or client commands are introduced. Protect spool/quarantine files like session data; they use the same local filesystem access boundary as existing hook captures.
+
+Transcript read failures retain the event without a completion receipt and count as retryable failures; they are never treated as empty content. Event-specific failures do not prevent later events from processing. Shared store-lock or disk-full failures stop the batch. A missing transcript is quarantined on its third failed read, or on a failed read when the event is at least seven days old, with a reason sidecar. Invalid required payload/prepared fields are quarantined before processing; an explicit `skip: true` is a valid completed preparation.
+
+Deferred checkpoint digests reuse the regular checkpoint provenance. `source.project_revision` is the project revision observed when deferred content is first prepared, before checkpoint writes, rather than a claim about the earlier hook invocation. That value and `source.project_revision_captured_at` are frozen in the queued event; `source.project_revision_capture` is `deferred_prepare`. `generated_at` remains the original event time. Retries preserve these values even if the project revision changes. Older prepared events capture this provenance on their first drain after upgrading.
 
 SessionStart continues to return resume context synchronously, using read-only store access and a fixed one-second application budget. Timeout/read failure emits the existing continue response with no context and exits 0. The budget starts after Python/module loading; operating-system startup is outside it. Weekly hint generation is omitted from this deadline path; `engram weekly` remains available.

@@ -87,7 +87,7 @@ class TestHookIntegration:
             {"cwd": str(tmp_path), "transcript_path": str(transcript)}
         )
         monkeypatch.setattr(
-            "sys.stdin", type("F", (), {"read": lambda self: stdin_data})()
+            "sys.stdin", type("F", (), {"read": lambda self, size=-1: stdin_data[:size] if size >= 0 else stdin_data})()
         )
 
         with patch("piia_engram.hooks.spool._publish", side_effect=RuntimeError("boom")):
@@ -115,7 +115,7 @@ class TestHookIntegration:
             {"cwd": str(tmp_path), "transcript_path": str(transcript)}
         )
         monkeypatch.setattr(
-            "sys.stdin", type("F", (), {"read": lambda self: stdin_data})()
+            "sys.stdin", type("F", (), {"read": lambda self, size=-1: stdin_data[:size] if size >= 0 else stdin_data})()
         )
 
         with patch("piia_engram.hooks.spool._publish", side_effect=RuntimeError("boom")):

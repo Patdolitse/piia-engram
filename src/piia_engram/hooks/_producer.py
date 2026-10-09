@@ -4,14 +4,61 @@ from __future__ import annotations
 import os
 import json
 import sys
+import threading
 
 from . import _cursor_payload as payload
 from ._log import log_failure
-from .spool import enqueue
+from .spool import MAX_EVENT_BYTES, enqueue
+
+INPUT_BUDGET_SECONDS = 1.0
+MAX_INPUT_BYTES = MAX_EVENT_BYTES
+
+
+def _capture_failure(kind: str, exc: Exception) -> None:
+    diagnostic = threading.Thread(target=log_failure,
+                                  args=(kind, "capture failed (" + type(exc).__name__ + ")"),
+                                  daemon=True)
+    diagnostic.start()
+    diagnostic.join(0.025)
 
 
 def _read_input() -> dict:
-    raw = sys.stdin.read()
+    """Bound bytes and elapsed time even if the writer never closes its pipe."""
+    finished = threading.Event()
+    result = []
+
+    def read():
+        try:
+            try:
+                descriptor = sys.stdin.fileno()
+            except (AttributeError, OSError, ValueError):
+                raw = sys.stdin.read(MAX_INPUT_BYTES + 1).encode("utf-8")
+            else:
+                # os.read avoids holding a buffered stdin lock during interpreter
+                # shutdown when the daemon is still waiting on an open pipe.
+                chunks = []
+                size = 0
+                while size <= MAX_INPUT_BYTES:
+                    chunk = os.read(descriptor, min(4096, MAX_INPUT_BYTES + 1 - size))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                raw = b"".join(chunks)
+            if len(raw) > MAX_INPUT_BYTES:
+                raise ValueError("hook input exceeds size limit")
+            result.append(raw.decode("utf-8"))
+        except Exception as exc:
+            result.append(exc)
+        finally:
+            finished.set()
+
+    threading.Thread(target=read, name="engram-hook-input", daemon=True).start()
+    if not finished.wait(INPUT_BUDGET_SECONDS):
+        raise TimeoutError("hook input deadline exceeded")
+    raw = result[0]
+    if isinstance(raw, Exception):
+        raise raw
     if not raw.strip():
         return {}
     value = json.loads(raw)
@@ -30,7 +77,7 @@ def claude_event(kind: str, threshold: int = 10) -> int:
                                      "project_folder": str(hook_input.get("cwd") or ""),
                                      "threshold": threshold})
     except Exception as exc:
-        log_failure(kind, "capture failed (" + type(exc).__name__ + ")")
+        _capture_failure(kind, exc)
     return 0
 
 
@@ -62,5 +109,5 @@ def cursor_event(kind: str, event: str = "stop", *, debounce_minutes: int = 0) -
         if event_id and kind == "cursor_save":
             payload.mark_saved(session or "_default")
     except Exception as exc:
-        log_failure(kind, "capture failed (" + type(exc).__name__ + ")")
+        _capture_failure(kind, exc)
     return 0

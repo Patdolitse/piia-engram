@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import portalocker
@@ -215,6 +216,11 @@ def test_deferred_digest_revision_is_current_and_stable_on_replay(tmp_path, monk
                                                   snapshot=checkpoint, digests=[digest])
     assert arbitration["freshness"]["status"] == "current"
     assert digest["source"]["project_revision"] == baseline["source"]["project_revision"]
+    assert digest["source"]["project_revision_capture"] == "deferred_prepare"
+    assert datetime.fromisoformat(digest["source"]["project_revision_captured_at"]).tzinfo is not None
+    event = json.loads(path.read_text(encoding="utf-8"))
+    assert digest["generated_at"] == event["created_at"]
+    assert digest["source"]["project_revision_captured_at"] == event["prepared"]["project_revision_captured_at"]
     digest_path = eng._session_digest_path("cursor", "deferred")
     original_bytes = digest_path.read_bytes()
     assert path.exists()
@@ -223,3 +229,51 @@ def test_deferred_digest_revision_is_current_and_stable_on_replay(tmp_path, monk
     assert spool.drain(eng.root, engram=eng)["processed"] == 1
     assert digest_path.read_bytes() == original_bytes
     assert eng.get_session_digest("cursor", "deferred")["source"]["project_revision"] == 7
+
+
+def test_event_processing_error_does_not_block_later_events(tmp_path, monkeypatch):
+    from piia_engram.hooks import spool, _processor
+    event_id, path = queued(tmp_path, "cursor_writeback", {"summary": SUMMARY})
+    queued(tmp_path, "cursor_writeback", {"summary": SUMMARY + " Healthy event."})
+    original = _processor.process
+
+    def fail_one(event, *args):
+        if event["event_id"] == event_id:
+            raise RuntimeError("event-specific failure")
+        return original(event, *args)
+
+    monkeypatch.setattr(_processor, "process", fail_one)
+    result = spool.drain(tmp_path)
+    assert result["failed"] == result["processed"] == result["pending"] == 1
+    assert path.exists()
+    assert not (path.parent / "receipts" / (event_id + ".json")).exists()
+
+
+def test_preparation_schema_error_is_quarantined_before_store_writes(tmp_path, monkeypatch):
+    from piia_engram.hooks import spool, _processor
+    _, path = queued(tmp_path, "cursor_save", {})
+    monkeypatch.setattr(_processor, "prepare", lambda *args: {})
+    monkeypatch.setattr(_processor, "process", lambda *args: pytest.fail("invalid preparation reached writer"))
+    result = spool.drain(tmp_path)
+    assert result["quarantined"] == 1
+    assert result["failed"] == result["processed"] == 0
+    assert (path.parent / "quarantine" / path.name).exists()
+
+
+def test_wrapped_store_lock_stops_batch(tmp_path, monkeypatch):
+    from piia_engram.hooks import spool, _processor
+    queued(tmp_path, "cursor_writeback", {"summary": SUMMARY})
+    queued(tmp_path, "cursor_writeback", {"summary": SUMMARY})
+    attempts = []
+
+    def fail(event, *args):
+        attempts.append(event["event_id"])
+        try:
+            raise portalocker.LockException("store lock")
+        except portalocker.LockException as exc:
+            raise RuntimeError("storage lock wrapper") from exc
+
+    monkeypatch.setattr(_processor, "process", fail)
+    result = spool.drain(tmp_path)
+    assert result["failed"] == 1 and result["pending"] == 2
+    assert len(attempts) == 1
