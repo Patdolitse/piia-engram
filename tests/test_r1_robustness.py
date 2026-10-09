@@ -103,8 +103,13 @@ def test_import_order_in_fresh_process(order):
 
 
 @pytest.mark.parametrize("module, args", [("setup_wizard", ["--help"]), ("doctor", ["--json"])])
-def test_module_entrypoints(module, args):
-    result = subprocess.run([sys.executable, "-m", "piia_engram." + module, *args], capture_output=True, text=True, timeout=30)
+def test_module_entrypoints(module, args, monkeypatch):
+    # Entry points emit UTF-8 even when the parent console defaults to GBK.
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "gbk")
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    result = subprocess.run([sys.executable, "-m", "piia_engram." + module, *args],
+                            env=env, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=30)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip()
 
