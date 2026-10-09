@@ -251,3 +251,66 @@ def test_restricted_backup_does_not_export_pending_identity(tmp_path):
     data = json.loads(backup.read_text(encoding='utf-8'))
     assert 'identity_review' not in data
     assert row['id'] not in backup.read_text(encoding='utf-8')
+
+
+def test_backup_queue_is_portable_between_encryption_keys(tmp_path, monkeypatch):
+    pytest.importorskip('cryptography')
+    monkeypatch.setenv('ENGRAM_SECRET', 'source-key')
+    source = Engram(tmp_path / 'source')
+    row = source.propose_identity('profile', {'role': 'private pending role'})
+    assert 'private pending role' not in (source._identity_dir / 'proposals.json').read_text(encoding='utf-8')
+    backup = tmp_path / 'portable.json'
+    source.export_all(str(backup))
+    monkeypatch.setenv('ENGRAM_SECRET', 'destination-key')
+    target = Engram(tmp_path / 'target')
+    assert 'error' not in target.import_all(str(backup))
+    assert target.get_identity_proposals()[0] == row
+    assert 'private pending role' not in (target._identity_dir / 'proposals.json').read_text(encoding='utf-8')
+    assert target.get_profile().get('role') != 'private pending role'
+
+
+def test_identity_backup_semantic_dedup_and_conflicting_id(tmp_path):
+    source = Engram(tmp_path / 'source')
+    row = source.propose_identity('profile', {'role': 'pending'})
+    backup = tmp_path / 'backup.json'
+    source.export_all(str(backup))
+    target = Engram(tmp_path / 'target')
+    local = target.propose_identity('profile', {'role': 'pending'})
+    assert local['id'] != row['id']
+    assert 'error' not in target.import_all(str(backup))
+    assert [r['id'] for r in target.get_identity_proposals()] == [local['id']]
+    data = json.loads(backup.read_text(encoding='utf-8'))
+    data['identity_review']['proposals'][0]['id'] = local['id']
+    data['identity_review']['proposals'][0]['before']['role'] = 'conflicting base'
+    data['identity_review']['proposals'][0]['missing_before'] = []
+    backup.write_text(json.dumps(data), encoding='utf-8')
+    before = {str(p.relative_to(target.root)): p.read_bytes()
+              for p in target.root.rglob('*') if p.is_file()}
+    assert target.import_all(str(backup)).get('error') == 'invalid_identity_review'
+    assert before == {str(p.relative_to(target.root)): p.read_bytes()
+                      for p in target.root.rglob('*') if p.is_file()}
+
+
+def test_codex_preserves_unknown_toml_types_and_nested_controls(tmp_path):
+    path = tmp_path / 'config.toml'
+    text = ('[mcp_servers.engram]\ncommand="old"\n'
+            'owner_date=2026-10-10\nowner_time=12:34:56\nowner_float=nan\n'
+            '[mcp_servers.engram.future]\nflag=false\n'
+            '[[mcp_servers.engram.future.records]]\nvalue=1\n'
+            '[mcp_servers.engram.env]\nCUSTOM_INT=3\nCUSTOM_BOOL=false\n')
+    path.write_text(text, encoding='utf-8')
+    before = setup._toml_unrelated_values(setup._parse_toml(text), {'engram'})
+    after = setup._toml_unrelated_values(setup._parse_toml(preview(path)), {'engram'})
+    assert setup._toml_values_identical(before, after)
+
+
+def test_codex_guard_refuses_accidental_owner_serialization_change(tmp_path, monkeypatch, capsys):
+    path = tmp_path / 'config.toml'
+    text = '[mcp_servers.engram]\ncommand="old"\nenabled=false\n'
+    path.write_text(text, encoding='utf-8')
+    original = setup._toml_value
+    monkeypatch.setattr(setup, '_toml_value', lambda value: 'true' if value is False else original(value))
+    with pytest.raises(setup._ManualTomlStep):
+        preview(path)
+    assert path.read_text(encoding='utf-8') == text
+    assert '[mcp_servers.engram]' in capsys.readouterr().out
