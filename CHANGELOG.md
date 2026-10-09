@@ -37,6 +37,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Codex setup preserves all Owner server controls and unmanaged environment values in table and inline forms, merges legacy controls, and refuses conflicting values with manual instructions.
 - Local work-style updates read and write under one identity lock, preserving concurrently approved values in unrelated fields.
 - Native backups include versioned, validated identity proposals and interrupted approval state, restore without automatic approval or duplicate proposals, and retain rejection records while MCP pending-export restrictions stay unchanged.
+- Native backup imports refuse conflicting identity rejection records or decisions before any store changes, preserve interrupted local approvals and identity values, and identify proposals requiring local resolution or recovery with `engram doctor --fix`.
 - Read-only stores and SessionStart workers report damaged identity or knowledge files without creating quarantine copies, and read-only or preview CLI commands skip startup update checks, usage notices and usage pings.
 - Documentation clarifies that MCP startup never imports other tools' memories or changes knowledge or identity content, while startup and read tools may write session checkpoints and usage records.
 - Interrupted identity approval can recover through a matching approval retry or `engram doctor --fix`, and rejection cannot override approval already in progress.

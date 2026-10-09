@@ -87,8 +87,38 @@ def _backup_veto(row, stones):
     return None
 
 
+class IdentityImportConflict(ValueError):
+    """A backup contradicts an existing local identity decision or intent."""
+
+    def __init__(self, proposal_ids):
+        self.proposal_ids = sorted(proposal_ids)
+        super().__init__(
+            'Identity review conflict for proposals: ' + ', '.join(self.proposal_ids) + '. '
+            'Finish or roll back the local approval first; for interrupted approvals, '
+            'run "engram doctor --fix" or retry the matching approval. '
+            'Resolve conflicting local decisions before importing. Nothing was imported.')
+
+
+def validate_backup_conflicts(current, incoming, stones):
+    """Reject contradictory decisions before import can write any store section."""
+    decisions = {'applying': 'approve', 'approved': 'approve', 'rejected': 'reject'}
+    incoming_by_id = {r['id']: r for r in incoming}
+    conflicts = set()
+    for row in current:
+        local_decision = decisions.get(row['status'])
+        other = incoming_by_id.get(row['id'])
+        incoming_decision = decisions.get(other['status']) if other is not None else None
+        if local_decision and incoming_decision and local_decision != incoming_decision:
+            conflicts.add(row['id'])
+        if local_decision == 'approve' and _backup_veto(row, stones):
+            conflicts.add(row['id'])
+    if conflicts:
+        raise IdentityImportConflict(conflicts)
+
+
 def merge_backup_rows(current, incoming, stones):
     """Keep local decisions/intents, deduplicate patches, and honor restored vetoes."""
+    validate_backup_conflicts(current, incoming, stones)
     rows = deepcopy(current)
     by_id = {r['id']: r for r in rows}
     body = (*BODY_FIELDS, 'missing_before')
