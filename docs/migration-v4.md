@@ -99,7 +99,7 @@ with `engram review`.
 | `remove_relation(src_id, dst_id, rel)` | `manage_relation(action="unlink", src_id=..., dst_id=..., rel=...)` |
 
 With `rel` empty the relation is the untyped bidirectional "see also" link;
-with `rel` set (`led_to` / `supersedes` / `implemented_by`) it is the typed,
+with `rel` set (`led_to` / `implemented_by`) it is the typed,
 directed evolution edge.
 
 ### Knowledge exploration (3 → 1)
@@ -212,3 +212,5 @@ tables above.
 **Where is the current tool inventory?** See
 [`tool-surface-analysis.md`](tool-surface-analysis.md) for the full 53-tool
 surface, governance classes, and tier split.
+
+`supersedes` is internal reviewed version lineage; manual MCP link/unlink is refused. / `supersedes` 是审核后的内部版本谱系，MCP 不允许手工建立或移除。

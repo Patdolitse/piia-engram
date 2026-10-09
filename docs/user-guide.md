@@ -57,7 +57,7 @@ connection. Every external write is backed up first, and declining leaves all
 configs untouched. For non-interactive/CI runs, `engram setup
 --apply-external-config` skips the prompt.
 
-By default you get **18 core MCP tools** (`ENGRAM_TOOLS=core`) — enough for
+By default you get **19 core MCP tools** (`ENGRAM_TOOLS=core`) — enough for
 install, first value, daily recall, and session wrap-up. The advanced set
 (review queues, import/export, governance, migration, Playbook management) stays
 off until you opt in with `ENGRAM_TOOLS=all`.

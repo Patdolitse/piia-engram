@@ -3,7 +3,7 @@
 > 中文版：[快速上手：约 5 分钟拿到第一个价值](quickstart-first-value.zh-CN.md)
 
 Goal: save one useful lesson and recall it in a fresh AI session using the
-default **18 core tools**. You do not need the advanced tools or
+default **19 core tools**. You do not need the advanced tools or
 `ENGRAM_TOOLS=all` for this path; the default is `ENGRAM_TOOLS=core`.
 
 This quickstart is for a local MCP-compatible coding tool such as Claude Code,
@@ -147,3 +147,25 @@ cross-client continuity levels until a validation run proves more.
   cross-tool handoff proof.
 - Read [Comparison](comparison.md) to understand where piia-engram sits among
   agent memory databases, repo rule files, and native tool memories.
+
+## Retrying a write after connection loss
+
+A local caller that observes a closed MCP session/transport or server shutdown
+receives `transport_unavailable`. Restart the client or rerun the command.
+Reuse the same idempotency key when one exists; for closeout, first query
+`get_wrap_up_session_status(idempotency_key=...)`. The error does not prove that
+nothing was written. Without a key, check the result before repeating the write.
+A disconnected transport cannot deliver an error response; the client must use
+the connection failure it can observe. There are no automatic reconnect loops.
+Hook failure logs and offline queue diagnostics provide the same code and guidance.
+
+## Migrating project snapshots
+
+Nested legacy layouts, mixed fields, unknown schemas and corrupt snapshots fail
+closed on writes with `migration_required`. Reads show decodable content and the
+migration condition without rewriting files. Preview with
+`engram migrate-project <project>`, then apply locally with
+`engram migrate-project <project> --apply --yes`. Conflicting mixed fields require
+`--prefer nested` or `--prefer top-level`. A local backup is saved before replacement.
+Unknown schemas and undecodable snapshots are not repaired by guessing; restore
+a valid backup before migrating them.

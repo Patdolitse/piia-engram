@@ -1,7 +1,7 @@
 # 快速上手：约 5 分钟拿到第一个价值
 
 目标：存一条有用的经验，然后在一个全新的 AI 会话里把它回忆出来——只用默认的
-**18 个核心工具**。这条路径不需要高级工具，也不需要
+**19 个核心工具**。这条路径不需要高级工具，也不需要
 `ENGRAM_TOOLS=all`；默认就是 `ENGRAM_TOOLS=core`。
 
 本指南面向本地的 MCP 兼容编程工具，例如 Claude Code、Codex、Cursor、Windsurf
@@ -134,3 +134,21 @@ L3 或 L4 行为已验证能力。这仍然是有用的第一个价值；只是�
   跨工具交接证明。
 - 读 [对比](comparison.md)，理解 piia-engram 在 agent 记忆数据库、仓库规则文件、
   原生工具记忆之间的定位。
+
+## 连接断开后的写入重试
+
+如果本地调用方观察到 MCP 会话或传输已关闭、或服务器正在退出，错误码为
+`transport_unavailable`。重启客户端或重新运行命令；有幂等键时沿用同一个键，
+可先用 `get_wrap_up_session_status(idempotency_key=...)` 查看收尾状态。
+收到错误并不证明写入未发生；没有幂等键时，先检查结果再重试。已断开的传输
+无法返回错误，调用方只能使用自己观察到的连接错误。不会自动重连或循环重试。
+Hook 失败日志和离线队列诊断也会提供该错误码和重试提示。
+
+## 项目快照迁移
+
+嵌套旧格式、混合字段、未知 schema 或损坏快照在写入时返回 `migration_required`；
+读取仍可查看可解码内容和迁移条件，不会改写文件。先运行
+`engram migrate-project <project>` 预览，再由本地用户运行
+`engram migrate-project <project> --apply --yes`。混合字段冲突需明确选择
+`--prefer nested` 或 `--prefer top-level`；成功替换前会保存本地备份。
+无法解码或未知 schema 不会自动猜测修复；可用备份恢复后再迁移。

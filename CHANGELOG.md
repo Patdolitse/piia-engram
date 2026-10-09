@@ -37,6 +37,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Breaking changes
 
+- Project snapshot writes reject nested legacy layouts, mixed fields and unknown schemas; preview with `engram migrate-project`, then confirm a backed-up local migration.
+
 - Identity changes proposed by AI tools through MCP `update_identity`, including trust-boundary changes, wait for local review in every mode while approved values stay in use; migrate by comparing values with `engram review show <id>` and deciding with `engram review interactive`.
 - OpenClaw `USER.md` and `SOUL.md` imports create pending identity proposals, including with `--apply --yes`; migrate by reviewing and approving the imported proposals with `engram review` before expecting identity changes to take effect.
 - Native backup exports refuse destinations inside the store or over managed files, including link aliases; migrate by choosing a destination outside the store or using the default sibling `<store-name>_exports` directory.
@@ -57,6 +59,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Native backups preserve hash-only identity rejection records, and rejection fingerprints allow a fresh proposal after the original value changes while retaining vetoes against identical changes.
 - Codex setup combines bare and quoted Engram entries in table or inline-table form, preserves existing environment values and legacy-only keys, and backs up and validates TOML before writing; without a complete parser or when an unrelated value would change, it leaves the configuration unchanged and provides a manual step.
 - Setup prints the Claude Code terminal restart hint once.
+
+- Retrying an older hook event preserves the newer session digest and next action.
+- Reviewed decision replacements synchronize predecessor state; historical inconsistencies stay out of current recall and doctor reports a local repair without writes.
+- Registry verification uses the v0.1 API and checks package versions and the latest marker; timeouts, unexpected shapes and mismatches fail clearly.
+- Doctor and setup import in either order while retaining compatibility exports.
+- Observable transport loss returns `transport_unavailable` with retry guidance, without automatic reconnects.
+- Capacity previews count future timestamps only from persisted data, avoiding false warnings when normalization crosses a second boundary.
+- Current documentation agrees on 59 MCP tools (Core 19 / Advanced 40) and clarifies decision threads, import candidates and client evidence.
 
 ### Release Evidence
 

@@ -4,8 +4,8 @@ This is the short operational view of the Engram MCP surface.
 
 ## Default surface
 
-- Default: 18 core tools.
-- Opt-in full surface: all 58 tools with `ENGRAM_TOOLS=all` (18 core + 40 advanced).
+- Default: 19 core tools.
+- Opt-in full surface: all 59 tools with `ENGRAM_TOOLS=all` (19 core + 40 advanced).
 - Core means high-frequency and context-budget friendly. It does not mean read-only.
 
 ## Capability modes

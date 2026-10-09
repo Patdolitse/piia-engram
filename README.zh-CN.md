@@ -311,7 +311,7 @@ $ engram doctor
     [ok] Engram initialized (~/.engram)
     [ok] Identity loaded (role: 后端开发工程师)
     [ok] quick_context.md ready (4096 bytes)
-    [ok] MCP server: 18 tools registered
+    [ok] MCP server: 19 tools registered
 
   -- Terminal encoding --
 
@@ -792,7 +792,7 @@ engram setup
 
 | 层级 | 工具数 | 功能 | 加载方式 |
 |------|--------|------|----------|
-| **核心** | 18 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
+| **核心** | 19 | 身份、知识读写、项目上下文、会话恢复 | 默认加载 |
 | **高级** | 40 | 知识审查、合并、健康评分、工具图谱、上下文治理预览、导入导出、审计 | `ENGRAM_TOOLS=all` |
 
 大多数用户无需开启高级工具 —— 核心工具覆盖日常使用。
@@ -900,3 +900,5 @@ engram privacy          # 查看 piia-engram 存了什么数据、存在哪里
 ## License
 
 [AGPL-3.0](LICENSE) — piia-engram 是自由软件，AI 工作身份和记忆属于你。
+
+<!-- MCP tool counts: total=59; Core=19; Advanced=40 -->

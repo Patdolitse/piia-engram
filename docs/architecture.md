@@ -73,7 +73,7 @@ After the v3.14.1 refactor, the v3.16.0 reports split, and the v3.55.0 monolith 
 | [`retrieval.py`](../src/piia_engram/retrieval.py) | ~639 | `RetrievalMixin` — tokenization (`_tokenize`, CJK + ASCII + alias expansion), `_bigram_similarity`, `_score_item`, `search_knowledge`, `get_relevant_lessons`, `get_knowledge_inheritance`, `find_similar_knowledge`, bulk add operations, tier promotion (`evaluate_tiers`, `get_staging_summary`), conflict detection (`_detect_decision_conflicts`, `_detect_lesson_conflicts`) |
 | [`search_index.py`](../src/piia_engram/search_index.py) | ~461 | Optional hybrid search — rebuildable SQLite index (FTS5 + optional `[vector]` semantic layer, RRF fusion) over the JSON store. JSON stays the single source of truth; enabled via `ENGRAM_SEARCH=hybrid`. See [hybrid-search.md](hybrid-search.md) |
 | [`context.py`](../src/piia_engram/context.py) | ~811 | `ContextMixin` — `generate_context` (the cold-start magic), `_estimate_tokens`, ingestion helpers (`_infer_domain`, `ingest_notes`, `extract_session_insights`) + standalone `extract_knowledge` for LLM-driven extraction |
-| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~590 | `ReconcileMixin` — explicit or startup-controlled import from other AI tools: global startup keeps the compatible scan, while project closeout filters Claude memory by exact canonical project identity and confines config scanning to the project root |
+| [`reconcile.py`](../src/piia_engram/reconcile.py) | ~590 | `ReconcileMixin` — explicit local import from other AI tools; MCP startup, cold start and closeout do not scan external client memories. Project-scoped scans use exact canonical project identity and confine config scanning to the project root |
 | [`reports.py`](../src/piia_engram/reports.py) | 20 | `ReportsMixin` — thin composition hub, inherits from 4 sub-mixins below |
 | [`reports_rarity.py`](../src/piia_engram/reports_rarity.py) | ~84 | `RarityMixin` — `classify_rarity` (WoW-style legendary/epic/rare), `RARITY_TIERS` constant |
 | [`reports_review.py`](../src/piia_engram/reports_review.py) | ~517 | `ReviewMixin` — `generate_review_page` (interactive HTML audit), `export_review_page`, `promote_knowledge`, `apply_review` |
@@ -95,7 +95,7 @@ Session Markdown remains the human-readable local record. The digest sidecar is 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
 | [`mcp_server.py`](../src/piia_engram/mcp_server.py) | ~1400 | FastMCP server core: shared state (`_engram`, `_session`), stdio + SSE transports, `TokenAuthMiddleware`, `_apply_tool_tier` (filters to Tier-1 by default), `_validate_path`, `ToolCallTracker` integration. Re-exports every tool from the `mcp_tools_*` modules |
-| `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1500 each | All 58 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
+| `mcp_tools_read / write / knowledge / admin / session .py` | ~330–1500 each | All 59 `@mcp.tool()` async wrappers, grouped by surface (context/recall queries; memory store + playbooks + tool registry; bulk/merge/lifecycle; permissions/governance/import-export; agent-session context). Each binds back to `mcp_server` via late `S.<name>` lookups so module-level state and monkeypatches resolve there |
 | [`crypto.py`](../src/piia_engram/crypto.py) | ~166 | `EncryptionEngine` — AES-256-GCM with PBKDF2-SHA256 (600k iterations, v2). Decrypts legacy v1 (100k) for backward compatibility |
 | [`telemetry.py`](../src/piia_engram/telemetry.py) | ~337 | `ToolCallTracker` — opt-in anonymous usage statistics (local log first; remote send and weekly feedback are separate, independent opt-ins, count-only/metadata-only), payload validation, HMAC daily ID, preview/status CLI support |
 | [`usage_ping.py`](../src/piia_engram/usage_ping.py) | ~420 | Daily anonymous usage ping (on by default; DO_NOT_TRACK / ENGRAM_TELEMETRY=0 / engram telemetry off; off in CI and in containers) |
@@ -348,3 +348,22 @@ For tools that have transcripts on disk but no hook system. A scan loop ([`core.
 - Hybrid search: [hybrid-search.md](hybrid-search.md) · [中文版](hybrid-search.zh-CN.md)
 - Security model: [SECURITY.md](../SECURITY.md)
 - Contributing & test baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)
+
+<!-- MCP tool counts: total=59; Core=19; Advanced=40 -->
+
+Decision threads use `get_decisions(thread_seed_id=...)`; question history uses
+`get_decisions(history_question=...)`. `manage_relation` manages `led_to` and
+`implemented_by`; `supersedes` is maintained by reviewed revisions and local
+Owner supersede operations, and cannot be manually linked or unlinked over MCP.
+Unreviewed successors do not hide reviewed predecessors. Doctor reports historical
+active predecessors without changing them and suggests an explicit local repair.
+
+Import version candidates are previewed by `engram import`. Materialization needs
+`--apply --yes --materialize-version-chain`; a candidate that remains pending
+carries `pending_supersedes` and does not retire the reviewed predecessor until
+local approval. Replaying the same version is idempotent.
+
+Client names, versions and provenance labels are self-reported evidence, not proof
+of identity, authorization or model compliance. Setup detection and a successful
+MCP call do not alone establish verified cross-client continuity; use the recorded
+L-level evidence boundaries in the client validation documentation.
