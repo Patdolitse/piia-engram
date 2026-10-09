@@ -1386,10 +1386,10 @@ def _find_mcp_server() -> str | None:
     return None
 
 
-def _detect_tools() -> list[dict]:
+def _detect_tools(configs: dict | None = None) -> list[dict]:
     """检测已安装的 AI 工具，返回可配置的工具列表。"""
     detected = []
-    for tool_id, cfg in _tool_configs().items():
+    for tool_id, cfg in (_tool_configs() if configs is None else configs).items():
         if cfg.get("register_via") == "claude_cli":
             # Registered through the claude command; the file is only parsed, never written.
             if _claude_code_mcp.is_installed():
@@ -4000,6 +4000,9 @@ def main() -> None:
             "  engram setup --apply-external-config  Auto-configure AI clients with backups\n"
             "  engram setup --advanced Full interactive setup with privacy prompts\n"
             "  engram setup --non-interactive [--apply] [--json] [--clients IDS] [--lang zh|en]\n"
+            "                          Plan mode writes nothing to the Engram store, home directory\n"
+            "                          or client configs. Python itself may use the system\n"
+            "                          temporary directory.\n"
             "  engram doctor           Check config health (all AI tools; no writes to the memory\n"
             "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"

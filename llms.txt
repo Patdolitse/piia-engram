@@ -8,6 +8,8 @@ Install the package with `pip install piia-engram`, then inspect a dry run:
 One-line install and apply, after inspecting the plan:
 `pip install piia-engram && engram setup --non-interactive --apply`.
 Use `--clients cursor,codex` to limit clients; `--lang zh|en` defaults to en.
+Plan mode writes nothing to the Engram store, home directory or client configs.
+Python itself may use the system temporary directory.
 Verify with `engram doctor --json`, then restart configured clients.
 
 AI proposes identity and knowledge changes; it cannot approve them through MCP.

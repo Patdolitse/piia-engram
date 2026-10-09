@@ -3,6 +3,8 @@ import builtins
 import io
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -275,7 +277,10 @@ def test_changed_target_before_apply_is_not_overwritten(sandbox, monkeypatch, ca
     from piia_engram import agent_setup as A
     real = A._apply
     edited = b'{"mcpServers":{"peer":{"command":"edited-locally"}}}'
+    planned = {}
     def changed(store, plans):
+        row = next(p.row for p in plans if p.row['id'] == 'cursor')
+        planned.update({key: row[key] for key in ('action', 'writes', 'commands')})
         path.write_bytes(edited)
         return real(store, plans)
     monkeypatch.setattr(A, '_apply', changed)
@@ -283,6 +288,10 @@ def test_changed_target_before_apply_is_not_overwritten(sandbox, monkeypatch, ca
     assert code == 1 and path.read_bytes() == edited
     row = next(r for r in json.loads(output.out)['clients'] if r['id'] == 'cursor')
     assert row['reason'] == 'config_changed'
+    assert row['result'] == 'manual'
+    assert planned['action'] == 'write'
+    assert planned['writes'] == ['~/.cursor/mcp.json']
+    assert {key: row[key] for key in planned} == planned
 
 
 def test_apply_error_is_partial_and_does_not_disclose_exception(sandbox, monkeypatch, capsys):
@@ -441,3 +450,156 @@ def test_claude_size_cap_is_checked_before_body_read(sandbox, monkeypatch, capsy
     monkeypatch.setattr(A, '_bytes', forbidden)
     code, output = cli(monkeypatch, capsys, '--non-interactive', '--apply', '--json')
     assert code == 1 and 'oversized private body' not in output.out + output.err
+
+
+@pytest.mark.parametrize('existing_store', [False, True])
+def test_cold_plan_rejects_write_attempts_to_protected_locations(sandbox, tmp_path, existing_store):
+    home, store = sandbox
+    config(home)
+    config(home, 'codex', 'model = "sample"\r\n')
+    if existing_store:
+        store.mkdir()
+        (store / 'identity.json').write_bytes(b'{"name":"untouched"}')
+    # Install the audit hook before importing the CLI. Temporary probes outside
+    # these locations are allowed, including Python's gettempdir() probe.
+    probe = r'''
+import json, os, sys
+from pathlib import Path
+roots = [os.path.abspath(os.environ[key]) for key in
+         ('ENGRAM_DIR', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CLAUDE_CONFIG_DIR')]
+def protected(path):
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return False
+    path = os.path.abspath(os.fsdecode(path))
+    return any(os.path.commonpath([path, root]) == root for root in roots)
+def audit(event, args):
+    paths = []
+    if event == 'open':
+        mode, flags = args[1:]
+        if (mode and any(c in mode for c in 'wax+')) or (flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT)):
+            paths = [args[0]]
+    elif event in ('os.mkdir', 'os.remove', 'os.rmdir', 'os.chmod', 'os.utime', 'os.truncate'):
+        paths = [args[0]]
+    elif event in ('os.rename', 'os.link', 'os.symlink'):
+        paths = args[:2]
+    if any(protected(path) for path in paths):
+        raise AssertionError('plan attempted a protected filesystem write')
+sys.addaudithook(audit)
+from piia_engram.setup_wizard import main
+sys.argv = ['engram', 'setup', '--non-interactive', '--json']
+main()
+'''
+    before = snapshot(tmp_path)
+    result = subprocess.run([sys.executable, '-c', probe], env=dict(os.environ),
+                            stdin=subprocess.DEVNULL, capture_output=True,
+                            text=True, encoding='utf-8', timeout=30, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['mode'] == 'plan'
+    assert not result.stderr and snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize('apply', [False, True])
+@pytest.mark.parametrize('selection', [None, 'cursor,codex', 'codex'])
+@pytest.mark.parametrize('inaccessible', ['config', 'parent'])
+def test_detection_failure_is_per_client_and_sanitized(
+        sandbox, tmp_path, monkeypatch, capsys, apply, selection, inaccessible):
+    home, _ = sandbox
+    cursor = config(home)
+    codex = config(home, 'codex', 'model = "sample"\r\n')
+    denied = cursor if inaccessible == 'config' else cursor.parent
+    real = Path.exists
+    def exists(path):
+        if path == denied:
+            raise PermissionError(f'SECRET_DETECTION_ERROR: {denied}')
+        # Force the wizard to check the parent for this case.
+        return False if inaccessible == 'parent' and path == cursor else real(path)
+    monkeypatch.setattr(Path, 'exists', exists)
+    before = snapshot(tmp_path)
+    args = ['--non-interactive', '--json']
+    if selection is not None:
+        args += ['--clients', selection]
+    if apply:
+        args += ['--apply']
+    code, output = cli(monkeypatch, capsys, *args)
+    needs_attention = selection != 'codex'
+    report = json.loads(output.out)
+    assert code == (1 if needs_attention else 0)
+    assert report['result'] == ('partial' if needs_attention else 'ok')
+    rows = {row['id']: row for row in report['clients']}
+    row = rows['cursor']
+    assert row['selected'] is needs_attention and row['detected'] is False
+    assert row['config_path'] == '~/.cursor/mcp.json'
+    assert row['result'] == ('manual' if needs_attention else 'excluded')
+    assert row['reason'] == 'detection_failed'
+    assert row['action'] == ('manual' if needs_attention else 'none')
+    assert not row['writes'] and not row['commands']
+    assert rows['codex']['result'] == ('written' if apply else 'planned')
+    assert cursor.read_bytes() == b'{"mcpServers": {}}\r\n'
+    assert not output.err
+    assert 'SECRET_DETECTION_ERROR' not in output.out
+    assert str(home) not in output.out and str(denied) not in output.out
+    if apply:
+        assert 'mcp_servers' in W._parse_toml(codex.read_text(), require_complete=True)
+    else:
+        assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize('windows', [False, True])
+@pytest.mark.parametrize('suffix', ['my memories', "owner's files", '$value; & | < > ` $(sample) " % ! [x]'])
+def test_redacted_manual_template_round_trips_shell_arguments(sandbox, monkeypatch, capsys, windows, suffix):
+    home, _ = sandbox
+    (home / '.claude').mkdir()
+    original = C.manual_command
+    monkeypatch.setattr(C, 'manual_command', lambda entry: original(entry, windows=windows))
+    code, output = cli(monkeypatch, capsys, '--non-interactive', '--json')
+    assert code == 1
+    template = json.loads(output.out)['clients'][0]['manual_command']
+    assert template is not None
+    assert "'ENGRAM_DIR=<store>'" in template and "'<python>'" in template
+    values = {'store': f'/data/{suffix}', 'python': f'/opt/{suffix}/python',
+              'mode': 'all', 'encoding': 'utf-8'}
+    command = template
+    for key, value in values.items():
+        escaped = value.replace("'", "''" if windows else "'\"'\"'")
+        command = command.replace(f'<{key}>', escaped)
+    if windows:
+        assert " '--' " in template
+        # Recognize PowerShell's literal strings and safe bare tokens only;
+        # metacharacters outside literal strings fail this grammar.
+        tokens = re.findall(r"'(?:[^']|'')*'|[-a-zA-Z0-9_./:=+\\]+", command)
+        assert ' '.join(tokens) == command
+        words = [token[1:-1].replace("''", "'") if token.startswith("'") else token
+                 for token in tokens]
+    else:
+        words = shlex.split(command)
+    entry = {'command': values['python'], 'args': ['-m', 'piia_engram.mcp_server'],
+             'env': {'ENGRAM_DIR': values['store'], 'ENGRAM_TOOLS': values['mode'],
+                     'PYTHONIOENCODING': values['encoding']}}
+    assert words == ['claude', *C.add_args(entry)]
+
+
+@pytest.mark.parametrize('changed', ['user', 'legacy', 'strict'])
+def test_claude_apply_refusal_preserves_registration_plan(sandbox, monkeypatch, capsys, changed):
+    home, store = sandbox
+    (home / '.claude').mkdir()
+    monkeypatch.setattr(C, 'cli_path', lambda: 'mock-claude.exe')
+    from piia_engram import agent_setup as A
+    original = A._apply
+    planned = {}
+    def apply(store, plans):
+        row = next(p.row for p in plans if p.row['id'] == 'claude_code')
+        planned.update({key: row[key] for key in ('action', 'writes', 'commands')})
+        if changed == 'strict':
+            store.mkdir()
+            (store / 'approval_mode.json').write_bytes(b'{}')
+        else:
+            path = C.user_config_path() if changed == 'user' else C.legacy_path()
+            path.write_bytes(b'{}')
+        return original(store, plans)
+    monkeypatch.setattr(A, '_apply', apply)
+    code, output = cli(monkeypatch, capsys, '--non-interactive', '--apply', '--json')
+    assert code == 1
+    row = json.loads(output.out)['clients'][0]
+    assert row['result'] == 'manual' and row['reason'] == 'config_changed'
+    assert planned['action'] == 'register' and planned['commands']
+    assert {key: row[key] for key in planned} == planned

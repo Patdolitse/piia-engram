@@ -93,7 +93,8 @@ engram doctor --json
 ```
 
 全程无问答。用 `--clients cursor,codex` 限定客户端，用 `--lang zh|en` 选择输出语言
-（默认 `en`）。只配置 MCP 连接，写入前备份，保留已有工具模式，不导入记忆、
+（默认 `en`）。不加 `--apply` 的计划模式不写入 Engram 存储目录、主目录或客户端配置；
+Python 自身可能使用系统临时目录。执行时只配置 MCP 连接，写入前备份，保留已有工具模式，不导入记忆、
 不写入身份或知识、不批准提案。完成后重启客户端；退出码 1 表示仍有手动步骤。
 Agent 指引见 [llms.txt](llms.txt)，详情见 [CLI 与 JSON 契约](docs/specs/agent-setup-v1.md)。
 
