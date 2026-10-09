@@ -1,0 +1,22 @@
+# piia-engram
+
+Engram is a local-first personal AI identity and memory layer shared across
+MCP-compatible coding tools. Its JSON/Markdown data stays on your machine.
+
+Install the package with `pip install piia-engram`, then inspect a dry run:
+`engram setup --non-interactive --json`.
+One-line install and apply, after inspecting the plan:
+`pip install piia-engram && engram setup --non-interactive --apply`.
+Use `--clients cursor,codex` to limit clients; `--lang zh|en` defaults to en.
+Verify with `engram doctor --json`, then restart configured clients.
+
+AI proposes identity and knowledge changes; it cannot approve them through MCP.
+Identity changes and high-risk knowledge wait for local owner review: `engram review`.
+Strict mode (`ENGRAM_APPROVAL=strict`) queues all knowledge writes for owner review.
+Non-interactive setup never imports memories, writes identity/knowledge, or approves proposals.
+
+- [README](README.md)
+- [中文 README](README.zh-CN.md)
+- [Setup CLI and JSON contract](docs/specs/agent-setup-v1.md)
+- [User guide](docs/user-guide.md)
+- [Trust model](docs/trust.md)

@@ -6,6 +6,17 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Agent-friendly `engram setup --non-interactive`: read-only plan by default,
+  explicit `--apply`, client filtering, output language, versioned JSON, and
+  partial/usage exit codes. Reuses configuration backups and Claude Code CLI
+  registration without identity changes, memory imports, or proposal approvals.
+- Public `llms.txt` and bilingual agent-install instructions with a documented
+  setup JSON contract.
+
 ## [4.23.0] - 2026-10-09
 
 ### Breaking changes
