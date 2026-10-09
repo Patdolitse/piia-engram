@@ -8,8 +8,11 @@ silently.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from piia_engram.hooks._log import log_failure
 
@@ -19,6 +22,29 @@ def _log_path(tmp_path: Path) -> Path:
 
 
 class TestLogFailure:
+    @pytest.mark.parametrize("fallback", [False, True])
+    def test_flushes_line_before_closing(self, tmp_path, monkeypatch, fallback):
+        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram"))
+        events = []
+
+        class Handle:
+            def __enter__(self):
+                return self
+            def write(self, line):
+                events.append(("write", line))
+            def flush(self):
+                events.append(("flush", None))
+            def __exit__(self, *args):
+                events.append(("close", None))
+
+        if fallback:
+            (tmp_path / "engram").write_text("not a directory", encoding="utf-8")
+        monkeypatch.setattr("builtins.open", lambda *args, **kwargs: Handle())
+        monkeypatch.setattr(Path, "open", lambda *args, **kwargs: Handle())
+        log_failure("test_hook", "budget exceeded")
+        assert [event[0] for event in events] == ["write", "flush", "close"]
+        assert "[test_hook] budget exceeded\n" in events[0][1]
+
     def test_writes_hook_name_and_exception(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram"))
 
@@ -72,6 +98,39 @@ class TestLogFailure:
 
 class TestHookIntegration:
     """Failing Engram backends leave a breadcrumb instead of pure silence."""
+
+    @pytest.mark.parametrize("module", ["auto_save_on_stop", "auto_absorb_compact",
+                                       "cursor_save_on_stop", "cursor_writeback"])
+    def test_capture_failure_logs_on_calling_thread(self, tmp_path, monkeypatch, module):
+        from importlib import import_module
+        from piia_engram.hooks import _producer
+
+        calls = []
+        def record(*args):
+            calls.append((threading.current_thread(), args))
+
+        monkeypatch.setattr(_producer, "log_failure", record)
+        monkeypatch.setattr("sys.stdin", type("F", (), {"read": lambda self, size=-1: "{"})())
+        monkeypatch.setattr("sys.argv", ["hook"])
+        monkeypatch.setenv("ENGRAM_CURSOR_WRITEBACK", "1")
+        assert import_module("piia_engram.hooks." + module).main() == 0
+        assert len(calls) == 1
+        assert calls[0][0] is threading.current_thread()
+        assert "capture failed (JSONDecodeError)" in calls[0][1][1]
+
+    def test_read_failure_logs_on_calling_thread(self, monkeypatch):
+        from piia_engram.hooks import _budget
+
+        calls = []
+        monkeypatch.setattr(_budget, "log_failure", lambda *args:
+                            calls.append((threading.current_thread(), args)))
+        def failed_read():
+            raise OSError("read unavailable")
+
+        assert _budget.read_with_budget(failed_read, "test_hook") == ""
+        assert len(calls) == 1
+        assert calls[0][0] is threading.current_thread()
+        assert calls[0][1] == ("test_hook", "resume read failed (OSError)")
 
     def test_auto_absorb_compact_logs_engram_failure(self, tmp_path, monkeypatch):
         from piia_engram.hooks import auto_absorb_compact

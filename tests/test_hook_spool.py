@@ -327,25 +327,78 @@ def test_retry_does_not_reset_event_age(tmp_path, monkeypatch):
     assert spool.backlog(tmp_path)["oldest_age_seconds"] > 365 * 86400
 
 
-def test_read_timeout_process_exits_without_joining_worker(tmp_path):
+@pytest.mark.parametrize("module", ["auto_inject_resume_brief", "cursor_inject_resume_brief"])
+def test_read_timeout_process_exits_without_joining_worker(tmp_path, module):
     code = """
-import io, sys, time
+import builtins, io, os, sys, time, threading
+from importlib import import_module
+from pathlib import Path
 from piia_engram import core
-from piia_engram.hooks import _budget, auto_inject_resume_brief
+from piia_engram.hooks import _budget
+from piia_engram.hooks._log import log_failure
 _budget.READ_BUDGET_SECONDS = 0.05
+def delayed_background_log(*args, **kwargs):
+    # A scheduled daemon cannot be relied on to write before process exit.
+    if threading.current_thread() is not threading.main_thread():
+        time.sleep(30)
+    log_failure(*args, **kwargs)
+_budget.log_failure = delayed_background_log
+original_print = builtins.print
+def checked_print(*args, **kwargs):
+    log = (Path(os.environ['ENGRAM_DIR']) / 'logs' / 'hooks.log').read_text(encoding='utf-8')
+    assert 'resume read budget exceeded' in log and log.endswith(chr(10))
+    original_print(*args, **kwargs)
+builtins.print = checked_print
 class Slow:
     def __init__(self, **kwargs): pass
     def get_resume_brief(self, **kwargs):
         time.sleep(30)
 core.Engram = Slow
 sys.stdin = io.StringIO('{}')
-auto_inject_resume_brief.main()
+raise SystemExit(import_module('piia_engram.hooks.' + sys.argv[1]).main())
 """
-    result = subprocess.run([sys.executable, "-c", code], text=True, capture_output=True,
-                            env=child_env(tmp_path / "profile", tmp_path / "store"), timeout=3)
+    # Allow cold imports on busy Windows hosts, while still rejecting a join
+    # of either 30-second worker. The application budget remains 50 ms.
+    result = subprocess.run([sys.executable, "-c", code, module], text=True, capture_output=True,
+                            env=child_env(tmp_path / "profile", tmp_path / "store"), timeout=10)
     assert result.returncode == 0
     assert json.loads(result.stdout) == {"continue": True}
-    assert "budget exceeded" in (tmp_path / "store" / "logs" / "hooks.log").read_text(encoding="utf-8")
+    log = (tmp_path / "store" / "logs" / "hooks.log").read_text(encoding="utf-8")
+    assert f"[{module}] resume read budget exceeded" in log
+
+
+@pytest.mark.parametrize("module", ["auto_inject_resume_brief", "cursor_inject_resume_brief"])
+def test_read_timeout_log_write_failure_still_exits_zero(tmp_path, module):
+    code = """
+import builtins, io, sys, time
+from importlib import import_module
+from pathlib import Path
+from piia_engram import core
+from piia_engram.hooks import _budget
+_budget.READ_BUDGET_SECONDS = 0.05
+class Slow:
+    def __init__(self, **kwargs): pass
+    def get_resume_brief(self, **kwargs):
+        time.sleep(30)
+core.Engram = Slow
+original_open, original_path_open = builtins.open, Path.open
+def denied_open(file, *args, **kwargs):
+    if str(file).endswith('hooks.log'):
+        raise OSError('log unavailable')
+    return original_open(file, *args, **kwargs)
+def denied_path_open(file, *args, **kwargs):
+    if str(file).endswith('hooks.log'):
+        raise OSError('log unavailable')
+    return original_path_open(file, *args, **kwargs)
+builtins.open, Path.open = denied_open, denied_path_open
+sys.stdin = io.StringIO('{}')
+raise SystemExit(import_module('piia_engram.hooks.' + sys.argv[1]).main())
+"""
+    result = subprocess.run([sys.executable, "-c", code, module], text=True, capture_output=True,
+                            env=child_env(tmp_path / "profile", tmp_path / "store"), timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"continue": True}
+    assert result.stderr == ""
 
 
 def test_maximum_unicode_summary_does_not_double_envelope_size(tmp_path):
