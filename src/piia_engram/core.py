@@ -169,6 +169,12 @@ class Engram(
     """Read/write interface to the user's global Engram."""
 
     def __init__(self, root: Path | None = None, *, read_only: bool = False):
+        from contextlib import nullcontext
+
+        with non_quarantining_reads() if read_only else nullcontext():
+            self._initialize(root, read_only=read_only)
+
+    def _initialize(self, root: Path | None, *, read_only: bool):
         # read_only: open the store for a guaranteed zero-write read — e.g. a
         # local desktop client that only needs a resume brief and must never
         # mutate the store. Skips the session-state stamp, structure
@@ -3627,4 +3633,24 @@ def _read_only_guard(method):
 
 for _name in sorted(STORE_WRITE_METHODS):
     setattr(Engram, _name, _read_only_guard(getattr(Engram, _name)))
+
+
+def _non_quarantining_read_guard(method):
+    import functools
+
+    @functools.wraps(method)
+    def guarded(self, *args, **kwargs):
+        if getattr(self, '_read_only', False):
+            with non_quarantining_reads():
+                return method(self, *args, **kwargs)
+        return method(self, *args, **kwargs)
+
+    return guarded
+
+
+for _name in sorted(READ_ONLY_SAFE_METHODS):
+    import inspect
+
+    if not isinstance(inspect.getattr_static(Engram, _name), (staticmethod, classmethod)):
+        setattr(Engram, _name, _non_quarantining_read_guard(getattr(Engram, _name)))
 del _name
