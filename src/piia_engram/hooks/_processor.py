@@ -144,7 +144,11 @@ class _EventWriter:
 
     def _add(self, kind, payload, **kwargs):
         from ..storage import hold_directory_lock
-        operation = hashlib.sha256((kind + json.dumps(payload, sort_keys=True, ensure_ascii=True)).encode()).hexdigest()
+        # Evidence/extraction timestamps can change on retry. The operation is
+        # the frozen candidate text in this event, even if an owner later edits it.
+        identity = {"text": payload.get("summary" if kind == "lesson" else "title", ""),
+                    "project_folder": payload.get("project_folder", "")}
+        operation = hashlib.sha256((kind + json.dumps(identity, sort_keys=True, ensure_ascii=True)).encode()).hexdigest()
         with hold_directory_lock(self.engram._knowledge_dir):
             rows = self.engram._read_entries(self.engram._knowledge_dir / (kind + "s.json"), kind)
             rows += self.engram._read_overflow_archive(kind)

@@ -22,6 +22,9 @@ def child_env(base, store):
         env[key] = str(directory)
     env.update(ENGRAM_DIR=str(store), DO_NOT_TRACK="1", ENGRAM_NO_UPDATE_CHECK="1",
                PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
+    for key in ("CLAUDE_INVOKED_BY", "ENGRAM_CURSOR_INJECT_ACTIVE",
+                "ENGRAM_CURSOR_SAVE_ACTIVE", "ENGRAM_CURSOR_WRITEBACK_ACTIVE"):
+        env.pop(key, None)
     return env
 
 
@@ -200,6 +203,15 @@ def test_staging_extraction_drains_but_mcp_does_not(tmp_path):
 def test_partial_commit_replay_keeps_one_staging_row(tmp_path, monkeypatch):
     from piia_engram.core import Engram
     from piia_engram.hooks import spool
+    from piia_engram import context
+    original_metadata = context._make_extraction_metadata
+    attempts = []
+
+    def changing_metadata(*args, **kwargs):
+        attempts.append(True)
+        return dict(original_metadata(*args, **kwargs), attempt_nonce=len(attempts))
+
+    monkeypatch.setattr(context, "_make_extraction_metadata", changing_metadata)
     event_id = spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY}, root=tmp_path)
     original = Engram.add_lesson
 
@@ -211,11 +223,15 @@ def test_partial_commit_replay_keeps_one_staging_row(tmp_path, monkeypatch):
     assert spool.drain(tmp_path)["failed"] == 1
     # A changed candidate must not cause the event to re-extract altered input.
     eng = Engram(root=tmp_path, read_only=True)
-    assert len(eng.get_lessons(limit=None, _update_access=False)) == 1
+    rows = eng.get_lessons(limit=None, _update_access=False)
+    assert len(rows) == 1
+    Engram(root=tmp_path).update_lesson(rows[0]["id"], {
+        "summary": "A distinct owner-edited proposal that must survive replay."})
     monkeypatch.setattr(Engram, "add_lesson", original)
     assert spool.drain(tmp_path)["processed"] == 1
     rows = eng.get_lessons(limit=None, _update_access=False)
     assert len(rows) == 1 and rows[0]["hook_event_id"] == event_id
+    assert rows[0]["summary"] == "A distinct owner-edited proposal that must survive replay."
 
 
 @pytest.mark.parametrize("kind", ["cursor_save", "claude_compact"])
@@ -338,3 +354,64 @@ def test_maximum_unicode_summary_does_not_double_envelope_size(tmp_path):
     result = spool.drain(tmp_path)
     assert result["processed"] == 1
     assert result["failed"] == result["quarantined"] == 0
+
+
+def test_mcp_stdio_initialize_and_read_leave_queue_untouched(tmp_path):
+    """Real JSON-RPC using ordinary pipes, including environments without overlapped pipes."""
+    import queue
+    import threading
+    from piia_engram.hooks.spool import enqueue, spool_dir
+    store = tmp_path / "store"
+    enqueue("cursor_writeback", "cursor", {"summary": SUMMARY}, root=store)
+    before = {p.name: p.read_bytes() for p in spool_dir(store).glob("*.jsonl")}
+    env = child_env(tmp_path / "profile", store)
+    env.update(ENGRAM_EPHEMERAL="1", ENGRAM_TOOLS="core")
+    process = subprocess.Popen([sys.executable, "-m", "piia_engram.mcp_server"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env)
+    responses = queue.Queue()
+
+    def read_frames():
+        for line in process.stdout:
+            try:
+                responses.put(json.loads(line))
+            except ValueError:
+                continue
+
+    reader = threading.Thread(target=read_frames, daemon=True)
+    reader.start()
+
+    def send(message):
+        process.stdin.write(json.dumps(message) + "\n")
+        process.stdin.flush()
+
+    def response(request_id):
+        deadline = time.monotonic() + 20
+        while True:
+            frame = responses.get(timeout=max(0.01, deadline - time.monotonic()))
+            if frame.get("id") == request_id:
+                assert "error" not in frame, frame
+                return frame["result"]
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "synthetic-test", "version": "1"}}})
+        assert response(1)["serverInfo"]
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        assert any(tool["name"] == "get_user_context" for tool in response(2)["tools"])
+        send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "get_user_context", "arguments": {"level": "quick"}}})
+        assert not response(3).get("isError")
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        reader.join(timeout=2)
+        process.stdout.close()
+    assert {p.name: p.read_bytes() for p in spool_dir(store).glob("*.jsonl")} == before
+    assert not (store / "knowledge" / "lessons.json").exists()
