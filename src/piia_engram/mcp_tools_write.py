@@ -79,12 +79,14 @@ def _supersede_refusal(kind: str, content, expected) -> dict | None:
 
 
 def _guarded_add(kind: str, content: dict, expected, add, *args, **kwargs):
-    """Run ``add`` under the MCP write lock after the supersede version check."""
+    """Validate and persist a replacement under the shared knowledge lock."""
     def _call():
-        refusal = _supersede_refusal(kind, content, expected)
-        if refusal is not None:
-            return refusal
-        return add(*args, **kwargs)
+        from .storage import hold_directory_lock
+        with hold_directory_lock(S._get_engram()._knowledge_dir, timeout=30):
+            refusal = _supersede_refusal(kind, content, expected)
+            if refusal is not None:
+                return refusal
+            return add(*args, **kwargs)
 
     return S._locked_engram_call(_call)
 
@@ -219,12 +221,14 @@ async def memory_store(
             )
 
         def _batch_write():
-            refusal = _batch_refusal()
-            if refusal is not None:
-                return refusal
-            return S._get_engram().bulk_add_knowledge(
-                items, item_type=kind or "lesson", source_tool=source_tool,
-            )
+            from .storage import hold_directory_lock
+            with hold_directory_lock(S._get_engram()._knowledge_dir, timeout=30):
+                refusal = _batch_refusal()
+                if refusal is not None:
+                    return refusal
+                return S._get_engram().bulk_add_knowledge(
+                    items, item_type=kind or "lesson", source_tool=source_tool,
+                )
 
         result = S._locked_engram_call(_batch_write)
         if isinstance(result, dict) and result.get("error") in (
