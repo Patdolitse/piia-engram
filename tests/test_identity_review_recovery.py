@@ -325,3 +325,161 @@ def test_noop_preview_does_not_mark_any_identity_field_written(eng, field, updat
                                          preview=preview)['status'] == 'planned'
     assert preview.written == set()
     assert apply(eng, [mark(row)])['items'][0]['status'] == 'applied'
+
+
+def store_bytes(eng):
+    return {str(p.relative_to(eng.root)): p.read_bytes()
+            for p in eng.root.rglob('*') if p.is_file()}
+
+
+def rejection_backup_pair(tmp_path):
+    source = Engram(tmp_path / 'source')
+    source.update_profile({'role': 'old'})
+    row = source.propose_identity('profile', {'role': 'new'})
+    backup = tmp_path / 'backup.json'
+    source.export_all(str(backup))
+    target = Engram(tmp_path / 'target')
+    assert target.import_all(str(backup))['status'] == 'success'
+    return source, target, row, backup
+
+
+def interrupt_identity_approval(eng, row, monkeypatch, after_write):
+    update = eng.update_profile
+
+    def interrupted(*args, **kwargs):
+        if after_write:
+            update(*args, **kwargs)
+        raise OSError('injected identity interruption')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(eng, 'update_profile', interrupted)
+        with pytest.raises(OSError, match='injected identity interruption'):
+            eng.review_identity_proposal(row['id'], 'approve')
+    assert eng.get_identity_proposals()[0]['status'] == 'applying'
+    assert eng.get_profile()['role'] == ('new' if after_write else 'old')
+
+
+def assert_identity_import_conflict(target, backup, merge, ids):
+    before = store_bytes(target)
+    for dry_run in (True, False):
+        result = target.import_all(str(backup), merge=merge, dry_run=dry_run)
+        assert result.get('error') == 'identity_review_conflict', result
+        assert result['status'] == 'refused' and result['changed'] is False
+        assert result['proposal_ids'] == sorted(ids)
+        assert all(item_id in result['message'] for item_id in ids)
+        assert 'finish or roll back' in result['message'].lower()
+        assert 'engram doctor --fix' in result['message']
+        assert store_bytes(target) == before
+
+
+@pytest.mark.parametrize('after_write', [False, True], ids=['before-write', 'after-write'])
+@pytest.mark.parametrize('merge', [True, False], ids=['merge', 'overwrite'])
+@pytest.mark.parametrize('rejection', ['full', 'terminal-only', 'id-veto-only',
+                                      'hash-veto-only', 'legacy-hash-veto-only'])
+def test_import_rejection_cannot_override_interrupted_identity_approval(
+        tmp_path, monkeypatch, after_write, merge, rejection):
+    source, target, row, backup = rejection_backup_pair(tmp_path)
+    source.review_identity_proposal(row['id'], 'reject')
+    source.export_all(str(backup))
+    data = json.loads(backup.read_text(encoding='utf-8'))
+    if rejection == 'terminal-only':
+        data['knowledge'].pop('tombstones')
+    elif rejection.endswith('veto-only'):
+        data.pop('identity_review')
+        stone = data['knowledge']['tombstones'][0]
+        if rejection != 'id-veto-only':
+            stone['id'] = 'different-rejection-id'
+        if rejection == 'legacy-hash-veto-only':
+            stone['hv'] = 3
+            stone['h1'], stone['h2'] = tombstones.claim_hashes_for_version('identity', row, 3)
+    backup.write_text(json.dumps(data), encoding='utf-8')
+    interrupt_identity_approval(target, row, monkeypatch, after_write)
+    saved = target.get_identity_proposals()[0]
+    assert_identity_import_conflict(target, backup, merge, [row['id']])
+    assert target.get_identity_proposals()[0] == saved
+    assert not tombstones.load(target.root)
+    reopened = Engram(target.root)
+    assert reopened.recover_identity_proposals()[0]['status'] == 'applied'
+    assert reopened.get_profile()['role'] == 'new'
+
+
+@pytest.mark.parametrize('merge', [True, False], ids=['merge', 'overwrite'])
+@pytest.mark.parametrize('with_veto', [False, True], ids=['terminal-only', 'full'])
+@pytest.mark.parametrize('local,incoming', [('approve', 'reject'), ('reject', 'approve'),
+                                           ('reject', 'applying')])
+def test_import_cannot_contradict_local_identity_decision(
+        tmp_path, monkeypatch, merge, with_veto, local, incoming):
+    source, target, row, backup = rejection_backup_pair(tmp_path)
+    if incoming == 'applying':
+        interrupt_identity_approval(source, row, monkeypatch, False)
+    else:
+        source.review_identity_proposal(row['id'], incoming)
+    source.export_all(str(backup))
+    if not with_veto:
+        data = json.loads(backup.read_text(encoding='utf-8'))
+        data['knowledge'].pop('tombstones')
+        backup.write_text(json.dumps(data), encoding='utf-8')
+    target.review_identity_proposal(row['id'], local)
+    assert_identity_import_conflict(target, backup, merge, [row['id']])
+
+
+@pytest.mark.parametrize('after_write', [False, True], ids=['before-write', 'after-write'])
+@pytest.mark.parametrize('merge', [True, False], ids=['merge', 'overwrite'])
+def test_import_revalidates_identity_conflict_under_review_locks(
+        tmp_path, monkeypatch, after_write, merge):
+    from contextlib import contextmanager
+    from piia_engram import import_export as IE
+
+    source, target, row, backup = rejection_backup_pair(tmp_path)
+    source.review_identity_proposal(row['id'], 'reject')
+    source.export_all(str(backup))
+    lock = IE.hold_directory_lock
+    interrupted_state = None
+
+    @contextmanager
+    def interleaved_lock(path, *args, **kwargs):
+        nonlocal interrupted_state
+        if interrupted_state is None:
+            interrupt_identity_approval(target, row, monkeypatch, after_write)
+            interrupted_state = store_bytes(target)
+        with lock(path, *args, **kwargs):
+            yield
+
+    monkeypatch.setattr(IE, 'hold_directory_lock', interleaved_lock)
+    result = target.import_all(str(backup), merge=merge)
+    assert result.get('error') == 'identity_review_conflict', result
+    assert result['proposal_ids'] == [row['id']]
+    assert store_bytes(target) == interrupted_state
+    assert target.recover_identity_proposals()[0]['status'] == 'applied'
+
+
+def test_import_reports_all_identity_conflicts_before_any_writer(tmp_path, monkeypatch):
+    source, target, row, backup = rejection_backup_pair(tmp_path)
+    other = source.propose_identity('work_style', {'communication': 'new'})
+    source.export_all(str(backup))
+    target.import_all(str(backup))
+    for proposal in (row, other):
+        source.review_identity_proposal(proposal['id'], 'reject')
+        target.review_identity_proposal(proposal['id'], 'approve')
+    source.export_all(str(backup))
+
+    def unexpected_write(*args, **kwargs):
+        pytest.fail('conflicting import reached a store writer')
+
+    monkeypatch.setattr(target, '_import_knowledge_rows', unexpected_write)
+    monkeypatch.setattr(target, '_import_tombstones', unexpected_write)
+    monkeypatch.setattr(target, 'update_profile', unexpected_write)
+    monkeypatch.setattr(IR, '_save', unexpected_write)
+    assert_identity_import_conflict(target, backup, True, [row['id'], other['id']])
+
+
+@pytest.mark.parametrize('merge', [True, False], ids=['merge', 'overwrite'])
+@pytest.mark.parametrize('decision', ['approve', 'reject'])
+def test_import_accepts_matching_local_identity_decisions(tmp_path, merge, decision):
+    source, target, row, backup = rejection_backup_pair(tmp_path)
+    for eng in (source, target):
+        eng.review_identity_proposal(row['id'], decision)
+    source.export_all(str(backup))
+    assert target.import_all(str(backup), merge=merge)['status'] == 'success'
+    assert target.get_identity_proposals(include_decided=True)[0]['status'] == (
+        'approved' if decision == 'approve' else 'rejected')
