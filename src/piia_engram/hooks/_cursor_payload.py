@@ -134,8 +134,13 @@ def coerce_text(value: Any) -> str:
     return ""
 
 
+class TranscriptReferenceError(ValueError):
+    """A reference violates the transcript containment or file-type boundary."""
+
+
 def _summary_from_transcript(
-    path: str, max_chars: int, hook_input: dict[str, Any] | None = None
+    path: str, max_chars: int, hook_input: dict[str, Any] | None = None,
+    *, raise_errors: bool = False,
 ) -> str:
     """Hardened transcript reader (v4.20 shared boundary).
 
@@ -147,6 +152,8 @@ def _summary_from_transcript(
     files are read; non-JSON lines are SKIPPED (never echoed raw — echoing
     arbitrary file bytes was the read-oracle leak); the read is a single
     bounded handle capped at ``_MAX_TRANSCRIPT_BYTES``.
+    Deferred processors set ``raise_errors`` to preserve I/O failures for retry;
+    boundary violations then raise ``TranscriptReferenceError`` for quarantine.
     """
     if not path:
         return ""
@@ -155,6 +162,8 @@ def _summary_from_transcript(
     try:
         resolved = Path(path).expanduser().resolve(strict=True)
     except (OSError, RuntimeError):
+        if raise_errors:
+            raise
         return ""
     for root in roots:
         try:
@@ -168,11 +177,17 @@ def _summary_from_transcript(
         # empirically-frozen Cursor shape: agent-transcripts/<uuid>/<same-uuid>.jsonl
         candidate = resolved
     if candidate is None:
+        if raise_errors:
+            raise TranscriptReferenceError("transcript outside allowed roots")
         return ""
     if candidate.suffix.lower() != ".jsonl":
+        if raise_errors:
+            raise TranscriptReferenceError("transcript file type")
         return ""
     try:
         if not candidate.is_file():
+            if raise_errors:
+                raise IsADirectoryError("transcript is not a regular file")
             return ""
         size = candidate.stat().st_size
         # Long sessions are the most valuable ones — read the tail with ONE
@@ -185,6 +200,8 @@ def _summary_from_transcript(
             else:
                 raw = handle.read(_MAX_TRANSCRIPT_BYTES).decode("utf-8", errors="replace")
     except OSError:
+        if raise_errors:
+            raise
         return ""
     lines: list[str] = []
     for line in raw.splitlines():

@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import _cursor_payload as cursor
@@ -12,6 +12,7 @@ from . import _cursor_payload as cursor
 
 def validate_payload(event: dict) -> None:
     payload = event["payload"]
+    kind = event["kind"]
     for key in ("summary", "transcript_path", "project_folder", "session_id", "event", "hook_cwd"):
         if key in payload and not isinstance(payload[key], str):
             raise ValueError("payload text type")
@@ -20,6 +21,9 @@ def validate_payload(event: dict) -> None:
         raise ValueError("payload root type")
     if "threshold" in payload and (type(payload["threshold"]) is not int or payload["threshold"] < 1):
         raise ValueError("payload threshold")
+    attempts = event.get("transcript_missing_attempts", 0)
+    if type(attempts) is not int or attempts < 0:
+        raise ValueError("transcript retry count")
     if "prepared" in event:
         prepared = event["prepared"]
         if not isinstance(prepared, dict) or any(not isinstance(prepared.get(key, ""), str)
@@ -27,6 +31,32 @@ def validate_payload(event: dict) -> None:
             raise ValueError("prepared type")
         if any(key in prepared and type(prepared[key]) is not bool for key in ("skip", "digest")):
             raise ValueError("prepared flag type")
+        if "project_revision" in prepared:
+            if type(prepared["project_revision"]) is not int or prepared["project_revision"] < 0:
+                raise ValueError("prepared revision")
+            captured = datetime.fromisoformat(prepared["project_revision_captured_at"])
+            if captured.tzinfo is None:
+                raise ValueError("prepared revision capture time")
+        elif "project_revision_captured_at" in prepared:
+            raise ValueError("prepared revision missing")
+        if prepared.get("skip") is True:
+            return
+        required = {"claude_stop": ("context", "summary", "digest"),
+                    "claude_compact": ("summary",),
+                    "cursor_save": ("context", "session_id"),
+                    "cursor_writeback": ("summary",)}[kind]
+        if any(key not in prepared for key in required):
+            raise ValueError("prepared required fields")
+        if kind in {"claude_stop", "cursor_save"} and not prepared["context"].strip():
+            raise ValueError("prepared empty context")
+        if kind == "claude_compact" and not prepared["summary"].strip():
+            raise ValueError("prepared empty compact summary")
+    elif kind in {"claude_stop", "claude_compact"}:
+        if not payload.get("transcript_path", "").strip():
+            raise ValueError("required transcript reference")
+    elif kind == "cursor_writeback":
+        if not (payload.get("summary", "").strip() or payload.get("transcript_path", "").strip()):
+            raise ValueError("required writeback input")
 
 
 def _claude_summary(payload: dict, root: Path, engram) -> dict:
@@ -76,12 +106,12 @@ def _claude_summary(payload: dict, root: Path, engram) -> dict:
         summary = f"Claude Code 会话 ({duration}, {count} 消息)\n工作目录: {cwd}\n"
         if tools:
             summary += f"使用工具: {', '.join(tools[:20])}\n"
-        from ..hook_digest import PREFERENCE_KEY_V2, build_digest, digest_enabled, read_transcript_lines
+        from ..hook_digest import PREFERENCE_KEY_V2, build_digest, digest_enabled
         if engram is None:
             from ..core import Engram
             engram = Engram(root=root, read_only=True)
         if digest_enabled(engram.get_preferences().get(PREFERENCE_KEY_V2)):
-            digest = build_digest(read_transcript_lines(str(transcript)))
+            digest = build_digest(transcript.read_text(encoding="utf-8", errors="replace").splitlines())
             if digest:
                 summary += "\n" + digest
                 digest_appended = True
@@ -96,10 +126,7 @@ def prepare(event: dict, root: Path, engram=None) -> dict:
     if kind == "claude_compact":
         from .auto_absorb_compact import _extract_compact_summary
         path = Path(payload.get("transcript_path", ""))
-        # Verify the reference is readable before the legacy fail-soft extractor.
-        with path.open("rb"):
-            pass
-        summary = _extract_compact_summary(str(path))
+        summary = _extract_compact_summary(str(path), raise_errors=True)
         if not summary:
             return {"skip": True}
         if len(summary) > 3000:
@@ -109,10 +136,13 @@ def prepare(event: dict, root: Path, engram=None) -> dict:
     maximum = 4000 if kind == "cursor_save" else 20_000
     if not text and payload.get("transcript_path"):
         path = Path(payload["transcript_path"])
-        if not path.exists():
-            raise FileNotFoundError("transcript reference unavailable")
-        text = cursor._summary_from_transcript(str(path), maximum,
-                                              hook_input={"workspace_roots": payload.get("roots", [])})
+        try:
+            text = cursor._summary_from_transcript(
+                str(path), maximum, hook_input={"workspace_roots": payload.get("roots", [])},
+                raise_errors=True)
+        except cursor.TranscriptReferenceError as exc:
+            from .spool import PoisonEvent
+            raise PoisonEvent("invalid transcript reference") from exc
     if kind == "cursor_writeback":
         return {"summary": text[-maximum:]}
     cwd = payload.get("project_folder", "")
@@ -131,6 +161,27 @@ def prepare(event: dict, root: Path, engram=None) -> dict:
     if not session and not text:
         session = "hook-" + datetime.fromisoformat(event["created_at"]).strftime("%Y-%m-%d")
     return {"context": context, "session_id": session}
+
+
+def freeze_checkpoint_provenance(event: dict, root: Path, engram=None) -> bool:
+    """Capture revision at first deferred preparation, before checkpoint writes.
+
+    This is the observed revision when deferred content is first frozen, not a
+    claim about the earlier producer timestamp. Persist it before processing so
+    replay cannot adopt a newer checkpoint revision. Older prepared events are
+    upgraded at their first drain with this provenance support.
+    """
+    prepared = event["prepared"]
+    project = event["payload"].get("project_folder", "")
+    if prepared.get("skip") or not prepared.get("context") or not project or "project_revision" in prepared:
+        return False
+    if engram is None:
+        from ..core import Engram
+        engram = Engram(root=root, read_only=True)
+    from ..contexts import ContextStoreMixin
+    prepared["project_revision"] = ContextStoreMixin._checkpoint_project_revision(engram, project)
+    prepared["project_revision_captured_at"] = datetime.now(timezone.utc).isoformat()
+    return True
 
 
 class _EventWriter:
@@ -198,14 +249,11 @@ def _archive(engram, event, content: str, *, daily: bool = False) -> None:
         if marker not in existing:
             _publish(path, (existing + entry + marker + "\n").encode("utf-8"))
     if not daily:
-        from ..continuity_digest import build_session_digest
-        from ..storage import _atomic_write_json, _project_id
-        digest = build_session_digest(content, tool=event["client"],
-                                      project_id=_project_id(project) if project else "",
-                                      session_ref=session_id)
-        digest["generated_at"] = event["created_at"]
-        digest["source_scope"] = {"mode": "project_exact" if project else "global_only",
-                                  "project_id": _project_id(project) if project else ""}
+        from ..storage import _atomic_write_json
+        digest = engram._build_checkpoint_digest(
+            content, tool=event["client"], session_id=session_id, project_folder=project,
+            generated_at=event["created_at"], project_revision=event["prepared"].get("project_revision"),
+            revision_captured_at=event["prepared"].get("project_revision_captured_at", ""))
         if engram._digest_has_session_signal(digest):
             _atomic_write_json(engram._session_digest_path(event["client"], session_id), digest)
 

@@ -618,6 +618,41 @@ class ContextStoreMixin:
     # Write
     # ------------------------------------------------------------------
 
+    def _checkpoint_project_revision(self, project_folder: str) -> int:
+        try:
+            snapshot = self.get_project_snapshot(project_folder)
+            checkpoint = snapshot.get("checkpoint") if isinstance(snapshot, dict) else {}
+            return max(0, int(checkpoint.get("revision") or 0) if isinstance(checkpoint, dict) else 0)
+        except (AttributeError, TypeError, ValueError):
+            return 0
+
+    def _build_checkpoint_digest(
+        self, body: str, *, tool: str, session_id: str, project_folder: str,
+        generated_at: str | None = None, project_revision: int | None = None,
+        revision_captured_at: str = "",
+    ) -> dict[str, Any]:
+        """Shared digest provenance for synchronous and deferred checkpoints."""
+        digest = build_session_digest(
+            body, tool=tool, project_id=_project_id(project_folder) if project_folder else "",
+            session_ref=session_id,
+        )
+        digest["generated_at"] = generated_at or (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+        digest["source_scope"] = {
+            "mode": "project_exact" if project_folder else "global_only",
+            "project_id": _project_id(project_folder) if project_folder else "",
+        }
+        source = digest.get("source")
+        if isinstance(source, dict) and project_folder:
+            source["project_revision"] = (
+                self._checkpoint_project_revision(project_folder) if project_revision is None else project_revision
+            )
+            if revision_captured_at:
+                source["project_revision_captured_at"] = revision_captured_at
+                source["project_revision_capture"] = "deferred_prepare"
+        return digest
+
     def save_agent_context(
         self,
         tool: str,
@@ -686,35 +721,9 @@ class ContextStoreMixin:
                 header += f"\n### {timestamp}\n{body}\n"
                 file_path.write_text(header, encoding="utf-8")
 
-        digest = build_session_digest(
-            body,
-            tool=tool_safe,
-            project_id=_project_id(project_folder) if project_folder else "",
-            session_ref=session_id,
+        digest = self._build_checkpoint_digest(
+            body, tool=tool_safe, session_id=session_id, project_folder=project_folder,
         )
-        digest["generated_at"] = (
-            datetime.now(timezone.utc)
-            .replace(microsecond=0)
-            .isoformat()
-            .replace("+00:00", "Z")
-        )
-        digest["source_scope"] = {
-            "mode": "project_exact" if project_folder else "global_only",
-            "project_id": _project_id(project_folder) if project_folder else "",
-        }
-        source = digest.get("source")
-        if isinstance(source, dict) and project_folder:
-            try:
-                snapshot = self.get_project_snapshot(project_folder)
-                checkpoint = snapshot.get("checkpoint") if isinstance(snapshot, dict) else {}
-                source["project_revision"] = max(
-                    0,
-                    int(checkpoint.get("revision") or 0)
-                    if isinstance(checkpoint, dict)
-                    else 0,
-                )
-            except (AttributeError, TypeError, ValueError):
-                source["project_revision"] = 0
         if self._digest_has_session_signal(digest):
             _atomic_write_json(self._session_digest_path(tool_safe, session_id), digest)
 

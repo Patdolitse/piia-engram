@@ -22,6 +22,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Changed
 
+- Deferred hooks retain unreadable transcripts, continue after event-specific
+  failures, quarantine missing references after three failures or seven days,
+  and validate required prepared fields before processing. Write-hook stdin is
+  bounded by 128 KiB and one second. Checkpoint digests preserve the project
+  revision captured at first deferred preparation across retries.
 - Write hooks publish atomic local events and exit without waiting for store locks;
   offline processing retries failures, deduplicates event IDs, quarantines malformed
   or overflow events, and preserves staging-only knowledge review.

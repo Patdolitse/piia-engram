@@ -26,7 +26,7 @@ def _apply_argv_env(argv: list[str]) -> None:
         i += 1
 
 
-def _extract_compact_summary(transcript_path: str) -> str:
+def _extract_compact_summary(transcript_path: str, *, raise_errors: bool = False) -> str:
     """Extract the compact summary from the head of a compacted transcript.
 
     After Claude Code compaction the transcript JSONL is rewritten. The
@@ -38,8 +38,6 @@ def _extract_compact_summary(transcript_path: str) -> str:
     Returns the extracted summary text, or "" if nothing qualifies.
     """
     tp = Path(transcript_path)
-    if not tp.exists():
-        return ""
 
     try:
         with tp.open("r", encoding="utf-8") as f:
@@ -52,6 +50,8 @@ def _extract_compact_summary(transcript_path: str) -> str:
                 try:
                     entry = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
                     continue
 
                 # Look for content blocks with substantial text
@@ -68,7 +68,8 @@ def _extract_compact_summary(transcript_path: str) -> str:
                     if len(combined) >= 200:
                         return combined
     except OSError:
-        pass
+        if raise_errors:
+            raise
 
     return ""
 
