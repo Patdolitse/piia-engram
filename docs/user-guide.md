@@ -362,7 +362,12 @@ playbooks, project snapshots, recent contexts, and daily logs.
 **Moving or backing up your data:** copy the entire `~/.engram/` folder. That is
 your whole memory — there is no cloud copy to reconcile. A JSON backup
 (`export_engram`) goes back in with the local `engram import <backup.json>`
-(a preview by default; `--apply --yes` writes, `--overwrite` replaces). Over MCP,
+(a preview by default; `--apply --yes` writes, `--overwrite` replaces). Native
+local backups include versioned identity proposals and interrupted approval
+intents; restoring them does not approve pending proposals or duplicate them,
+and keeps rejection records even with `--overwrite`. An interrupted approval
+still requires an explicit local retry or `engram doctor --fix`. MCP exports
+that exclude pending content omit this proposal/recovery section. Over MCP,
 `import_engram` only previews an import (`dry_run=true`); a request to apply one
 answers `local_only` and writes nothing. OpenClaw files come in with
 `engram import --format openclaw --memory MEMORY.md [--soul SOUL.md] [--user USER.md]`
