@@ -6,6 +6,8 @@ from pathlib import Path
 
 SCHEMA = "project_snapshot.v2"
 NESTED_KEYS = ("snapshot", "data")
+# Only the v1 numeric/string markers have a defined migration to v2.
+LEGACY_VERSION_MARKERS = (1, "1", "1.0")
 
 class SnapshotMigrationRequired(ValueError):
     code = "migration_required"
@@ -86,10 +88,20 @@ def migrate(root, path, *, apply=False, prefer=""):
             raise SnapshotMigrationRequired("ambiguous or invalid nested objects")
         if data.get("schema") not in (None, SCHEMA, "project_snapshot.v1"):
             raise SnapshotMigrationRequired("unsupported snapshot schema; restore a valid backup")
+        def validate_version(body):
+            if "schema_version" in body and (
+                type(body["schema_version"]) not in (int, str)
+                or body["schema_version"] not in LEGACY_VERSION_MARKERS
+            ):
+                raise SnapshotMigrationRequired("unsupported schema_version; restore a supported backup")
+        validate_version(data)
         top = {k:v for k,v in data.items() if k not in (*NESTED_KEYS, "schema", "schema_version", "migration")}
         nested = deepcopy(data[nested_keys[0]]) if nested_keys else {}
         if nested.get("schema") not in (None, SCHEMA, "project_snapshot.v1"):
             raise SnapshotMigrationRequired("unsupported nested snapshot schema; restore a valid backup")
+        validate_version(nested)
+        nested.pop("schema_version", None)
+        nested.pop("schema", None)
         conflicts = sorted(k for k in nested if k in top and nested[k] != top[k])
         if conflicts and not prefer:
             raise SnapshotMigrationRequired("conflicting fields: " + ", ".join(conflicts))
@@ -103,6 +115,12 @@ def migrate(root, path, *, apply=False, prefer=""):
             return {"status": "preview", "migration_required": bool(condition(raw)), "conflicts": [], "read_only": True}
         except SnapshotMigrationRequired as exc:
             return {"status": "preview", "error": exc.code, "reason": exc.reason, "read_only": True}
+    # Refuse unsupported input before even creating a write-lock file. Repeat
+    # validation under that lock so a concurrent edit is never relabelled.
+    try:
+        flatten(raw)
+    except SnapshotMigrationRequired as exc:
+        return {"error": exc.code, "reason": exc.reason}
     def mutate(data):
         nonlocal backup
         candidate = flatten(data)

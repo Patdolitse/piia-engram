@@ -1389,6 +1389,13 @@ def _validate_path(value: str, *, allow_empty: bool = False) -> str | None:
     return None
 
 
+def _tool_error(exc: Exception, prefix: str) -> str:
+    """Classify an observed exception before converting it to a tool reply."""
+    from piia_engram.transport_errors import transport_failure
+    failure = transport_failure(exc)
+    return _json(failure) if failure else f"{prefix}: {_safe_err(exc)}"
+
+
 def _safe_err(exc: Exception) -> str:
     """Return a sanitized error message without internal filesystem paths."""
     from piia_engram.transport_errors import transport_failure

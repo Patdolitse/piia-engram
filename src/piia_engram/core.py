@@ -82,6 +82,7 @@ from .storage import (  # noqa: F401 — re-exports
     SkipWrite,
     knowledge_write_allowed,
     strip_untrusted_trust_fields,
+    non_quarantining_reads,
 )
 from .retrieval import RetrievalMixin
 from .context import ContextMixin
@@ -1928,7 +1929,25 @@ class Engram(
             counter += 1
         return candidate
 
-    def _reviewed_ids(self) -> set[str]:
+    def _lineage_authority_rows(self, kind: str) -> list[dict]:
+        """Latest persisted review labels, without normalization or migration.
+
+        Active records take precedence over archived versions of the same id.
+        A supersession source stays available when retention moves it out.
+        """
+        latest: dict[str, dict] = {}
+        archived, _ = _read_jsonl_rows(self._overflow_archive_path(kind))
+        for row in archived:
+            rid = str(row.get("id") or "")
+            if rid and (rid not in latest or self._archive_rank(row) >= self._archive_rank(latest[rid])):
+                latest[rid] = row
+        active = _read_json(self._knowledge_dir / ("lessons.json" if kind == "lesson" else "decisions.json"))
+        for row in active if isinstance(active, list) else []:
+            if isinstance(row, dict) and row.get("id"):
+                latest[str(row["id"])] = row
+        return list(latest.values())
+
+    def _reviewed_ids(self, *, include_retired: bool = False) -> set[str]:
         """Ids of the reviewed rows: lessons, decisions and playbooks.
 
         One rule for all three: a row is reviewed when its own labels are
@@ -1936,10 +1955,17 @@ class Engram(
         empty or verified, any case), so an unreviewed row cannot hide a
         reviewed one whatever its kind.
         """
+        # Retired reviewed intermediates remain authoritative lineage sources,
+        # but are never admitted by is_trusted or returned as current content.
+        trusted = _recall_policy.is_reviewed_lineage_source if include_retired else _recall_policy.is_trusted
         ids: set[str] = set()
         for kind, name in (("lesson", "lessons.json"), ("decision", "decisions.json")):
-            for row in self._read_entries(self._knowledge_dir / name, kind, migrate=False):
-                if row.get("id") and _recall_policy.is_trusted(row):
+            if include_retired:
+                rows = self._lineage_authority_rows(kind)
+            else:
+                rows = self._read_entries(self._knowledge_dir / name, kind, migrate=False)
+            for row in rows:
+                if isinstance(row, dict) and row.get("id") and trusted(row):
                     ids.add(str(row["id"]))
         try:
             for entry in self._read_playbook_index():
@@ -1962,7 +1988,7 @@ class Engram(
         from .governance_store import RelationStore
         from . import version_chain as _vc
 
-        return _vc.honored_edges(RelationStore(self.root).all_edges(), self._reviewed_ids())
+        return _vc.honored_edges(RelationStore(self.root).all_edges(), self._reviewed_ids(include_retired=True))
 
     def _supersede_index_inputs(self) -> tuple:
         """File stamp of every file the supersede index is built from.
@@ -1976,6 +2002,7 @@ class Engram(
             self._knowledge_dir / "lessons.json",
             self._knowledge_dir / "decisions.json",
         ]
+        paths.extend(self._overflow_archive_path(kind) for kind in self._OVERFLOW_ARCHIVE_FILES)
         try:
             paths.extend(sorted(self._playbooks_dir.glob("*.json")))
         except OSError:
@@ -2053,6 +2080,7 @@ class Engram(
         "retired_at", "demoted_at", "rejected_at",
     )
 
+    @non_quarantining_reads()
     def capacity_status(self) -> dict:
         """Read-only capacity report: pools, archive and the next pass's moves.
 
@@ -3006,6 +3034,14 @@ class Engram(
             # by the same write (explicit ``supersedes`` or auto-detected).
             target = str(new_decision.get("supersedes") or auto_supersedes_target or "")
             decision_ctx.supersede_target = target
+            if target and _review_boundary.mcp_origin():
+                predecessor = self._supersede_target_row(new_decision, target, decisions)
+                if predecessor is not None:
+                    # The enclosing write lock makes these persisted labels the
+                    # authoritative check, before any derived-field backfill.
+                    raw_predecessor = next((row for row in _read_json(path) if row.get("id") == target), predecessor)
+                    if not _recall_policy.is_trusted(raw_predecessor):
+                        self._hold_for_owner(new_decision, "untrusted_supersede_target")
             # An AI's decision that would replace a reviewed one by inference
             # (same question, other choice) is a proposal in every approval
             # mode: no edge without the Owner, and no version guard is skipped.

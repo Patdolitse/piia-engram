@@ -38,6 +38,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ### Breaking changes
 
 - Project snapshot writes reject nested legacy layouts, mixed fields and unknown schemas; preview with `engram migrate-project`, then confirm a backed-up local migration.
+- Backup imports validate incoming and existing project snapshots before any changes, including overwrite imports. Snapshot migration accepts only documented v1 version markers (`1`, `"1"`, `"1.0"`); unknown markers require a supported backup.
 
 - Identity changes proposed by AI tools through MCP `update_identity`, including trust-boundary changes, wait for local review in every mode while approved values stay in use; migrate by comparing values with `engram review show <id>` and deciding with `engram review interactive`.
 - OpenClaw `USER.md` and `SOUL.md` imports create pending identity proposals, including with `--apply --yes`; migrate by reviewing and approving the imported proposals with `engram review` before expecting identity changes to take effect.
@@ -61,6 +62,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Setup prints the Claude Code terminal restart hint once.
 
 - Retrying an older hook event preserves the newer session digest and next action.
+- MCP replacements of pending or otherwise untrusted decisions remain proposals; retirement rechecks review protection under the write lock.
+- Reviewed supersession ancestry survives retired intermediates, keeping older decisions out of current recall; doctor detects historical three-generation inconsistencies.
+- Ordinary doctor and capacity diagnostics report corrupted files without quarantine copies or other store writes.
+- Transport guidance normalizes exceptions and structured errors while preserving successful content and non-JSON replies verbatim.
+- User guides distinguish reviewed long-term knowledge from recent session checkpoints and activity records included for continuity without owner review; current migration inventories list 59 tools while retaining the historical v4.0 count.
 - Reviewed decision replacements synchronize predecessor state; historical inconsistencies stay out of current recall and doctor reports a local repair without writes.
 - Registry verification uses the v0.1 API and checks package versions and the latest marker; timeouts, unexpected shapes and mismatches fail clearly.
 - Doctor and setup import in either order while retaining compatibility exports.

@@ -50,14 +50,23 @@ def guarded_tool(fn, *, shutting_down=lambda: False):
                 return json.dumps({"error": exc.code, "hint": "Run engram migrate-project <project> locally; preview and back up before applying."})
             raise
         # Some tools record partial closeout stages before returning an error.
-        if isinstance(result, str) and "transport_unavailable:" in result:
+        if isinstance(result, str):
             try:
                 payload = json.loads(result)
             except ValueError:
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
-            payload.update(transport_failure(TransportUnavailable(), idempotency_key=key))
-            return json.dumps(payload)
+                return result
+            if isinstance(payload, dict):
+                # Only explicit structured error fields carry failure semantics.
+                # Successful entry text (including non-JSON replies) is opaque.
+                errors = [payload.get("error")]
+                operation = payload.get("operation")
+                for container in (payload.get("maintenance"), payload.get("stages"),
+                                  operation.get("stages") if isinstance(operation, dict) else None):
+                    if isinstance(container, dict):
+                        errors.extend(stage.get("error") for stage in container.values()
+                                      if isinstance(stage, dict) and stage.get("status") == "error")
+                if any(isinstance(error, str) and (error == "transport_unavailable" or "transport_unavailable:" in error) for error in errors):
+                    payload.update(transport_failure(TransportUnavailable(), idempotency_key=key))
+                    return json.dumps(payload)
         return result
     return guarded

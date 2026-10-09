@@ -351,7 +351,7 @@ async def memory_store(
             return f"[Engram] Playbook 已记录 · tier={tier} · 可召回: {label}"
     except Exception as exc:
         S._track("memory_store", success=False)
-        return f"memory_store 失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "memory_store 失败")
 
 
 @S.mcp.tool()
@@ -437,7 +437,7 @@ async def add_lesson(
               tier=result.get("tier", "staging") if isinstance(result, dict) else "staging")
     except Exception as exc:
         S._track("add_lesson", success=False)
-        return f"添加教训失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "添加教训失败")
     if _insert_refused(result):
         return S._json(result)
     if result.get("status") == "duplicate":
@@ -540,7 +540,7 @@ async def add_decision(
               tier=result.get("tier", "staging") if isinstance(result, dict) else "staging")
     except Exception as exc:
         S._track("add_decision", success=False)
-        return f"添加决策失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "添加决策失败")
     if _insert_refused(result):
         return S._json(result)
     if result.get("status") == "duplicate":
@@ -671,7 +671,7 @@ async def add_playbook(
         S._track("add_playbook", success=True)
     except Exception as exc:
         S._track("add_playbook", success=False)
-        return f"添加 Playbook 失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "添加 Playbook 失败")
     if _insert_refused(result):
         return S._json(result)
     if result.get("status") == "duplicate":
@@ -811,7 +811,7 @@ async def get_playbooks(
             S._track("get_playbooks", success=True)
         except Exception as exc:
             S._track("get_playbooks", success=False)
-            return f"获取 Playbook 失败: {S._safe_err(exc)}"
+            return S._tool_error(exc, "获取 Playbook 失败")
         if result.get("error"):
             return S._json(result)
         _inject_usage_policy(result)
@@ -829,7 +829,7 @@ async def get_playbooks(
             S._track("get_playbooks", success=True)
         except Exception as exc:
             S._track("get_playbooks", success=False)
-            return f"获取近期 Playbook 失败: {S._safe_err(exc)}"
+            return S._tool_error(exc, "获取近期 Playbook 失败")
         if not result:
             return "尚无最近使用的 Playbook。 / No recently used Playbooks."
         for item in result:
@@ -847,7 +847,7 @@ async def get_playbooks(
             S._track("get_playbooks", success=True)
         except Exception as exc:
             S._track("get_playbooks", success=False)
-            return f"List Playbooks for management failed: {S._safe_err(exc)}"
+            return S._tool_error(exc, "List Playbooks for management failed")
         result = S._gov_rt.maybe_govern_owner_only(
             S._get_engram().root, result, tool="get_playbooks"
         )
@@ -868,7 +868,7 @@ async def get_playbooks(
         S._track("get_playbooks", success=True)
     except Exception as exc:
         S._track("get_playbooks", success=False)
-        return f"获取 Playbooks 失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "获取 Playbooks 失败")
     if not result:
         return "尚无已保存的 Playbook。"
     for item in result:
@@ -1042,7 +1042,7 @@ async def manage_playbook(
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
-            return f"更新 Playbook 失败: {S._safe_err(exc)}"
+            return S._tool_error(exc, "更新 Playbook 失败")
         if result.get("error"):
             return S._json(result)
         # The ack echoes the stored title when the caller omitted the title arg —
@@ -1055,7 +1055,7 @@ async def manage_playbook(
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
-            return f"归档 Playbook 失败: {S._safe_err(exc)}"
+            return S._tool_error(exc, "归档 Playbook 失败")
         if result.get("error"):
             return S._json(result)
         ack = f"Playbook archived: {playbook_id}"
@@ -1073,7 +1073,7 @@ async def manage_playbook(
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
-            return f"Delete Playbook failed: {S._safe_err(exc)}"
+            return S._tool_error(exc, "Delete Playbook failed")
         if result.get("error"):
             return S._json(result)
         result = S._gov_rt.maybe_govern_write_ack(
@@ -1092,7 +1092,7 @@ async def manage_playbook(
             S._track("manage_playbook", success=True)
         except Exception as exc:
             S._track("manage_playbook", success=False)
-            return f"Restore Playbook failed: {S._safe_err(exc)}"
+            return S._tool_error(exc, "Restore Playbook failed")
         if result.get("error"):
             return S._json(result)
         result = S._gov_rt.maybe_govern_write_ack(
@@ -1182,7 +1182,7 @@ async def playbook_execution(
             S._track("playbook_execution", success=True)
         except Exception as exc:
             S._track("playbook_execution", success=False)
-            return f"准备执行计划失败: {S._safe_err(exc)}"
+            return S._tool_error(exc, "准备执行计划失败")
         _inject_usage_policy(result, _EXECUTION_USAGE_POLICY)
         return S._json(result)
     if action == "update_step":
@@ -1202,7 +1202,7 @@ async def playbook_execution(
             S._track("playbook_execution", success=True)
         except Exception as exc:
             S._track("playbook_execution", success=False)
-            return f"更新步骤状态失败: {S._safe_err(exc)}"
+            return S._tool_error(exc, "更新步骤状态失败")
         return S._json(result)
     if action == "status":
         try:
@@ -1210,7 +1210,7 @@ async def playbook_execution(
             S._track_read_safe("playbook_execution", success=True)
         except Exception as exc:
             S._track_read_safe("playbook_execution", success=False)
-            return f"查询执行状态失败: {S._safe_err(exc)}"
+            return S._tool_error(exc, "查询执行状态失败")
         # Read sibling of prepare: returns the stored playbook title +
         # (substituted) step bodies. Gate owner-only to match, or it re-opens
         # the same bypass (Codex round-16).
@@ -1284,7 +1284,7 @@ async def register_tool(
         S._track("register_tool", success=True)
     except Exception as exc:
         S._track("register_tool", success=False)
-        return f"注册工具失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "注册工具失败")
     action = result.pop("_action", "registered")
     action_zh = "已更新" if action == "updated" else "已注册"
     return f"工具{action_zh}: {name}" + (f" ({path})" if path else "")
@@ -1305,7 +1305,7 @@ async def find_tool(query: str) -> str:
         S._track("find_tool", success=True)
     except Exception as exc:
         S._track("find_tool", success=False)
-        return f"搜索工具失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "搜索工具失败")
     if not results:
         return f"未找到匹配 '{query}' 的工具。"
     return S._json(results)
@@ -1326,7 +1326,7 @@ async def list_tools(category: str = "") -> str:
         S._track("list_tools", success=True)
     except Exception as exc:
         S._track("list_tools", success=False)
-        return f"列出工具失败: {S._safe_err(exc)}"
+        return S._tool_error(exc, "列出工具失败")
     if not results:
         return "尚无已注册的工具。"
     return S._json(results)
