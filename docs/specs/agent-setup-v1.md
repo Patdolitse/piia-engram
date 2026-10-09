@@ -12,8 +12,10 @@ engram doctor --json
 No prompts are displayed and stdin is never read. `--lang zh|en` defaults to
 `en` and selects the output language; it does not create an identity preference.
 Without `--apply`, setup only detects clients and renders configuration changes
-in memory. It writes nothing to the store, home, client configs, or caches, and
-runs no client commands, update checks, or telemetry.
+in memory. Plan mode writes nothing to the Engram store, home directory or
+client configs. Python itself may use the system temporary directory, including
+temporary probe files during dependency imports. Setup runs no client commands,
+update checks, or telemetry.
 
 `--apply` configures only MCP connections. It does not initialize identity or
 knowledge files, import other tools' memories, approve proposals, inject
@@ -40,13 +42,31 @@ to Claude Code's user and legacy configs, without reading oversized bodies.
 Command output and config values are
 never printed. Command strings are **redacted templates**, not paste-ready commands:
 replace angle-bracket placeholders locally with the installed Python executable,
-store, tool mode and encoding, and retain any existing local environment entries
-(including strict approval). Consult the [Claude Code guide](../integrations/claude-code.md).
+store, tool mode and encoding. Templates use the existing shell formatter:
+PowerShell on Windows, POSIX `sh` elsewhere. Keep each placeholder's surrounding
+single quotes and escape the replacement for that shell **before** substituting:
+
+- PowerShell: replace each apostrophe (`'`) in the value with two apostrophes
+  (`''`). Keep the quoted `'--'` separator. For example, a store `/data/owner's files`
+  becomes `-e 'ENGRAM_DIR=/data/owner''s files'`.
+- POSIX: replace each apostrophe with the sequence `'"'"'` (end the single-quoted
+  string, add a quoted apostrophe, then reopen it). The same store becomes
+  `-e 'ENGRAM_DIR=/data/owner'"'"'s files'`.
+
+These literal strings preserve spaces and shell metacharacters. Do not remove
+their quotes or replace them with double quotes. Retain any existing local
+environment entries (including strict approval), quoting each extra `KEY=value`
+argument the same way. Consult the [Claude Code guide](../integrations/claude-code.md).
 
 `--clients` accepts comma-separated IDs: `claude_code`, `cursor`, `claude_desktop`,
 `codex`, `windsurf`, `trae`, `codebuddy`, `copilot_vscode`, `cline`, `roo_code`,
 `amazon_q`, `augment`, `zed`. By default all detected clients are selected.
-Detection follows the wizard's existing directory/config detection. An explicitly
+Detection follows the wizard's existing directory/config detection, separately
+for each client. If detection fails, no exception text is emitted and other
+clients continue. That client's `detected` is false (installation is unconfirmed),
+its path remains shortened, and its `reason` is `detection_failed`. With default
+selection it requires attention; an explicit `--clients` list excludes any client
+not listed, even if its detection fails, without affecting the exit code. An explicitly
 selected but undetected client requires a manual step; setup does not create its
 config. Other clients are excluded. Unknown IDs and empty list elements are usage
 errors. The new options require `--non-interactive`; they cannot be combined with
@@ -95,13 +115,16 @@ Each client record always contains:
 | `config_path` | shortened path label, or null when no platform path is available |
 | `action` | `none`, `write`, `register`, or `manual` |
 | `result` | `not_detected`, `excluded`, `planned`, `unchanged`, `manual`, `written`, `registered`, or `failed` |
-| `reason` | metadata-only code: `not_detected`, `excluded`, `invalid_store`, `missing_server`, `already_registered`, `registration`, `registration_requires_manual_step`, `already_configured`, `configuration`, `config_requires_manual_step`, `config_changed`, `unsafe_config_target`, or `apply_failed` |
+| `reason` | metadata-only code: `not_detected`, `excluded`, `detection_failed`, `invalid_store`, `missing_server`, `already_registered`, `registration`, `registration_requires_manual_step`, `already_configured`, `configuration`, `config_requires_manual_step`, `config_changed`, `unsafe_config_target`, or `apply_failed` |
 | `writes` | array of planned config path labels; no config content |
 | `commands` | array of redacted command templates planned for Claude Code registration; empty for file-based clients |
 | `manual_command` | redacted Claude Code command template when needed, otherwise null; file-based manual steps use `reason` and `next_steps` |
 
 In apply results, `action`, `writes`, `commands` and `store.writes` describe the
-authorized plan, while `result` describes what happened. A failed operation may
+authorized plan, while `result` describes what happened. A refusal leaves those
+plan fields intact and reports `result: "manual"` with a reason such as
+`config_changed`; it does not change a planned `write` or `register` into a
+`manual` action. A failed operation may
 have already created its protective backup; the backup/ledger locations remain
 within the reported patterns.
 

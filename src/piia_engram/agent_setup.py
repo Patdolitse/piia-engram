@@ -19,10 +19,16 @@ from . import setup_wizard as W
 
 SCHEMA_ID = "piia-engram/setup"
 SCHEMA_VERSION = 1
-# This is a template, not a disclosure of config arguments/environment values.
-CLAUDE_COMMAND = ("claude mcp add --scope user engram -e ENGRAM_DIR=<store> "
-                  "-e ENGRAM_TOOLS=<mode> -e PYTHONIOENCODING=<encoding> "
-                  "-- <python> -m piia_engram.mcp_server")
+
+
+def _claude_command() -> str:
+    """Quote redacted placeholders for the same shell as manual registration."""
+    command, _ = C.manual_command({
+        "command": "<python>", "args": ["-m", "piia_engram.mcp_server"],
+        "env": {"ENGRAM_DIR": "<store>", "ENGRAM_TOOLS": "<mode>",
+                "PYTHONIOENCODING": "<encoding>"},
+    })
+    return command
 
 
 class UsageError(ValueError):
@@ -80,18 +86,32 @@ def _report(mode, lang, store, clients=None):
 def _manual(row, reason):
     row.update(action="manual", result="manual", reason=reason, writes=[], commands=[])
     if row["id"] == "claude_code":
-        row["manual_command"] = CLAUDE_COMMAND
+        row["manual_command"] = _claude_command()
+
+
+def _refuse(row, reason):
+    # The action/writes/commands still describe the authorized plan.
+    row.update(result="manual", reason=reason)
+    if row["id"] == "claude_code":
+        row["manual_command"] = _claude_command()
 
 
 def _build_plan(store: Path, selected: set[str] | None) -> list[ClientPlan]:
-    detected = {tool["id"]: tool for tool in W._detect_tools()}
     plans = []
     server = W._find_mcp_server()
     for tool_id, config in W._tool_configs().items():
-        tool = detected.get(tool_id)
+        detection_failed = False
+        try:
+            detected = W._detect_tools({tool_id: config})
+            tool = detected[0] if detected else None
+        except (OSError, ValueError):
+            # Never expose exception text or let one client block the others.
+            tool = None
+            detection_failed = True
         paths = config["config_paths"]
         path = tool["config_path"] if tool else (paths[0] if paths else None)
-        chosen = tool_id in selected if selected is not None else tool is not None
+        chosen = (tool_id in selected if selected is not None
+                  else tool is not None or detection_failed)
         row = {"id": tool_id, "name": config["name"], "detected": tool is not None,
                "selected": chosen, "config_path": _path_label(path) if path else None,
                "action": "none", "result": "excluded" if tool and not chosen else "not_detected",
@@ -99,6 +119,12 @@ def _build_plan(store: Path, selected: set[str] | None) -> list[ClientPlan]:
                "writes": [], "commands": [], "manual_command": None}
         plan = ClientPlan(tool or {}, row)
         plans.append(plan)
+        if detection_failed:
+            if chosen:
+                _manual(row, "detection_failed")
+            else:
+                row.update(result="excluded", reason="detection_failed")
+            continue
         if not chosen:
             continue
         if not tool:
@@ -137,7 +163,7 @@ def _build_plan(store: Path, selected: set[str] | None) -> list[ClientPlan]:
                         row.update(result="unchanged", reason="already_registered")
                     elif reg.status == "planned":
                         row.update(action="register", result="planned", reason="registration",
-                                   commands=[CLAUDE_COMMAND])
+                                   commands=[_claude_command()])
                     else:
                         _manual(row, "registration_requires_manual_step")
                 else:
@@ -177,7 +203,7 @@ def _apply(store, plans):
                     or store.resolve() != plan.store_target
                     or W._snippet_strict(store) != plan.strict
                     or _bytes(plan.tool["config_path"]) != plan.before):
-                _manual(row, "config_changed")
+                _refuse(row, "config_changed")
                 continue
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 if row["action"] == "write":
@@ -187,7 +213,7 @@ def _apply(store, plans):
                     row["result"] = "written"
                 else:
                     if _bytes(C.legacy_path()) != plan.legacy_before:
-                        _manual(row, "config_changed")
+                        _refuse(row, "config_changed")
                         continue
                     reg = W._register_claude_code(
                         sys.executable, server, str(store), engram_tools=None, interactive=False)
@@ -196,7 +222,7 @@ def _apply(store, plans):
                     else:
                         row.update(result="failed" if reg.status == "failed" else "manual",
                                    reason="registration_requires_manual_step",
-                                   manual_command=CLAUDE_COMMAND)
+                                   manual_command=_claude_command())
         except (OSError, ValueError):
             row.update(result="failed", reason="apply_failed")
 
@@ -239,7 +265,9 @@ def _emit(report, as_json):
 
 
 def run_agent_setup(argv: list[str]) -> int:
-    parser = Parser(prog='engram setup', allow_abbrev=False)
+    parser = Parser(prog='engram setup', allow_abbrev=False, description=(
+        'Plan mode writes nothing to the Engram store, home directory or client '
+        'configs. Python itself may use the system temporary directory.'))
     parser.add_argument('--non-interactive', action='store_true')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--json', action='store_true')

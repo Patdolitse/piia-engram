@@ -92,7 +92,9 @@ engram doctor --json
 ```
 
 Setup asks no questions. Use `--clients cursor,codex` to limit clients and
-`--lang zh|en` for output language (default `en`). It configures MCP connections
+`--lang zh|en` for output language (default `en`). Without `--apply`, plan mode
+writes nothing to the Engram store, home directory or client configs. Python
+itself may use the system temporary directory. Apply configures MCP connections
 with backups, preserves existing tool modes, and never imports memories, writes
 identity/knowledge, or approves proposals. Restart configured clients; exit code
 1 means a manual step remains. See [llms.txt](llms.txt) for agent instructions and
