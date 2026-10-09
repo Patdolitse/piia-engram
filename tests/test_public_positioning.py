@@ -9,6 +9,7 @@ import subprocess
 import sys
 import ast
 from pathlib import Path
+from piia_engram.tool_surface import TIER1_TOOLS
 
 try:
     import tomllib
@@ -224,7 +225,7 @@ def test_quickstart_first_value_stays_core_and_honest():
 
     for phrase in [
         "Goal",
-        "18 core tools",
+        f"{len(TIER1_TOOLS)} core tools",
         "ENGRAM_TOOLS=core",
         "ENGRAM_TOOLS=all",
         # Honest risk-gated approval model: low/medium auto-verify, high-risk
@@ -374,7 +375,7 @@ def test_architecture_does_not_carry_stale_mcp_wrapper_count():
     assert "81 `@mcp.tool()`" not in doc
     assert "83 `@mcp.tool()`" not in doc
     assert "87 `@mcp.tool()`" not in doc
-    assert "58 `@mcp.tool()`" in doc
+    assert f"{len(_mcp_tool_names())} `@mcp.tool()`" in doc
 
 
 def test_readme_top_positions_identity_layer_not_plain_memory():

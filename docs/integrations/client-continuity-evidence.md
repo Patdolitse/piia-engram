@@ -18,6 +18,11 @@ context; Engram is not being repositioned as a Hermes or OpenClaw plugin.
 
 ## Public Claim Language
 
+The OpenClaw L3 label above records a static-file A/B check. It does not satisfy
+the runbook's live-agent A/B behavior-gain gate; cite it with the static-snapshot
+qualification. Tool-call client metadata is self-reported, not independent
+evidence that the named client used or benefited from the memory.
+
 Allowed:
 
 - "Hermes CLI marker continuity via the Engram MCP bridge has been verified in
@@ -61,5 +66,7 @@ Engram 的方向是继续做自己的本地优先、用户可治理的记忆核�
 | OpenClaw live agent | 未验证 | 已尝试 isolated profile 探针，但 provider auth 未配置。 | 暂时不能声称 OpenClaw live agent 连续性已通过。 |
 
 ## 公开材料使用方式
+
+上面的 OpenClaw L3 标签记录的是静态文件 A/B 检查，不代表通过 runbook 的 live-agent A/B 行为收益门槛；引用时必须保留“静态快照”限定。工具调用中的客户端元数据由调用方自行报告，不能独立证明所称客户端使用了记忆或获得收益。
 
 这份文档可以作为公开说明或 release note 的依据。不要上传本机完整报告、raw logs、真实磁盘路径或真实 Engram 数据。需要公开时，只引用上面的级别、方法和边界。

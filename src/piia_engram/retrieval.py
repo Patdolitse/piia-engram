@@ -602,7 +602,9 @@ class RetrievalMixin:
         # Rows moved to the overflow archive keep their place in the thread.
         for kind in ("lesson", "decision"):
             for archived_id, row in self._archived_only_rows(kind).items():
-                if not self._is_snapshot_record(row):
+                if not self._is_snapshot_record(row) or (
+                    row.get("superseded_by") and not row.get("snapshot_of")
+                ):
                     entries.setdefault(archived_id, row)
         edges = self._honored_relation_edges()
         self._audit.log("read", "knowledge/decision_thread", detail=str(seed_id))

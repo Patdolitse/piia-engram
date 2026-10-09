@@ -5,6 +5,7 @@ from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
 from piia_engram import claude_code_mcp as _claude_code_mcp
 
 import importlib.util
+from functools import wraps
 import hashlib
 import json
 import locale
@@ -4099,6 +4100,7 @@ def main() -> None:
 
 _command_main = main
 
+@wraps(_command_main)
 def main() -> None:
     try:
         _command_main()

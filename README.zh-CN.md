@@ -100,7 +100,7 @@ Agent 指引见 [llms.txt](llms.txt)，详情见 [CLI 与 JSON 契约](docs/spec
 
 ## 兼容的 AI 工具
 
-证据等级遵循 [agent 客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0 = 未测试，L1 = 已安装，L2 = 读取/搜索已观察，L3 = 静态文件桥，L4 = 跨客户端连续性。
+证据等级遵循 [agent 客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0 = 发现入口，L1 = 协议可达，L2 = 读取/搜索行为，L3 = A/B 行为收益，L4 = 跨客户端连续性，L5 = 可复现的公开证据。
 
 | 工具 | 接入方式 | 证据状态 |
 |------|---------|--------|
@@ -108,8 +108,8 @@ Agent 指引见 [llms.txt](llms.txt)，详情见 [CLI 与 JSON 契约](docs/spec
 | Codex | MCP (stdio) | L4 部分连续性证明（Claude Code -> Codex） |
 | Cursor | MCP (stdio) | L2 setup / read-search 证据路径 |
 | Claude Desktop | MCP (stdio) | L1/L2 setup 路径，客户端专项证据待补 |
-| Hermes | MCP (stdio) | L2 端到端验证（hermes-agent 0.15.2，2026-06-03） |
-| OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据 |
+| Hermes | MCP (stdio) | L4 受控 CLI marker 连续性；desktop 与广泛 benchmark 结论尚未验证 |
+| OpenClaw | SOUL.md/MEMORY.md 导入导出 | L3 静态文件桥证据（仅静态快照 A/B；live agent 行为未验证） |
 | ChatGPT / Kimi / Gemini | 粘贴身份卡 | 可用 |
 | Windsurf | MCP (stdio) | 应兼容 |
 | GitHub Copilot | MCP (stdio) | 应兼容 |
@@ -138,7 +138,7 @@ Agent 指引见 [llms.txt](llms.txt)，详情见 [CLI 与 JSON 契约](docs/spec
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
 | 默认网络调用 | 每天一次匿名使用信号（`engram telemetry off` 或 `DO_NOT_TRACK=1` 可关闭）；`engram` 命令在交互式终端中每天最多向 PyPI 查询一次新版本，`engram doctor` 每次运行都会查询（`ENGRAM_NO_UPDATE_CHECK=1` 可关闭）；身份与知识工具不联网，可选的 `read_web_content` 除外；远程 telemetry 和每周反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
 
-客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0/L1 表示安装或协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
+客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0 表示发现入口，L1 表示协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
 
 ---
 
@@ -572,6 +572,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 | `get_recent_context` | 重启后找回丢失的会话上下文 |
 | `get_daily_log` | v3.30: 人类可读的每项目每日时间线 |
 | `get_resume_brief` | v3.30: 跨会话/跨工具恢复摘要 |
+| `get_wrap_up_session_status` | 按幂等键查询收尾操作状态，再决定是否重试 |
 | `doctor` | 记忆系统自诊断 |
 
 默认只加载以上 19 个核心工具。在 MCP 配置的 `env` 中设置 `ENGRAM_TOOLS=all` 可解锁全部 40 个高级工具。

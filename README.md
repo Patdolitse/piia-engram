@@ -102,7 +102,7 @@ the [CLI and JSON contract](docs/specs/agent-setup-v1.md) for details.
 
 ## Supported Tools
 
-Evidence levels follow the [agent client validation runbook](docs/runbooks/agent-client-validation.md): L0 = untested, L1 = installed, L2 = read/search observed, L3 = static file bridge, L4 = cross-client continuity.
+Evidence levels follow the [agent client validation runbook](docs/runbooks/agent-client-validation.md): L0 = discovery, L1 = protocol access, L2 = read/search behavior, L3 = A/B behavior gain, L4 = cross-client continuity, L5 = reproducible public evidence.
 
 | Tool | Integration | Evidence status |
 |---|---|---|
@@ -110,8 +110,8 @@ Evidence levels follow the [agent client validation runbook](docs/runbooks/agent
 | Codex | MCP over stdio | L4 partial continuity proof (Claude Code -> Codex) |
 | Cursor | MCP over stdio | L2 setup/read-search evidence path |
 | Claude Desktop | MCP over stdio | L1/L2 setup path; client-specific evidence pending |
-| Hermes | MCP over stdio | L2 end-to-end verified (hermes-agent 0.15.2, 2026-06-03) |
-| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence |
+| Hermes | MCP over stdio | L4 controlled CLI marker continuity; desktop and broad benchmark claims unverified |
+| OpenClaw | SOUL.md / MEMORY.md / USER.md import and export | L3 static file-bridge evidence (static snapshot A/B only; live agent behavior unverified) |
 | ChatGPT / Gemini / Kimi | Markdown identity card fallback | Usable |
 | Windsurf | MCP over stdio | Expected to work |
 | GitHub Copilot | MCP over stdio | Expected to work |
@@ -616,6 +616,7 @@ You can also expose composable capability modes such as knowledge management, go
 | `get_recent_context` | Recover lost session context after restart |
 | `get_daily_log` | Read a human-friendly project timeline for a day |
 | `get_resume_brief` | Build a cross-session/cross-tool resume brief |
+| `get_wrap_up_session_status` | Query a closeout operation by its idempotency key before retrying |
 | `doctor` | Run memory system self-diagnosis |
 
 ### Tier-2 Advanced (40 tools — knowledge management, review, governance, import/export)
