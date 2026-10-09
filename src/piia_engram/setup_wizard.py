@@ -3776,7 +3776,7 @@ def _run_capabilities_cli(args: list[str]) -> int:
     return 0 if compatibility is None or compatibility["compatible"] else 1
 
 
-# Zero-write and machine-facing commands: no update reminder and no usage ping.
+# Read-only, preview and machine-facing commands: no startup notice/cache/ping.
 # `doctor` prints its own richer version line, so the generic reminder would
 # double-print. The Dock contract commands are read-only or dry-run-by-default
 # JSON surfaces — the reminder would write .update_check.json into the store
@@ -3787,6 +3787,12 @@ _QUIET_COMMANDS = (
     "dock-governance", "dock-review-queue", "dock-quality-action", "dock-search",
     "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang",
     "dock-onboard-scan", "weekly",
+    "migrate-project", "preview", "status", "sessions", "anchors", "management",
+    "privacy", "backup-plan", "recall", "conflicts", "integrity", "dashboard",
+    "release-check", "telemetry-validate", "grants", "audit", "verify-ledger", "stats",
+    "review", "confirm", "playbook", "onboard", "onboard-accept", "repair-encoding",
+    "recover-json", "import", "retention", "lifecycle", "merge", "reconcile",
+    "import-memories", "portrait", "export-agents-md",
 )
 # No usage ping for these either (the update reminder still runs): `telemetry`
 # manages the ping itself; `watcher` is run by autostart / schedulers, which is
@@ -3800,6 +3806,11 @@ _PING_SKIP_ARGS = ("-h", "--help", "help", "--version", "-V", "version")
 def _skips_usage_ping(command: str) -> bool:
     return (command in _QUIET_COMMANDS or command in _PING_SKIP_EXTRA
             or command in _PING_SKIP_ARGS or command.startswith("dock-"))
+
+
+def _skips_startup_effects(args: list[str]) -> bool:
+    return bool(args and (args[0] in _QUIET_COMMANDS or args[0].startswith('dock-')
+                         or any(arg in _PING_SKIP_ARGS or arg == '--dry-run' for arg in args)))
 
 
 def _start_usage_ping_cli() -> None:
@@ -3893,7 +3904,8 @@ def main() -> None:
         sys.exit(run_cli(args[1:]))
     # Non-intrusive update reminder (stderr only, opt-out, 24h-cached, fail-silent).
     # Skipped for _QUIET_COMMANDS. Not reached by the MCP entry.
-    if not (args and args[0] in _QUIET_COMMANDS):
+    quiet = _skips_startup_effects(args)
+    if not quiet:
         try:
             from piia_engram.update_check import maybe_print_update_notice
 
@@ -3903,7 +3915,7 @@ def main() -> None:
     is_setup = not args or args[0] == "setup"
     # Daily usage ping: never for the commands _skips_usage_ping names; for setup
     # only after its questions (a "no" to statistics must stop the first ping).
-    if not is_setup and not _skips_usage_ping(args[0]):
+    if not is_setup and not quiet and not _skips_usage_ping(args[0]):
         _show_usage_notice(sys.stderr)
         _start_usage_ping_cli()
     if is_setup:
