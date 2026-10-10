@@ -1,0 +1,100 @@
+class ProductionBase:
+    def export_all_with_summary(
+        self, output_path: str | None = None, *, exclude_pending: bool = False,
+    ) -> dict:
+        """导出整个 Engram 为单一 JSON 文件。
+
+        Returns ``{"path": ..., "skipped": {"tombstones": N}}``: N rejection
+        records failed validation and were left out of the backup (counted
+        only; nothing of them is shown).
+
+        包含：identity、knowledge、projects 所有数据。
+        用于备份或迁移到另一台机器。
+
+        Args:
+            output_path: 导出文件路径。默认存到数据目录旁的 <store-name>_exports 目录。
+            exclude_pending: 严格模式下经 MCP 导出时为 True：不导出待审提案
+                （lesson / decision / playbook 的 tier=staging 行）。本地完整备份不受影响。
+
+        Returns:
+            ``{"path": 导出文件的完整路径, "skipped": {"tombstones": N}}``。
+        """
+        # Validate before reads that append audit records, mkdir or any writer.
+        default_dir = self.root.resolve().with_name(self.root.resolve().name + '_exports')
+        out = Path(output_path) if output_path else default_dir / (
+            f'engram_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
+        export_destination(self.root, out)
+        # Snapshot approved identity, recovery intents and rejection vetoes
+        # under the same lock order used by local identity review.
+        with hold_directory_lock(self._knowledge_dir), hold_directory_lock(self._identity_dir):
+            export_stones, skipped_stones = _check_tombstones(_tombstones.load(self.root))
+            identity = {
+                'profile': self.get_profile(), 'preferences': self.get_preferences(),
+                'work_style': self.get_work_style(), 'quality_standards': self.get_quality_standards(),
+                'trust_boundaries': self.get_trust_boundaries(),
+            }
+            identity_review = None if exclude_pending else _identity_review.backup_section(self)
+        export_data = {
+            "schema_version": SCHEMA_VERSION,
+            "exported_at": _now_iso(),
+            "identity": identity,
+            "knowledge": {
+                # Export decrypted plaintext so backups are portable across
+                # different .corpus_salt / ENGRAM_SECRET combinations.
+                # The backup file itself should be protected by the user.
+                # Retired predecessors retain reviewed lineage authority in a
+                # portable backup; immutable revision snapshots remain local
+                # history (reachable via get_knowledge_history).
+                "lessons": [
+                    l for l in self._read_entries(
+                        self._knowledge_dir / "lessons.json", "lesson")
+                    if "snapshot_of" not in l
+                    and not (exclude_pending and l.get("tier") == "staging")
+                ],
+                "decisions": [
+                    d for d in self._read_entries(
+                        self._knowledge_dir / "decisions.json", "decision")
+                    if "snapshot_of" not in d
+                    and not (exclude_pending and d.get("tier") == "staging")
+                ],
+                "domains": self.get_domains(),
+                "playbooks": [
+                    pb for pb in self._export_playbooks()
+                    if not (exclude_pending and pb.get("tier") == "staging")
+                ],
+                "relations": RelationStore(self.root).all_edges(),
+                "conflict_resolutions": ResolutionStore(self.root).all_records(),
+                # Owner reject marks (hashes only), so a restored store still refuses them.
+                "tombstones": export_stones,
+            },
+            "environment": {
+                "tools": self._export_tools(),
+            },
+            "projects": {},
+            # Rows the per-type cap moved out of the active knowledge files
+            # (including retired predecessors, excluding revision snapshots).
+            "overflow_archive": {
+                kind + "s": [
+                    row for row in self._read_overflow_archive(kind)
+                    if "snapshot_of" not in row
+                    and not (exclude_pending and row.get("tier") == "staging")
+                ]
+                for kind in ("lesson", "decision")
+            },
+        }
+
+        if identity_review is not None:
+            export_data['identity_review'] = identity_review
+
+        # 导出所有项目快照
+        for f in sorted(self._projects_dir.glob("*.json")):
+            data = _read_json(f)
+            if data:
+                export_data["projects"][f.stem] = data
+
+        export_destination(self.root, out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(out, export_data)
+        self._audit.log("export", "all", detail=f"exported to {out}")
+        return {"path": str(out), "skipped": {"tombstones": skipped_stones}}
+

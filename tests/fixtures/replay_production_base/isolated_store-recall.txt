@@ -1,0 +1,87 @@
+class ProductionBase:
+    def recall(self, decision_point_id: str, round_id: str, *, evidence_before: str, admitted_before: str,
+               extra_exclude_families: Iterable[str] = (), subject_ids: Iterable[str] | None = None,
+               query: str | None = None, limit: int = 8) -> dict:
+        from . import tombstones as _tombstones
+
+        problem = self._receipts_problem()
+        if problem:
+            self._refuse_unreadable("recall", problem)
+            raise RecallRefused(f"receipts_unreadable: {problem}")
+        dp = self._decision_point(decision_point_id)
+        ev_before, adm_before = self._effective_cuts(
+            dp["mode"], parse_utc_z(dp["as_of_utc"], "as_of_utc"),
+            parse_utc_z(evidence_before, "evidence_before"), parse_utc_z(admitted_before, "admitted_before"))
+        exclude = {_family_key(f) for f in extra_exclude_families}
+        if dp["mode"] in MODES_EXCLUDING_OWN_FAMILY:
+            exclude.add(_family_key(dp["family_code"]))
+        wanted_subjects = {str(m) for m in subject_ids} if subject_ids is not None else None
+        terms = [t for t in str(query or "").casefold().split() if t]
+        empty_query = query is not None and not terms  # design s8: an empty query returns nothing
+        excluded: dict[str, int] = {}
+
+        def _skip(reason: str) -> None:
+            excluded[reason] = excluded.get(reason, 0) + 1
+
+        with self.serial():
+            receipts = self.receipts()
+            at_time, vetoed = self._replay(receipts, adm_before)
+            latest, _ = self._replay(receipts, None)
+            eng = self._engram(read_only=True)
+            rows = {r.get("id"): r for r in self._rows(eng)}
+            picked = []
+            for item_id, st in at_time.items():
+                if not st["active"]:
+                    continue
+                if item_id in vetoed:
+                    _skip("owner_veto")
+                    continue
+                admit_r = st["receipt"]
+                if parse_utc_z(admit_r["evidence_as_of"], "evidence_as_of") >= ev_before:
+                    _skip("evidence_after")
+                    continue
+                if _family_key(admit_r.get("source_family")) in exclude:
+                    _skip("family_excluded")
+                    continue
+                if wanted_subjects is not None and admit_r.get("subject_id") not in wanted_subjects:
+                    continue
+                row = rows.get(item_id) or self._archived_raw(eng, item_id)
+                if row is None:
+                    _skip("missing_in_library")
+                    continue
+                if self._library_disagrees(item_id, row, rows, latest):
+                    _skip("receipt_library_mismatch")
+                    continue
+                if not self._hash_ok(row, admit_r):
+                    _skip("hash_mismatch")
+                    continue
+                if empty_query:
+                    continue
+                if terms:
+                    text = f"{row.get('summary', '')} {row.get('detail', '')}".casefold()
+                    if not all(t in text for t in terms):
+                        continue
+                picked.append((row.get("evidence_as_of", ""), item_id, row))
+            picked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            items = [
+                {"id": item_id, "subject_id": row.get("subject_id"), "summary": row.get("summary"),
+                 "detail": row.get("detail"), "evidence_as_of": row.get("evidence_as_of"),
+                 "source_family": row.get("source_family"),
+                 "admitted_round": row.get("admitted_round")}
+                for _ev, item_id, row in picked[:max(0, int(limit))]
+            ]
+            self._append({
+                "op": "recall", "round_id": str(round_id), "result": "recalled",
+                "decision_point_id": decision_point_id, "decision_point_kind": dp.get("kind"),
+                "decision_point_mode": dp["mode"], "query_sha256": _sha256_bytes(str(query or "").encode("utf-8")),
+                "evidence_before": evidence_before, "admitted_before": admitted_before,
+                "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "returned_ids": [i["id"] for i in items], "excluded": excluded,
+            })
+        return {"items": items, "excluded": excluded, "mode": dp["mode"], "excluded_families": sorted(exclude),
+                "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+
+    # -- per-round reconciliation (design s6) --------------------------------------------
+

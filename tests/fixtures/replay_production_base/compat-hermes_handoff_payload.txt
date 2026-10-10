@@ -1,0 +1,51 @@
+def hermes_handoff_payload(engram: "Engram") -> dict:
+    """Build a schema-stable, metadata-only handoff payload for Hermes-like agents.
+
+    This is a compatibility bridge, not a live plugin: it exposes a compact
+    identity summary and active verified decision summaries without raw paths,
+    session IDs, full memory bodies, or decision reasoning.
+    """
+    try:
+        profile = engram.get_profile(safe=True)
+    except TypeError:  # pragma: no cover - older Engram-like facade
+        profile = engram.get_profile()
+    profile = profile if isinstance(profile, dict) else {}
+
+    lessons = [
+        lesson
+        for lesson in engram.get_lessons(limit=None, _update_access=False)
+        if _is_verified_active(lesson)
+    ]
+    decisions = [
+        decision
+        for decision in engram.get_decisions(limit=None, _update_access=False)
+        if _is_verified_active(decision)
+    ]
+
+    active_decisions = []
+    for decision in decisions[-HERMES_HANDOFF_MAX_DECISIONS:]:
+        item = {
+            "question": _handoff_text(decision.get("question")),
+            "choice": _handoff_text(decision.get("choice")),
+        }
+        domain = _handoff_text(decision.get("domain"), 64)
+        if domain:
+            item["domain"] = domain
+        if item["question"] or item["choice"]:
+            active_decisions.append(item)
+
+    identity_summary = {}
+    for key in ("role", "language", "technical_level", "description"):
+        value = _handoff_text(profile.get(key))
+        if value:
+            identity_summary[key] = value
+
+    return {
+        "schema": "hermes_handoff_v1",
+        "source": "piia-engram",
+        "identity_summary": identity_summary,
+        "active_decisions": active_decisions,
+        "lessons_count": len(lessons),
+    }
+
+
