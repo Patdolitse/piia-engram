@@ -67,6 +67,27 @@ MODES = {"live", "test", "replay"}
 PRODUCTION = "production"
 REPLAY_EXPERIENCE = "replay_experience"
 REPLAY_EXPORT_MARKER = "<!-- store_mode: replay_experience -->"
+# Text bodies remain independently identifiable when detached from a JSON
+# envelope. Metadata (IDs, paths, timestamps, enums and reference lists) keeps
+# its original scalar shape. Text-valued containers cover custom identity and
+# project fields as well as the named resume/report bodies.
+REPLAY_TEXT_FIELDS = frozenset({
+    "markdown", "html", "text", "content", "summary", "detail", "description",
+    "title", "question", "choice", "reasoning", "outcome", "notes", "note", "message",
+    "current_focus", "current", "next_actions", "blocked_on", "last_completed",
+    "completed", "latest_failure", "constraints", "risks", "goal", "task_summary",
+    "safety_notes", "role_guidance", "guidance", "retrieval_hint", "trust_note",
+    "identity", "identity_summary", "profile", "preferences", "quality_standards",
+    "work_style", "work_patterns", "communication", "role", "expertise",
+    "current_state", "known_issues", "preconditions", "pitfalls", "steps",
+})
+REPLAY_REFERENCE_FIELDS = frozenset({
+    "id", "ids", "references", "source", "source_session", "source_scope",
+    "tool", "tools", "source_tool", "session_ref", "project_folder", "folder",
+    "file", "path", "suggested_docs", "store", "mode", "store_mode", "schema",
+    "schema_version", "tier", "status", "freshness", "approval_status",
+    "memory_state", "kind", "type", "reason", "language", "technical_level",
+})
 ROOT_MODES = {PRODUCTION, REPLAY_EXPERIENCE}
 REPLAY_HARD_CAP_MAX = 10000
 ADMISSION_FUTURE_SKEW_SECONDS = 30
@@ -329,6 +350,11 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None,
             raise GuardRefused("guard_replay_experience_root")
         if actual != expected:
             raise GuardRefused("guard_mode_immutable")
+        if actual == PRODUCTION:
+            signal = _replay_root_signal(root)
+            if signal:
+                raise GuardRefused("guard_mode_immutable",
+                                   f"replay root signal contradicts production metadata: {signal}")
         return actual
     except GuardRefused as exc:
         _append_refusal(audit_dir, exc)
@@ -365,19 +391,27 @@ def refuse_replay_import(eng, original: Any) -> dict | None:
     return None
 
 
-def mark_replay_export(value: Any, *, _envelope: bool = True) -> Any:
-    """Mark exported envelopes and nested entries, on a copy of the payload."""
+def mark_replay_export(value: Any, *, _envelope: bool = True, _text: bool = False) -> Any:
+    """Mark envelopes and detachable text bodies on a copy, preserving references."""
     if isinstance(value, dict):
-        result = {key: mark_replay_export(part, _envelope=key in {"snapshot", "identity_summary"})
-                  for key, part in value.items()}
+        result = {}
+        for key, part in value.items():
+            reference = (key in REPLAY_REFERENCE_FIELDS or
+                         isinstance(key, str) and key.endswith(("_id", "_ids", "_ref", "_refs",
+                                                               "_path", "_paths", "_at", "_sha256")))
+            result[key] = mark_replay_export(
+                part, _envelope=key in {"snapshot", "identity_summary"},
+                _text=not reference and (_text or key in REPLAY_TEXT_FIELDS))
         if _envelope:
             result["store_mode"] = REPLAY_EXPERIENCE
         return result
     if isinstance(value, list):
-        return [mark_replay_export(part, _envelope=_envelope or isinstance(part, dict)) for part in value]
+        return [mark_replay_export(part, _envelope=_envelope or isinstance(part, dict), _text=_text)
+                for part in value]
     if isinstance(value, tuple):
-        return tuple(mark_replay_export(part, _envelope=_envelope or isinstance(part, dict)) for part in value)
-    if isinstance(value, str) and _envelope:
+        return tuple(mark_replay_export(part, _envelope=_envelope or isinstance(part, dict), _text=_text)
+                     for part in value)
+    if isinstance(value, str) and (_envelope or (_text and value)):
         return value if value.startswith(REPLAY_EXPORT_MARKER) else REPLAY_EXPORT_MARKER + "\n" + value
     return value
 
@@ -538,15 +572,17 @@ def check_candidate(path: Path, deny: Iterable[str], *, label: str) -> str:
 def check_environment(cfg: Config) -> None:
     from . import capacity as _capacity
 
-    ceiling = REPLAY_HARD_CAP_MAX if cfg.mode == REPLAY_EXPERIENCE else DEFAULT_LIMITS["hard_cap"]
-    try:
-        valid_limits = (all(type(value) is int for value in cfg.limits.values())
-                        and _capacity.limits_are_valid(_capacity.Limits(**cfg.limits))
-                        and cfg.limits["hard_cap"] <= ceiling)
-    except TypeError:
-        valid_limits = False
-    if not valid_limits:
-        raise GuardRefused("guard_limits_invalid")
+    # Production keeps the released pinned-environment rule below. The new
+    # typed, bounded capacity contract belongs only to replay roots.
+    if cfg.mode == REPLAY_EXPERIENCE:
+        try:
+            valid_limits = (all(type(value) is int for value in cfg.limits.values())
+                            and _capacity.limits_are_valid(_capacity.Limits(**cfg.limits))
+                            and cfg.limits["hard_cap"] <= REPLAY_HARD_CAP_MAX)
+        except TypeError:
+            valid_limits = False
+        if not valid_limits:
+            raise GuardRefused("guard_limits_invalid")
     allowed = set(ENGRAM_ALLOWED_FIXED) | ENGRAM_ALLOWED_FREE | set(limits_env(cfg.limits))
     present = {k.upper(): v for k, v in os.environ.items() if k.upper().startswith("ENGRAM_")}
     extra = sorted(set(present) - allowed)
