@@ -10,12 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Added
 
-- Generic replay experience mode for isolated offline replays and evaluations: immutable root mode, explicit historical admission and clock parameters, retained evidence truncation and duplicate gates, bounded larger capacity, and mode-marked native backups refused by ordinary roots.
-
-### Fixed
-
-- Keep distinct normalized template summaries verified during isolated replay experience admission, while preserving exact duplicate guards and production near-duplicate review behavior.
-- Bind new isolated initialization receipts to their root, preserve replay markers in context tuples and report text, and retain direct attachment for production roots created before replay mode. The boundary prevents accidental mixing; it does not resist deliberate edits by a writer controlling both roots and ledgers.
+- Generic replay experience mode for isolated offline replays and evaluations: immutable root mode, explicit historical admission and clock parameters, retained evidence truncation and exact-duplicate gates, bounded larger capacity, and mode-marked native backups and exports that ordinary roots refuse. Distinct template summaries stay verified in replay admission; production near-duplicate review is unchanged. Initialization receipts are bound to their root. The boundary prevents accidental mixing; it does not resist deliberate edits by a writer controlling both roots and ledgers.
 
 ### Changed
 
