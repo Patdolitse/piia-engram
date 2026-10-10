@@ -1,0 +1,114 @@
+class ProductionBase:
+    def export_knowledge_report(self) -> str:
+        """Generate and save a Chinese Markdown knowledge report."""
+        lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
+        decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
+        active_lessons = [l for l in lessons if l.get("status") == "active"]
+        active_decisions = [d for d in decisions if d.get("status") == "active"]
+        domains = sorted({l.get("domain") for l in active_lessons if l.get("domain")})
+        stale = self.get_stale_knowledge(days=STALE_KNOWLEDGE_DAYS)
+        title_by_id = {
+            **{
+                lesson.get("id", ""): redact_export_text(lesson.get("summary", ""))
+                for lesson in lessons
+            },
+            **{
+                decision.get("id", ""): redact_export_text(
+                    self._entry_identity_text(decision, "decision")
+                )
+                for decision in decisions
+            },
+        }
+
+        def related_title_line(item: dict) -> str:
+            titles = [
+                title_by_id[item_id]
+                for item_id in item.get("related_ids", [])
+                if title_by_id.get(item_id)
+            ]
+            return f"  *关联：{', '.join(titles)}*" if titles else ""
+
+        lines = [
+            "# 个人知识报告",
+            f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "## 概览",
+            f"- 经验教训：{len(active_lessons)} 条（活跃）",
+            f"- 关键决策：{len(active_decisions)} 条（活跃）",
+            f"- 覆盖领域：{', '.join(redact_export_text(d) for d in domains) if domains else '暂无'}",
+            "",
+            "## 经验教训",
+            "",
+        ]
+
+        lessons_by_domain: dict[str, list[dict]] = {}
+        for lesson in active_lessons:
+            raw = lesson.get("domain") or "未分类"
+            domains_list = [d.strip() for d in raw.split(",") if d.strip()] or ["未分类"]
+            for _d in domains_list:
+                lessons_by_domain.setdefault(_d, []).append(lesson)
+        if lessons_by_domain:
+            for domain in sorted(lessons_by_domain):
+                lines.append(f"### {redact_export_text(domain)}")
+                for lesson in lessons_by_domain[domain]:
+                    source = redact_export_text(lesson.get("source_tool", "unknown"))
+                    access_count = lesson.get("access_count", 0)
+                    summary = redact_export_text(lesson.get("summary", ""))
+                    detail = redact_export_text(lesson.get("detail", ""))
+                    body = f" — {detail}" if detail else ""
+                    lines.append(
+                        f"- **{summary}**{body} *(来源: {source}, 访问 {access_count} 次)*"
+                    )
+                    related_line = related_title_line(lesson)
+                    if related_line:
+                        lines.append(related_line)
+                lines.append("")
+        else:
+            lines.extend(["暂无经验教训。", ""])
+
+        lines.extend(["## 关键决策", ""])
+        decisions_by_month: dict[str, list[dict]] = {}
+        for decision in active_decisions:
+            created = decision.get("created_at") or decision.get("timestamp", "")
+            month = created[:7] if len(created) >= 7 else "未知时间"
+            decisions_by_month.setdefault(month, []).append(decision)
+        if decisions_by_month:
+            for month in sorted(decisions_by_month, reverse=True):
+                lines.append(f"### {month}")
+                for decision in decisions_by_month[month]:
+                    title = redact_export_text(
+                        self._entry_identity_text(decision, "decision")
+                    )
+                    rationale = redact_export_text(
+                        decision.get("reasoning") or decision.get("choice", "")
+                    )
+                    status = decision.get("status", "active")
+                    lines.append(f"- **{title}** — {rationale} *(状态: {status})*")
+                    related_line = related_title_line(decision)
+                    if related_line:
+                        lines.append(related_line)
+                lines.append("")
+        else:
+            lines.extend(["暂无关键决策。", ""])
+
+        lines.extend([f"## 待复查（超过 {STALE_KNOWLEDGE_DAYS} 天未访问）", ""])
+        stale_items = stale["lessons"] + stale["decisions"]
+        if stale_items:
+            for item in stale_items:
+                lines.append(
+                    f"- **{redact_export_text(item.get('title', ''))}** — 最后访问: {item.get('last_reviewed', '')}"
+                )
+        else:
+            lines.append(f"暂无超过 {STALE_KNOWLEDGE_DAYS} 天未访问的活跃知识。")
+        lines.append("")
+
+        report = "\n".join(lines)
+        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = self._exports_dir / f"knowledge_report_{date_str}.md"
+        counter = 1
+        while report_path.exists():
+            report_path = self._exports_dir / f"knowledge_report_{date_str}_{counter}.md"
+            counter += 1
+        report_path.write_text(report, encoding="utf-8")
+        return report
+

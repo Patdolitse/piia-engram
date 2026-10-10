@@ -1,0 +1,21 @@
+class ProductionBase:
+    def _append(self, record: dict) -> dict:
+        existing = self.receipts()
+        prev = existing[-1] if existing else None
+        base = {
+            "seq": (prev["seq"] + 1) if prev else 1,
+            "prev_sha256": _sha256_json(prev) if prev else "",
+            "ts": utc_now_z(),
+            "pid": os.getpid(),
+            "proc_started_utc": _PROCESS_STARTED_UTC,
+            "lib_version": self.lib_version,
+            "limits": self.cfg.limits,
+            "root_state_sha256": self.state_hash(),
+        }
+        full = {**base, **record}
+        with self.receipts_path.open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(full, ensure_ascii=False, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())  # the chain is the audit trail
+        return full
+

@@ -1,0 +1,67 @@
+class ProductionBase:
+    def reconcile(self) -> dict:
+        """Problems between the library and the receipts (empty list = clean)."""
+        problem = self._receipts_problem()
+        if problem:
+            return {"problems": [f"receipts_unreadable:{problem}"], "receipts": None, "rows": None,
+                    "state_sha256": self.state_hash()}
+        receipts = self.receipts()
+        problems: list[str] = []
+        prev = None
+        for r in receipts:
+            if prev is not None and (r.get("seq") != prev["seq"] + 1 or r.get("prev_sha256") != _sha256_json(prev)):
+                problems.append(f"receipt_chain_break:{r.get('seq')}")
+            prev = r
+        admitted = {r["item_id"]: r["content_sha256"] for r in receipts
+                    if r.get("op") == "admit" and r.get("result") == "admitted"}
+        moved = {r["item_id"] for r in receipts if r.get("result") in ("retired", "archived")}
+        vetoed = {r["item_id"] for r in receipts if r.get("op") == "veto_reject" and r.get("result") == "tombstoned"}
+        eng = self._engram(read_only=True)
+        for row in self._rows(eng):
+            item_id = row.get("id")
+            if item_id not in admitted:
+                problems.append(f"row_without_receipt:{item_id}")
+            elif content_hash(row) != admitted[item_id]:
+                problems.append(f"content_changed:{item_id}")
+        decisions = eng._read_entries(eng._knowledge_dir / "decisions.json", "decision", migrate=False)
+        problems += [f"decision_present:{d.get('id')}" for d in decisions]
+        for row in eng._read_overflow_archive("lesson"):
+            if eng._is_snapshot_record(row):
+                continue
+            if row.get("id") not in moved:
+                problems.append(f"archived_without_receipt:{row.get('id')}")
+        from . import tombstones as _tombstones
+
+        for stone in _tombstones.load(self.root):
+            stone_id = stone.get("id")
+            if not isinstance(stone_id, str) or stone_id not in vetoed:
+                problems.append(f"tombstone_without_veto:{stone_id}")
+        for sub in ("playbooks", "projects"):
+            d = self.root / sub
+            if d.is_dir() and any(p.is_file() and not p.name.startswith(".") for p in d.rglob("*")):
+                problems.append(f"{sub}_not_empty")
+        identity = self.root / "identity"
+        if identity.is_dir():
+            extra = [p.name for p in identity.rglob("*") if p.is_file()
+                     and p.name not in ("trust_boundaries.json",) and not p.name.startswith(".")]
+            problems += [f"identity_unexpected:{n}" for n in extra]
+        receipt_pids = {r.get("pid") for r in receipts}
+        audit = self.root / "audit.log"
+        if audit.is_file():
+            for line in audit.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if entry.get("action") in ("write", "archive", "delete", "import") and \
+                        entry.get("pid") not in receipt_pids and entry.get("action") != "owner_cli":
+                    problems.append(f"write_by_unknown_pid:{entry.get('pid')}")
+        return {"problems": sorted(set(problems)), "receipts": len(receipts),
+                "rows": len(self._rows(eng)), "state_sha256": self.state_hash()}
+
+
+# ---------------------------------------------------------------------------
+# init and refusal receipts
+# ---------------------------------------------------------------------------
+
+
