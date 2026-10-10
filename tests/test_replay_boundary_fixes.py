@@ -219,6 +219,38 @@ def test_empty_replay_markdown_export_has_explicit_root_marker():
     assert build_agents_md_export(store_mode=MODE).startswith(REPLAY_EXPORT_MARKER)
 
 
+def test_replay_portrait_growth_retains_numeric_statistics(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch)
+    eng = w.pr._engram(read_only=False)
+    old = eng.build_user_portrait()
+    eng.add_lesson({"summary": "cache observation", "tier": "verified"})
+    new = eng.build_user_portrait()
+    growth = eng.compare_user_portraits(old, new)
+    assert growth["deltas"]["lesson_count"]["delta"] == 1
+    assert carries_replay_marker(growth)
+    assert eng.render_portrait_growth(growth).startswith(REPLAY_EXPORT_MARKER)
+
+
+@pytest.mark.parametrize("mode", ["production", MODE])
+def test_attachment_refuses_missing_initial_receipt_in_both_modes(tmp_path, monkeypatch, mode):
+    w = _world(tmp_path, monkeypatch, mode=mode)
+    w.pr.receipts_path.write_text("", encoding="utf-8")
+    with pytest.raises(GuardRefused, match="guard_mode_immutable"):
+        Engram(root=w.pr.root, read_only=True, store_mode=mode)
+    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+
+
+def test_missing_metadata_without_config_is_refused_with_external_audit(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch)
+    _tamper(w, "metadata_removed")
+    monkeypatch.delenv("PIIA_ISOLATED_STORE_CONFIG", raising=False)
+    before = _snap(w.pr.root)
+    with pytest.raises(GuardRefused, match="guard_mode_immutable"):
+        Engram(root=w.pr.root, read_only=True)
+    assert _snap(w.pr.root) == before
+    assert "guard_mode_immutable" in (w.pr.root.with_name(w.pr.root.name + "_guard") / "refusals.jsonl").read_text()
+
+
 def test_external_text_import_checks_marker_before_section_filtering(tmp_path, monkeypatch):
     eng = Engram(root=tmp_path / "normal")
     monkeypatch.setenv("ENGRAM_RECONCILE", "1")
@@ -236,6 +268,17 @@ def test_planned_memory_writer_checks_original_before_reconstruction(tmp_path):
     result = write_items(eng, [{"summary": "cache observation", "detail": "sample",
                               "discarded": {"store_mode": MODE}}], sources=("memories",))
     assert result["error"] == "replay_experience_import_refused"
+    assert eng.get_lessons() == []
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_reconcile_apply_checks_original_before_projection(tmp_path, dry_run):
+    from piia_engram.reconcile_apply import apply_reconcile
+    eng = Engram(root=tmp_path / "normal")
+    result = apply_reconcile(eng, [{"summary": "cache observation", "detail": "sample",
+                                  "discarded": {"store_mode": MODE}}], confirm=True, dry_run=dry_run)
+    assert result["error"] == "replay_experience_import_refused"
+    assert result["changed"] is False
     assert eng.get_lessons() == []
 
 
