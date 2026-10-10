@@ -863,6 +863,10 @@ export ENGRAM_CLIENT_TYPE=claude_code
 
 ## CLI 命令
 
+本地审核也可使用 **piia-engram-review** 原生窗口：Windows 双击安装生成的启动器，
+查看完整提案后选择批准、拒绝或稍后，无需 PowerShell；程序运行期间可提供无正文提醒。
+需要带 Tk 支持的 Python，不增加 MCP 审批权限。见[本地审核窗口指引](docs/review-ui.md)。
+
 ```bash
 engram setup            # 交互式安装向导（默认不改外部工具配置）
 engram setup --apply-external-config  # 自动配置 AI 客户端 MCP 文件并备份

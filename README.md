@@ -263,6 +263,12 @@ engram setup --apply-external-config
 
 Either way, every external config write is backed up under the selected Engram data folder, and declining the prompt leaves every external config untouched.
 
+For point-and-click local review, open **piia-engram-review** (double-click its
+installed Windows launcher). Review complete proposals and choose approve,
+reject or later, with optional body-free prompts while the window is running.
+Python with Tk support is required; MCP approval permissions stay unchanged.
+See [the local review window guide](docs/review-ui.md).
+
 Check health anytime:
 ```bash
 engram status        # redacted install + memory health summary

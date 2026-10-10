@@ -40,6 +40,10 @@ piia-engram-mcp = "piia_engram.mcp_server:main"
 # Backward-compat alias — `engram` will be removed in a future major release.
 engram = "piia_engram.setup_wizard:main"
 
+[project.gui-scripts]
+# Native owner review; Windows installs a double-clickable, console-free launcher.
+piia-engram-review = "piia_engram.review_ui:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",

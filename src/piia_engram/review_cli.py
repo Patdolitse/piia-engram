@@ -105,11 +105,12 @@ def _receipt(eng, verb: str, attribution: dict, counts: dict, reject_reasons: di
         # The Owner's own notes, cleaned and capped. Local audit only:
         # get_audit_log over MCP drops this field.
         extra["reject_reasons"] = reject_reasons
+    owner_ui = attribution.get("route") == "owner_ui"
     eng._audit.log(
-        "owner_cli",
+        "owner_ui" if owner_ui else "owner_cli",
         f"review/{verb}",
         detail=json.dumps(counts, sort_keys=True),
-        source_tool="cli",
+        source_tool="owner_ui" if owner_ui else "cli",
         extra=extra,
     )
 
@@ -1026,8 +1027,9 @@ def apply_marks(eng, marks: list[dict], attribution: dict, *, progress: dict | N
     problem = batch_target_problem(eng, marks)
     if problem:
         return {"status": "refused", "error": problem}
-    _strict_mode.bootstrap(eng.root, source="cli")
-    via = f"cli:{attribution['operator']}"
+    review_source = "owner_ui" if attribution.get("route") == "owner_ui" else "cli"
+    _strict_mode.bootstrap(eng.root, source=review_source)
+    via = f"{review_source}:{attribution['operator']}"
     reviews = [m for m in marks if m["mark"] in REVIEW_MARKS]
     plan = _plan(eng, marks)
     final_types = _final_types(eng, marks)

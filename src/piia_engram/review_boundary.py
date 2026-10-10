@@ -15,7 +15,7 @@ from typing import Any
 from . import write_provenance as _write_provenance
 
 LOCAL_REVIEW_ONLY = "local_review_only"
-HINT = "run `engram review` locally"
+HINT = "open `piia-engram-review` locally, or run `engram review`"
 
 
 def mcp_origin() -> bool:
