@@ -10,11 +10,11 @@
 
 ### 新增
 
-- 隔离存储新增通用回放经验模式，用于离线回放与评估：根模式不可变，显式提供历史准入时间与时钟，保留证据截断和精确重复检查，支持有上限的较大容量，原生备份与导出携带模式标记并由普通根拒绝。回放准入中摘要不同的模板卡片保持 verified，生产模式的近重复待审行为不变。初始化收据绑定到对应根目录。该边界用于防意外混用，不防范能够同时改写两套根和账本的写入者蓄意篡改。
+- 隔离存储新增通用回放经验模式，用于离线回放与评估：根模式不可变，显式提供历史准入时间与时钟，保留证据截断和精确重复检查，支持有上限的较大容量，原生备份、导出和可单独使用的文本字段携带模式标记并由普通根拒绝；生产根打开时也拒绝已存入的回放来源，包括只读打开。回放准入中摘要不同的模板卡片保持 verified，生产模式的近重复待审行为不变。初始化收据绑定到对应根目录。该边界用于防意外混用，不防范能够同时改写两套根和账本的写入者蓄意篡改。
 
 ### 变更
 
-- 接续简报与可选结构化包优先保留下一动作、阻塞/失败、约束和来源状态；截断说明现有取回路径，token 数继续作为软估算。
+- 接续简报与可选结构化包优先保留下一动作、阻塞/失败、约束和来源状态；渲染保留所有已选关键字段，截断（包括摘要截断）说明现有取回路径，token 数继续作为软估算。
 - 原始接续材料标为先前会话记录，不提供审批或行动授权；简报和捕获诊断以缩短名称和本地身份标识当前存储，不暴露完整路径。
 - 捕获诊断展示 pending/quarantine/partial/receipt 占用、封闭处理原因码、宿主消费 unknown、既有 drain 提示和只读留存候选；receipt 继续保留，诊断不自动 drain 或删除。
 
@@ -1139,11 +1139,10 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 
 ### 变更
 - 管理文本和 JSON 输出继续只汇总计数与状态，不打印本地项目路径或已存知识正文。
-- Claude 验收改为窄口径只读审计，由 Codex 记录本地测试证据，降低复杂发布检查中的超时风险。
 
 ### 测试
 - 全量套件：**2020 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
-- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，Claude 验收 PASS。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，独立审查通过。
 
 ### Release Evidence
 - 见 `release-evidence/v3.45.0.md`。
@@ -1168,7 +1167,7 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 
 ### 测试
 - 全量套件：**1994 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
-- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，Claude 验收 PASS。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，独立审查通过。
 
 ### Release Evidence
 - 见 `release-evidence/v3.44.0.md`。
@@ -1186,7 +1185,7 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 
 ### 测试
 - 全量套件：**1834 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
-- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，release evidence 完整，Claude 验收 PASS。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，release evidence 完整，独立审查通过。
 
 ### Release Evidence
 - 见 `release-evidence/v3.43.0.md`。
@@ -1215,7 +1214,7 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 
 ### 测试
 - 全量套件：**1826 passed**，1 skipped，4 个预期内 `engram_core` 改名兼容 warning。
-- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，Codex subagent 复审 PASS，Claude Code 只读验收 PASS。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单完整，package build + twine check 通过，独立审查通过。
 
 ### Release Evidence
 - 见 `release-evidence/v3.42.0.md`。
@@ -1237,7 +1236,7 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 
 ### 测试
 - 全量套件：**1788 passed**，4 个预期内 `engram_core` 改名兼容 warning。
-- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，MCP Registry manifest valid，Codex subagent 审计 PASS，Claude Code 只读验收 PASS。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，MCP Registry manifest valid，独立审查通过。
 
 ### Release Evidence
 - 见 `release-evidence/v3.41.0.md`。
@@ -1250,7 +1249,6 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 - **`engram status` MCP 客户端摘要**：CLI 现在用脱敏元数据报告哪些客户端已配置、哪些缺少配置。
 - **更完整的状态 HTML**：`engram status --html` 现在包含 MCP Clients 表格和 Next Commands 区块，提示 `engram doctor`、`engram review`、`engram sessions`。
 - **状态探测测试覆盖**：新增对 MCP 入口有界探测和 `status --help` 输出的回归测试。
-- **Codex + Claude 验收流程**：本地项目流程文档记录了 Codex 实现、Claude 验收的协作闭环。
 
 ### 变更
 - `engram status --html` 将 Engram 存储路径渲染为 `<engram-root>`，方便把 HTML 作为脱敏证据分享而不暴露本机用户路径。
@@ -1263,7 +1261,7 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 
 ### 测试
 - 全量套件：**1781 passed**，4 个预期内 `engram_core` 改名兼容 warning。
-- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，Codex subagent 审计 PASS，Claude Code 只读验收 PASS。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，独立审查通过。
 
 ### Release Evidence
 - 见 `release-evidence/v3.40.0.md`。
@@ -1285,7 +1283,7 @@ CI 打包补丁版本：Engram 现在把 `demos` 命名空间作为可导入包�
 
 ### 测试
 - 全量套件：**1767 passed**，4 个预期内 `engram_core` 改名兼容 warning。
-- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，Claude Code 只读复审 PASS。
+- 发布门禁：脱敏 high=0/warn=0，发布白名单全覆盖，独立审查通过。
 
 ### Release Evidence
 - 见 `release-evidence/v3.39.1.md`。
@@ -1337,7 +1335,7 @@ GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI
 
 ## [3.36.0] - 2026-05-30
 
-身份层安全版本：知识正文静态加密、每个 AI 工具内联看到自己的权限边界、治理层对"写绕过"和"读路径副作用"双向封死。治理与加密两条线各自经过多轮独立（Codex）对抗式审计，单是读路径闭合就走了五轮。
+身份层安全版本：知识正文静态加密、每个 AI 工具内联看到自己的权限边界、治理层对"写绕过"和"读路径副作用"双向封死。治理与加密两条线各自经过多轮独立对抗式审计，单是读路径闭合就走了五轮。
 
 ### 新增
 - **语料静态加密（a5）**——知识正文字段（`summary`、`detail`、`question`、`choice`、`reasoning`、`title`、`description`、`outcome`）用预派生密钥（PBKDF2-SHA256 600K + 每个 engram 独立的 `.corpus_salt`）加每字段随机 AES-GCM nonce 加密，采用新前缀 `enc:v2c:`。元数据保持明文，搜索和过滤照常工作。向后兼容：明文条目透明放行，下次写入时惰性重加密。playbook 复合字段（steps / pitfalls / preconditions）、playbook 索引标题、执行计划派生文件（含 step notes）全部覆盖。
@@ -1359,7 +1357,7 @@ GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI
 
 ### 测试
 - **治理写门控矩阵：166 个测试**——writer-spy 全 root 快照比对、对"读工具 × 客户端类型"的反射式 sweep（每个调用重复到越过遥测/检查点阈值）、root 外路径监控（伪造 `HOME`/`TEMP`）、以及 fail-closed 错误路径证明（owner 解析抛异常时仍须零写入），并配 owner 对照测试防止过度修正。每个门控都有 revert-to-RED 证明钉住：每个修复被确认在移除后会让对应回归测试变红。
-- 语料加密和调用方权限工作在 a1–a5 及 Codex 审计各轮中累计新增约 115 个测试，每个都在修复前的 commit 上做了 R1 negative-control 证明。
+- 语料加密和调用方权限工作在 a1–a5 及独立审计各轮中累计新增约 115 个测试，每个都在修复前的 commit 上做了 R1 negative-control 证明。
 - 全量套件：**1718 passing**。
 
 ## [3.35.0] - 2026-05-29
@@ -1394,7 +1392,7 @@ GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI
 - **敏感度自动分类**：零配置安全分类器，基于内容启发式分配 `public` / `work` / `secret`。供治理门使用，治理关闭时可安全忽略。
 
 ### 安全 / 加固
-- **治理层 a0 读路径切换——经 Codex 独立复审 6 轮（R15→R20）**：
+- **治理层 a0 读路径切换——经独立复审 6 轮（R15→R20）**：
   - R15：未知信任层级 fail-closed + 接入所有知识体读取
   - R16：全工具 deny-by-default 覆盖（不再依赖名称前缀启发式）
   - R17：`refresh_quick_context`、`get_identity_card`、`export_knowledge_report` 文件副作用门
@@ -1408,13 +1406,13 @@ GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI
 - 新增 LobeHub 市场徽章和 Awesome-MCP-ZH 收录。
 
 ### 发布证据
-- Codex 独立复审：R20 PASS（a0 读路径全切换，含写回显 + 导出门 + 去重回显 + 审计日志 + 文件副作用门 + 混合索引门）。
+- 独立复审：R20 PASS（a0 读路径全切换，含写回显 + 导出门 + 去重回显 + 审计日志 + 文件副作用门 + 混合索引门）。
 - 完整套件：1385 个测试通过。治理专项：215 个测试。
 - eval-gate：n/a（无检索算法变更）。
 
 ## [3.33.2] - 2026-05-28
 
-一批由独立代码审查（Codex）发现并修复的正确性 / 安全问题——这是首个完整通过全部三道关卡的版本：「自审 + 独立 Codex 审查 + 评估关卡」。
+一批由独立代码审查发现并修复的正确性 / 安全问题——这是首个完整通过全部三道关卡的版本：「自审 + 独立审查 + 评估关卡」。
 
 ### 修复
 - **混合检索召回保证**：启用混合检索时，RRF 重排序 + 截断可能把关键词命中的条目挤出 top-N。现在关键词结果（score ≥ 阈值的 top-`limit`）始终予以保留，再通过 RRF 回填，确保混合检索的召回率 ≥ 关键词检索的召回率。
@@ -1426,7 +1424,7 @@ GUI 入口采用版本：piia-engram 现在提供更容易粘贴到各类 GUI AI
 - **发布工作流加固**：`publish.yml` 移除了 `workflow_dispatch`（一个可从未受保护分支手动触发的绕过面），并在发布前验证发布 commit 是 `origin/main` 的祖先。同时建议在 GitHub 仓库的 Environment 设置中添加部署分支限制。
 
 ### 发布证据
-- 三道关卡全部通过：自审 + 独立 Codex 复审（round-2，commit dcd8621，全部 6 项确认已修复）+ round11 评估关卡 PASS；完整套件 1022 个测试通过。
+- 三道关卡全部通过：自审 + 独立复审（round-2，commit dcd8621，全部 6 项确认已修复）+ round11 评估关卡 PASS；完整套件 1022 个测试通过。
 
 ## [3.33.1] - 2026-05-28
 

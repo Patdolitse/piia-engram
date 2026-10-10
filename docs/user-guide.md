@@ -13,9 +13,13 @@ diagnostics, see [Resume budgets and capture diagnostics](resume-capture.md).
 
 Engram is a **local-first personal memory and identity layer for AI tools**. It
 lets Claude Code, Codex, Cursor, Windsurf, Claude Desktop, and other
-MCP-compatible tools share the same approved context about you — preferences,
-standards, lessons, decisions, playbooks, and project snapshots — so you stop
-re-explaining yourself every session and every time you switch tools.
+MCP-compatible tools share your local identity, governed long-term knowledge
+(preferences, standards, lessons, decisions and playbooks), and project/session
+context, so you stop re-explaining yourself when you switch tools.
+
+Approval and review claims apply to identity and long-term knowledge under the
+configured policy. Resume output can also include earlier session records
+(checkpoints and snapshots) that are not reviewed and do not authorize actions.
 
 ---
 
