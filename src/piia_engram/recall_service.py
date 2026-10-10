@@ -265,6 +265,10 @@ def gather_recall(
             "heads_present": heads_present,
         }
         usage["role_scope"] = role_scope_meta
+    from .isolated_store import root_mode, REPLAY_EXPERIENCE, mark_replay_export
+
+    if hasattr(eng, "_store_mode") and root_mode(eng.root, eng._store_mode) == REPLAY_EXPERIENCE:
+        return mark_replay_export(payload)
     return payload
 
 
@@ -638,7 +642,10 @@ def render_recall_text(payload: dict[str, Any]) -> str:
     )
     if omission:
         lines.append(omission)
-    return "\n".join(lines)
+    from .isolated_store import carries_replay_marker, REPLAY_EXPORT_MARKER
+
+    prefix = REPLAY_EXPORT_MARKER + "\n" if carries_replay_marker(payload) else ""
+    return prefix + "\n".join(lines)
 
 
 def record_recall_funnel(

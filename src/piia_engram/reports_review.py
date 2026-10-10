@@ -23,6 +23,9 @@ class ReviewMixin:
         Returns the HTML string with WoW/Diablo rarity colors, star ratings,
         and collapsible items.
         """
+        from .isolated_store import export_mode_prefix
+
+        mode_prefix = export_mode_prefix(self)
         profile = self.get_profile()
         lessons = self.get_lessons(limit=None, _update_access=False)
         decisions = self.get_decisions(limit=None, _update_access=False)
@@ -267,7 +270,7 @@ class ReviewMixin:
         </div>
       </div>"""
 
-        return f"""<!DOCTYPE html>
+        return mode_prefix + f"""<!DOCTYPE html>
 <html lang="{lang}">
 <head>
 <meta charset="UTF-8">
@@ -522,9 +525,7 @@ function copyResult() {{
 
         Returns the file path.
         """
-        from .isolated_store import export_mode_prefix
-
-        html = export_mode_prefix(self) + self.generate_review_page(lang=lang)
+        html = self.generate_review_page(lang=lang)
         export_dir = self._exports_dir
         export_dir.mkdir(parents=True, exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
