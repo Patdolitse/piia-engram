@@ -312,7 +312,7 @@ def test_production_refuses_replay_only_admission_parameters(tmp_path, monkeypat
 def test_text_exports_keep_marker_and_normal_text_import_refuses_it(tmp_path, monkeypatch):
     from piia_engram.agents_md_export import build_agents_md_export
     from piia_engram.compat import export_to_openclaw, import_from_openclaw, preview_openclaw
-    from piia_engram.isolated_store import REPLAY_EXPORT_MARKER
+    from piia_engram.isolated_store import MARKER, REPLAY_EXPORT_MARKER
 
     w = _world(tmp_path / "replay", monkeypatch)
     assert _admit(w)["result"] == "admitted"
@@ -328,10 +328,31 @@ def test_text_exports_keep_marker_and_normal_text_import_refuses_it(tmp_path, mo
     memory = str(tmp_path / "text-export" / "MEMORY.md")
     before = _snap(normal.root)
     for operation in (preview_openclaw, import_from_openclaw):
+        all_before = _snap(tmp_path)
         result = operation(normal, memory_path=memory)
         assert result["error"] == "replay_experience_import_refused"
         assert result["changed"] is False
+        if operation is preview_openclaw:
+            assert _snap(tmp_path) == all_before
     assert _snap(normal.root) == before
+    refusal_file = normal.root.with_name(normal.root.name + "_guard") / "refusals.jsonl"
+    refusals = [json.loads(line) for line in refusal_file.read_text(encoding="utf-8").splitlines()]
+    assert len(refusals) == 1
+    assert refusals[0]["op"] == "ingest"
+    assert refusals[0]["code"] == "replay_experience_import_refused"
+    assert REPLAY_EXPORT_MARKER not in refusal_file.read_text(encoding="utf-8")
+
+    (normal.root / MARKER).write_text(json.dumps({"purpose": "isolated-store", "mode": "invalid"}),
+                                    encoding="utf-8")
+    all_before = _snap(tmp_path)
+    with pytest.raises(GuardRefused, match="guard_mode_invalid"):
+        preview_openclaw(normal, memory_path=memory)
+    assert _snap(tmp_path) == all_before
+    with pytest.raises(GuardRefused, match="guard_mode_invalid"):
+        import_from_openclaw(normal, memory_path=memory)
+    refusals = [json.loads(line) for line in refusal_file.read_text(encoding="utf-8").splitlines()]
+    assert len(refusals) == 2
+    assert refusals[-1]["code"] == "guard_mode_invalid"
 
 
 @pytest.mark.parametrize("mode,cap", [("production", -1), (MODE, 10001), (MODE, True), (MODE, 1400.5)])
