@@ -12,7 +12,7 @@ from piia_engram.isolated_store import (
     CONFIG_ENV, Config, GuardRefused, IsolatedStore, LIMITS_FILE, MARKER, RECEIPTS_FILE, root_mode,
 )
 from piia_engram.isolated_store_launch import build_child_env
-from test_isolated_store import _snap
+from test_isolated_store import ADMIT, _card, _snap
 from test_replay_attachment_exports import legacy_production_root
 from test_replay_experience import MODE, _admit, _world
 from test_replay_legacy_attachment import _assert_refusal
@@ -229,3 +229,87 @@ def test_legacy_rename_rebind_precedes_version_upgrade(legacy_production_root, m
     reopened = IsolatedStore.open(w.cfg)
     assert reopened.receipts()[-1]["op"] == "version"
     assert reopened.receipts()[-1]["result"] == "upgraded"
+
+
+@pytest.fixture(params=["modern", "legacy"])
+def renamed_upgrade_root(request, tmp_path, monkeypatch):
+    import piia_engram
+
+    monkeypatch.setattr(piia_engram, "__version__", "4.22.0")
+    if request.param == "legacy":
+        w = request.getfixturevalue("legacy_production_root")
+        ledger = w.cfg.receipts_dir / RECEIPTS_FILE
+        initial = json.loads(ledger.read_text(encoding="utf-8"))
+        initial["lib_version"] = "4.22.0"
+        ledger.write_text(json.dumps(initial) + "\n", encoding="utf-8")
+        w.pr = IsolatedStore.open(w.cfg)
+    else:
+        w = _world(tmp_path, monkeypatch, mode="production")
+    assert w.pr.admit(_card("upgrade", "Q1", "2020-01-01T00:00:00Z"), "R1", ADMIT)["result"] == "admitted"
+    assert w.pr.verify_content_hashes() == []
+    _rename(w, monkeypatch)
+    monkeypatch.setattr(piia_engram, "__version__", "4.23.0")
+    return w
+
+
+def test_failed_rebind_upgrade_stays_blocked_until_content_is_repaired(renamed_upgrade_root):
+    w = renamed_upgrade_root
+    lessons = w.cfg.root / "knowledge" / "lessons.json"
+    original = lessons.read_bytes()
+    rows = json.loads(original.decode("utf-8"))
+    rows[-1]["detail"] = "changed after admission"
+    lessons.write_text(json.dumps(rows), encoding="utf-8")
+    damaged = lessons.read_bytes()
+    store = IsolatedStore.open(w.cfg, allow_rebind=True)
+    with pytest.raises(GuardRefused, match="upgrade_blocked_hash_mismatch"):
+        store.owner_rebind("Owner")
+    for _ in range(2):
+        with pytest.raises(GuardRefused, match="upgrade_blocked_hash_mismatch"):
+            IsolatedStore.open(w.cfg)
+        with pytest.raises(GuardRefused, match="upgrade_blocked_hash_mismatch"):
+            store.owner_rebind("Owner")
+        with pytest.raises(GuardRefused, match="upgrade_blocked_hash_mismatch"):
+            IsolatedStore.open(w.cfg, allow_rebind=True)
+    assert lessons.read_bytes() == damaged
+    assert not any(r.get("result") == "upgraded" for r in store.receipts())
+    assert all(r["lib_version"] == "4.22.0" for r in store.receipts() if r["op"] == "rebind")
+
+    lessons.write_bytes(original)
+    reopened = IsolatedStore.open(w.cfg)
+    assert reopened.verify_content_hashes() == []
+    upgraded = reopened.receipts()[-1]
+    assert (upgraded["op"], upgraded["result"]) == ("version", "upgraded")
+    assert upgraded["from_version"] == "4.22.0"
+    assert upgraded["to_version"] == upgraded["lib_version"] == "4.23.0"
+    before = reopened.receipts_path.read_bytes()
+    assert IsolatedStore.open(w.cfg).receipts_path.read_bytes() == before
+    assert not any(p.startswith("receipt_chain_break:") for p in reopened.reconcile()["problems"])
+
+
+def test_successful_rebind_upgrade_validates_once(renamed_upgrade_root):
+    w = renamed_upgrade_root
+    store = IsolatedStore.open(w.cfg, allow_rebind=True)
+    assert store.owner_rebind("Owner")["result"] == "rebound"
+    rebind, upgraded = store.receipts()[-2:]
+    assert rebind["op"] == "rebind"
+    assert (upgraded["op"], upgraded["result"]) == ("version", "upgraded")
+    assert upgraded["from_version"] == "4.22.0"
+    assert upgraded["to_version"] == upgraded["lib_version"] == "4.23.0"
+    before = store.receipts_path.read_bytes()
+    assert IsolatedStore.open(w.cfg).receipts_path.read_bytes() == before
+
+
+def test_interrupted_rebind_validation_remains_pending(renamed_upgrade_root, monkeypatch):
+    w = renamed_upgrade_root
+    store = IsolatedStore.open(w.cfg, allow_rebind=True)
+    with monkeypatch.context() as patch:
+        def interrupted():
+            raise OSError("validation interrupted")
+
+        patch.setattr(store, "verify_content_hashes", interrupted)
+        with pytest.raises(OSError, match="validation interrupted"):
+            store.owner_rebind("Owner")
+    assert not any(r.get("result") == "upgraded" for r in store.receipts())
+    reopened = IsolatedStore.open(w.cfg)
+    assert (reopened.receipts()[-1]["op"], reopened.receipts()[-1]["result"]) == ("version", "upgraded")
+    assert reopened.receipts()[-1]["from_version"] == "4.22.0"

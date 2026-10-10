@@ -1035,7 +1035,10 @@ class IsolatedStore:
                 tmp.unlink(missing_ok=True)  # leave no half-done marker behind
                 raise
             previous_version = next((r["lib_version"] for r in reversed(self.receipts()) if r.get("lib_version")), None)
-            receipt = self._append({"op": "rebind", "result": "rebound", "operator": operator})
+            # Rebinding does not verify content or complete a version upgrade.
+            # Keep the earlier version persistent until validation succeeds.
+            receipt = self._append({"op": "rebind", "result": "rebound", "operator": operator,
+                                    "lib_version": previous_version or self.lib_version})
         # The binding and its audit receipt precede any ordinary content read.
         # Keep the earlier version visible despite the new rebind receipt.
         self._check_version(previous_version=previous_version)
