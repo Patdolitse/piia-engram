@@ -41,7 +41,7 @@ def test_copied_legacy_marker_cannot_export_replay_content(
     before = _snap(w.pr.root)
     ledger_before = w.pr.receipts_path.read_bytes()
     output = tmp_path / "export.json"
-    code = "guard_mode_immutable" if configured else "guard_root_binding"
+    code = "guard_mode_immutable"
     with pytest.raises(GuardRefused, match=code):
         eng = Engram(root=w.pr.root, read_only=read_only)
         if export == "context":

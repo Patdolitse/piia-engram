@@ -35,6 +35,7 @@ from typing import Any, Iterable, Iterator
 
 CONFIG_ENV = "PIIA_ISOLATED_STORE_CONFIG"
 MARKER = "isolated_store_root.json"
+REPLAY_MARKER_FILE = "replay_experience.marker"
 LIMITS_FILE = "isolated_store_limits.json"
 RECEIPTS_FILE = "receipts.jsonl"
 REFUSALS_FILE = "refusals.jsonl"  # guard refusals: kept out of the hash chain
@@ -200,7 +201,40 @@ def _initial_receipt(receipts_dir: Path, *, required: bool = True) -> dict | Non
     return initial
 
 
-def _check_legacy_root(root: Path, marker: dict, audit_dir: Path) -> None:
+def _replay_root_signal(root: Path) -> str:
+    """Discover replay provenance in the root without metadata or a launcher."""
+    def marked(text: str) -> bool:
+        try:
+            return carries_replay_marker(json.loads(text))
+        except ValueError:
+            # Preserve the existing handling of unmarked corrupt production
+            # data, while still recognizing intact markers in torn records.
+            return (REPLAY_EXPORT_MARKER in text
+                    or re.search(r'"store_mode"\s*:\s*"replay_experience"', text) is not None)
+
+    # Presence is sufficient, including an accidentally emptied marker file.
+    if (root / REPLAY_MARKER_FILE).exists():
+        return REPLAY_MARKER_FILE
+    for relative in ("knowledge/lessons.json", "knowledge/decisions.json",
+                     "knowledge/overflow_archive/lessons.jsonl",
+                     "knowledge/overflow_archive/decisions.jsonl"):
+        path = root / relative
+        try:
+            with path.open(encoding="utf-8-sig") as source:
+                if path.suffix == ".jsonl":
+                    for line in source:
+                        if line.strip() and marked(line):
+                            return relative
+                elif marked(source.read()):
+                    return relative
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeError) as exc:
+            raise GuardRefused("guard_mode_immutable", "stored provenance unreadable") from exc
+    return ""
+
+
+def _check_legacy_root(root: Path, marker: dict, audit_dir: Path, *, allow_rebind: bool = False) -> None:
     """Accept old production metadata only with confirmed directory provenance."""
     ledger_dirs = [audit_dir]
     configured_mode = PRODUCTION
@@ -230,26 +264,32 @@ def _check_legacy_root(root: Path, marker: dict, audit_dir: Path) -> None:
                 raise GuardRefused("guard_mode_immutable", "modern initialization receipt requires bound metadata")
     if configured_mode != PRODUCTION:
         raise GuardRefused("guard_mode_immutable", "replay configuration contradicts legacy metadata")
+    signal = _replay_root_signal(root)
+    if signal:
+        raise GuardRefused("guard_mode_immutable", f"replay root signal contradicts legacy metadata: {signal}")
     try:
         current = _identity(root)
     except OSError as exc:
         raise GuardRefused("guard_root_binding", "legacy directory identity unavailable") from exc
     realpath = marker.get("realpath")
     if (not isinstance(realpath, str) or not os.path.isabs(realpath)
-            or _norm(realpath) != _norm(current["realpath"])
+            or (not allow_rebind and _norm(realpath) != _norm(current["realpath"]))
             or type(marker.get("volume")) is not int or marker["volume"] != current["volume"]
             or type(marker.get("file_id")) is not int or marker["file_id"] <= 0
             or marker["file_id"] != current["file_id"]):
         raise GuardRefused("guard_root_binding", "legacy directory identity missing or mismatched")
 
 
-def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) -> str:
+def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None,
+              allow_rebind: bool = False) -> str:
     """Validate metadata AND the initialization receipt for every attachment."""
     root = Path(root)
     marker, audit_dir, isolated = _mode_context(root, receipts_dir)
     try:
         if not isinstance(expected, str) or expected not in ROOT_MODES:
             raise GuardRefused("guard_mode_invalid")
+        if marker is None and _replay_root_signal(root):
+            raise GuardRefused("guard_mode_immutable", "replay root signal requires initialized metadata")
         if not isolated:
             if expected != PRODUCTION:
                 raise GuardRefused("guard_mode_immutable", "initialized replay root required")
@@ -267,7 +307,7 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) ->
         if legacy:
             if expected != PRODUCTION:
                 raise GuardRefused("guard_mode_immutable", "initialized replay root required")
-            _check_legacy_root(root, marker, audit_dir)
+            _check_legacy_root(root, marker, audit_dir, allow_rebind=allow_rebind)
             return PRODUCTION
         pinned = marker.get("receipts_dir")
         if (not isinstance(pinned, str) or not os.path.isabs(pinned)
@@ -550,8 +590,9 @@ def check_environment(cfg: Config) -> None:
 class IsolatedStore:
     """An opened isolated store. Build with :meth:`open` (or :func:`init_root`)."""
 
-    def __init__(self, cfg: Config, root_real: str, receipts_real: str, deny: list[str] | None = None):
-        root_mode(Path(root_real), cfg.mode, receipts_dir=Path(receipts_real))
+    def __init__(self, cfg: Config, root_real: str, receipts_real: str, deny: list[str] | None = None,
+                 *, allow_rebind: bool = False):
+        root_mode(Path(root_real), cfg.mode, receipts_dir=Path(receipts_real), allow_rebind=allow_rebind)
         self._configure(cfg, root_real, receipts_real, deny)
 
     def _configure(self, cfg: Config, root_real: str, receipts_real: str, deny: list[str] | None) -> None:
@@ -575,7 +616,7 @@ class IsolatedStore:
         _append_refusal(self.receipts_dir, exc)
         raise exc
 
-    def _check_mode(self) -> None:
+    def _check_mode(self, *, allow_rebind: bool = False) -> None:
         """Match the pinned init receipt, metadata and handle on every operation."""
         try:
             if self.cfg.mode != self.mode:
@@ -583,7 +624,7 @@ class IsolatedStore:
         except GuardRefused as exc:
             _append_refusal(self.receipts_dir, exc)
             raise
-        root_mode(self.root, self.mode, receipts_dir=self.receipts_dir)
+        root_mode(self.root, self.mode, receipts_dir=self.receipts_dir, allow_rebind=allow_rebind)
 
     # -- opening -----------------------------------------------------------
 
@@ -605,13 +646,14 @@ class IsolatedStore:
             marker_path = Path(root_real) / MARKER
             if not marker_path.is_file():
                 raise GuardRefused("guard_marker_missing")
-            root_mode(Path(root_real), cfg.mode, receipts_dir=Path(receipts_real))
+            root_mode(Path(root_real), cfg.mode, receipts_dir=Path(receipts_real), allow_rebind=allow_rebind)
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
             current = _identity(Path(root_real))
             bound = {k: marker.get(k) for k in ("realpath", "volume", "file_id")}
-            if (marker.get("purpose") != "isolated-store"
-                    or _norm(str(bound["realpath"])) != _norm(current["realpath"])
-                    or bound["volume"] != current["volume"] or bound["file_id"] != current["file_id"]):
+            needs_rebind = (marker.get("purpose") != "isolated-store"
+                            or _norm(str(bound["realpath"])) != _norm(current["realpath"])
+                            or bound["volume"] != current["volume"] or bound["file_id"] != current["file_id"])
+            if needs_rebind:
                 if not allow_rebind:
                     raise GuardRefused("guard_marker_binding", "use the owner 'rebind' after a legitimate move")
             pinned = json.loads((Path(root_real) / LIMITS_FILE).read_text(encoding="utf-8"))
@@ -620,10 +662,11 @@ class IsolatedStore:
         except GuardRefused as exc:
             _append_refusal(Path(receipts_real), exc)
             raise
-        pr = cls(cfg, root_real, receipts_real, deny)
+        pr = cls(cfg, root_real, receipts_real, deny, allow_rebind=allow_rebind)
         if not pr._receipts_problem():
-            pr._check_mode()
-        pr._check_version()
+            pr._check_mode(allow_rebind=allow_rebind)
+        if not needs_rebind:
+            pr._check_version()
         return pr
 
     # -- locks, receipts ----------------------------------------------------
@@ -731,10 +774,11 @@ class IsolatedStore:
 
     # -- version receipt (design s9) --------------------------------------------
 
-    def _check_version(self) -> None:
+    def _check_version(self, *, previous_version: str | None = None) -> None:
         if self._receipts_problem():
             return  # every operation refuses with receipts_unreadable; reconcile reports it
-        last = next((r for r in reversed(self.receipts()) if r.get("lib_version")), None)
+        last = ({"lib_version": previous_version} if previous_version is not None else
+                next((r for r in reversed(self.receipts()) if r.get("lib_version")), None))
         if last is None or last.get("lib_version") == self.lib_version:
             return
         problems = self.verify_content_hashes()
@@ -977,7 +1021,7 @@ class IsolatedStore:
         problem = self._receipts_problem()
         if problem:  # refuse before acting: never rebind without a receipt
             return self._refuse_unreadable("rebind", problem)
-        self._check_mode()
+        self._check_mode(allow_rebind=True)
         marker_path = self.root / MARKER
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
         with self.serial():
@@ -990,7 +1034,12 @@ class IsolatedStore:
             except BaseException:
                 tmp.unlink(missing_ok=True)  # leave no half-done marker behind
                 raise
-            return self._append({"op": "rebind", "result": "rebound", "operator": operator})
+            previous_version = next((r["lib_version"] for r in reversed(self.receipts()) if r.get("lib_version")), None)
+            receipt = self._append({"op": "rebind", "result": "rebound", "operator": operator})
+        # The binding and its audit receipt precede any ordinary content read.
+        # Keep the earlier version visible despite the new rebind receipt.
+        self._check_version(previous_version=previous_version)
+        return receipt
 
     # -- recall (design s8) ---------------------------------------------------------
 
@@ -1279,6 +1328,12 @@ def init_root(cfg: Config | None = None) -> IsolatedStore:
     root_id = _root_id(root)
     marker = {"purpose": "isolated-store", "mode": cfg.mode, "receipts_dir": receipts_real, "root_id": root_id,
               "created_at": utc_now_z(), **_identity(root)}
+    replay_provenance = {}
+    if cfg.mode == REPLAY_EXPERIENCE:
+        signal = root / REPLAY_MARKER_FILE
+        signal.write_text("store_mode: replay_experience\n", encoding="utf-8")
+        replay_provenance = {"replay_marker": REPLAY_MARKER_FILE,
+                             "replay_marker_sha256": _sha256_bytes(signal.read_bytes())}
     (root / MARKER).write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
     (root / LIMITS_FILE).write_text(json.dumps(cfg.limits, ensure_ascii=False, indent=2), encoding="utf-8")
     (root / "telemetry_config.json").write_text(json.dumps({"reconcile_authorized": False}), encoding="utf-8")
@@ -1288,7 +1343,8 @@ def init_root(cfg: Config | None = None) -> IsolatedStore:
     pr = object.__new__(IsolatedStore)
     pr._configure(cfg, root_real, receipts_real, deny)
     with pr.serial():
-        pr._append({"op": "init", "result": "initialised", "store_mode": cfg.mode, "root_id": root_id})
+        pr._append({"op": "init", "result": "initialised", "store_mode": cfg.mode, "root_id": root_id,
+                    **replay_provenance})
     return IsolatedStore.open(cfg)
 
 
