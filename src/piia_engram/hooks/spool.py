@@ -74,7 +74,10 @@ def _created_seconds(path: Path) -> float:
             header = handle.read(4096).decode("utf-8", errors="replace")
         match = re.search(r'"created_at"\s*:\s*"([^"\\]+)"', header)
         if match:
-            created = datetime.fromisoformat(match.group(1))
+            stamp = match.group(1)
+            if stamp.endswith("Z"):
+                stamp = stamp[:-1] + "+00:00"
+            created = datetime.fromisoformat(stamp)
             if created.tzinfo is not None:
                 return created.timestamp()
     except (OSError, ValueError, OverflowError):

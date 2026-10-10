@@ -57,12 +57,25 @@ def test_metadata_covers_all_spool_files_without_disclosing_body(tmp_path):
     assert snapshot(root) == before
 
 
-def test_old_backlog_shows_existing_drain_hint_without_processing(tmp_path):
+def test_old_backlog_shows_existing_drain_hint_without_processing(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    class OffsetOnlyDatetime:
+        @staticmethod
+        def fromisoformat(value):
+            # Exercise the supported Python 3.10 parser on newer interpreters too.
+            if value.endswith("Z"):
+                raise ValueError("UTC suffix requires an explicit offset")
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr(spool, "datetime", OffsetOnlyDatetime)
     directory = spool.spool_dir(tmp_path)
     directory.mkdir(parents=True)
     (directory / "event.jsonl").write_text('{"created_at":"2001-01-01T00:00:00Z","payload":{"summary":"BODY_MARKER"}}', encoding="utf-8")
     before = snapshot(tmp_path)
     result = spool.backlog(tmp_path)
+    expected_age = time.time() - datetime(2001, 1, 1, tzinfo=timezone.utc).timestamp()
+    assert result["oldest_age_seconds"] == pytest.approx(expected_age, abs=2)
     assert "engram hooks drain" in result["drain_hint"]
     assert result["states"]["queued"] != result["states"]["processed"]
     assert "approved" in result["states"]["processed"]

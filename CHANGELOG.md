@@ -24,6 +24,7 @@ See the [resume and capture guide](docs/resume-capture.md).
 
 - Offline install planning accepts local directory names containing `publish` or `upload`, while still rejecting network sources, upload commands and artifacts outside the allowed directory.
 - OpenClaw import previews leave files unchanged when refusing replay material or invalid root metadata; actual imports retain refusal auditing.
+- Capture backlog diagnostics recognize UTC `Z` timestamps on Python 3.10 so older events retain their age and drain hints.
 
 ### Release Evidence
 
