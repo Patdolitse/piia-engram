@@ -1,0 +1,110 @@
+def gather_recall(
+    eng: Any,
+    *,
+    project_folder: str = "",
+    query: str = "",
+    limit: int = 8,
+    token_budget: int = 2000,
+    include_freshness: bool = True,
+    include_trust: bool = False,
+    collapse_versions: bool = True,
+    include_playbooks: bool = False,
+    role_scoped_memory: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Assemble a recall payload from a live Engram instance.
+
+    Calls only existing read methods (``get_safe_profile``/``get_profile``,
+    ``get_recent_context``, ``get_relevant_lessons``, ``search_knowledge``),
+    optionally collapses superseded knowledge to its current head using typed
+    relation edges, then delegates to :func:`recall.build_recall_payload`.
+
+    v4.20: ``include_playbooks`` (opt-in, default False) adds a playbook
+    pointer bucket — recent verified+active project-visible playbooks via the
+    existing zero-write ``get_recent_playbooks`` reader, plus query hits from
+    the playbooks scope of ``search_knowledge`` (project_folder threaded).
+    Playbook pointers are projected metadata-only and share the knowledge
+    budget under a sub-cap inside ``build_recall_payload``.
+
+    All sub-fetches are guarded: a method that is missing or raises yields an
+    empty slice, so the digest is always producible. Returns the standard
+    Recall Surface v1 payload plus a ``meta.collapsed_versions`` count.
+    """
+    sources = gather_recall_sources(
+        eng,
+        project_folder=project_folder,
+        query=query,
+        limit=limit,
+        collapse_versions=collapse_versions,
+        include_playbooks=include_playbooks,
+    )
+    identity = sources["identity"]
+    recent_activity = sources["recent_activity"]
+    relevant = sources["relevant"]
+    query_knowledge = sources["query_knowledge"]
+    playbooks = sources.get("playbooks") or []
+    collapsed_count = sources["collapsed_count"]
+    heads_present = sources["heads_present"]
+
+    # --- optional role-scoped memory ------------------------------------
+    role_scope_meta: dict[str, Any] = {"enabled": False}
+    if (
+        role_scoped_memory
+        and getattr(eng, "root", None) is not None
+        and _gov_rt.governance_enabled()
+    ):
+        before = len(relevant) + len(query_knowledge)
+        buckets = _gov_rt.maybe_govern_buckets(
+            eng.root,
+            {"project_relevant": relevant, "query": query_knowledge},
+            tool="get_recall",
+            declared_task=query,
+        )
+        relevant = buckets.get("project_relevant", relevant)
+        query_knowledge = buckets.get("query", query_knowledge)
+        after = len(relevant) + len(query_knowledge)
+        perms = _gov_rt.describe_caller_permissions(eng.root)
+        role_scope_meta = {
+            "enabled": _gov_rt.governance_enabled(),
+            "filtered": max(0, before - after),
+            "max_sensitivity": perms.get("max_sensitivity"),
+            "staging_excluded": (
+                perms.get("permission_profile_vnext", {}).get("staging_excluded")
+                if isinstance(perms.get("permission_profile_vnext"), dict)
+                else False
+            ),
+        }
+
+    governance = None
+    if hasattr(eng, "root"):
+        governance = {"trust_level": "private-self"}  # CLI runs as the owner
+
+    payload = _recall.build_recall_payload(
+        identity=identity,
+        recent_activity=recent_activity,
+        relevant_knowledge=relevant,
+        query_knowledge=query_knowledge,
+        playbooks=playbooks,
+        project=project_folder,
+        query=query,
+        token_budget=token_budget,
+        include_freshness=include_freshness,
+        include_trust=include_trust,
+        governance=governance,
+        now=now,
+    )
+    payload["meta"]["collapsed_versions"] = collapsed_count
+    payload["meta"]["version_chain"] = {
+        "collapsed": collapsed_count,
+        "heads_present": heads_present,
+    }
+    usage = payload["meta"].setdefault("context_usage", {})
+    if isinstance(usage, dict):
+        usage["version_chain"] = {
+            "collapsed": collapsed_count,
+            "heads_present": heads_present,
+        }
+        usage["role_scope"] = role_scope_meta
+    return payload
+
+
