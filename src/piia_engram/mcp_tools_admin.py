@@ -220,7 +220,7 @@ async def update_identity(field: str, updates_json: str, source_tool: str = "") 
     return S._json({"success": result.get("status") == "pending", "field": field,
                     "status": result.get("status", "error"), "id": result.get("id", ""),
                     "updated_keys": list(updates) if not result.get("error") else [],
-                    "changed": False, "hint": "run `engram review` locally",
+                    "changed": False, "hint": "open `piia-engram-review` locally, or run `engram review`",
                     **({"error": result["error"]} if result.get("error") else {})})
 
 

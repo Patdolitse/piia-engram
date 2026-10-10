@@ -18,6 +18,7 @@
 
 ### 新增
 
+- `piia-engram-review` 打开原生本地审核窗口（Windows 可双击启动），完整展示提案、身份差异与取代目标，支持批准、拒绝、稍后及运行期间可关闭的无正文弹窗提醒。批准绑定当前展示的条目与版本，不增加 MCP 审批权限。需要带 Tk 支持的 Python。
 - `engram setup --non-interactive` 为 Agent 默认提供只读安装计划，支持显式 `--apply`、客户端筛选、输出语言、带版本的 JSON，以及区分部分完成和用法错误的退出码。
 - `llms.txt`、中英文 Agent 安装指引及 setup JSON 契约说明自动化安装。
 - 身份提案进入本地审核、交互审核及导出标记，可用 `engram review show <id>` 查看当前值和提议值。

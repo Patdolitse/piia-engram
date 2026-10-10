@@ -18,6 +18,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Added
 
+- `piia-engram-review` opens a native local review window (double-clickable on Windows), with complete proposals, identity changes and replacement targets, approve/reject/later buttons and optional body-free prompts while it is running. Approval is bound to the displayed item and version; MCP approval permissions are unchanged. Requires Python with Tk support.
 - `engram setup --non-interactive` gives agents a read-only installation plan by default, with explicit `--apply`, client selection, output language, versioned JSON and distinct partial-completion and usage-error exit codes.
 - `llms.txt`, bilingual agent installation guides and the setup JSON contract document automated installation.
 - Identity proposals appear in local and interactive review and exported marks, with current and proposed values available through `engram review show <id>`.
