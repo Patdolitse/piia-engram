@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -105,7 +106,7 @@ def test_import_order_in_fresh_process(order):
 @pytest.mark.parametrize("module, args", [("setup_wizard", ["--help"]), ("doctor", ["--json"])])
 def test_module_entrypoints(module, args, monkeypatch):
     # Entry points emit UTF-8 even when the parent console defaults to GBK.
-    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "gbk")
+    monkeypatch.setattr(subprocess, "Popen", partial(subprocess.Popen, encoding="gbk"))
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     result = subprocess.run([sys.executable, "-m", "piia_engram." + module, *args],
                             env=env, capture_output=True, text=True,
