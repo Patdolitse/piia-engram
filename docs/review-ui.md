@@ -29,10 +29,13 @@ risk and version. An identity proposal shows previous and proposed values;
 a replacement shows the full entry it would retire. The complete proposal
 section preserves structured steps, rationale, evidence, review dates and
 relation fields present on the proposal.
+Invisible control and formatting characters are escaped in the complete record
+so they remain inspectable without controlling the display.
 
 选择一条待审提案，查看完整内容、类型、作用范围、来源、风险和版本。身份提案展示
 原值与提议值，取代提案展示将被停用的旧条目及其完整内容。完整提案区保留条目中已有的
 结构化步骤、保留理由、依据、复查时间和关系字段；缺少的信息不会由窗口凭空补造。
+完整记录中的不可见控制、格式字符显示为转义文本，便于核对而不会控制界面显示。
 
 - **Approve / 批准并生效** applies only this displayed proposal and version.
 - **Reject / 拒绝** uses the same rejection semantics as local CLI review.
