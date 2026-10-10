@@ -38,6 +38,18 @@ def select_resume_fields(handoff, freshness, snapshot, digests, token_budget=200
             result["blocked_on"] = [failure, *(result.get("blocked_on") or [])]
     elif source == "session_digest" and digests:
         digest = digests[0]
+        # The arbitration helper bounds/deduplicates legacy projections. Read
+        # the chosen digest itself so all later cuts belong to this selector.
+        for key, original in (("next_actions", digest.get("next_actions")),
+                              ("last_completed", digest.get("completed"))):
+            values = original if isinstance(original, list) else []
+            result[key] = list(dict.fromkeys(str(value).strip() for value in values
+                                            if str(value).strip()))
+        result["blocked_on"] = list(dict.fromkeys(str(item) for item in digest.get("risks") or []
+            if any(word in str(item).lower() for word in ("block", "blocked", "阻塞"))))
+        result["current_focus"] = (
+            result["next_actions"][0] if result["next_actions"] else
+            f"Continue after: {result['last_completed'][0]}" if result["last_completed"] else "unknown")
         failures = [str(item.get("summary") or "") for item in digest.get("verification") or []
                     if isinstance(item, dict) and item.get("status") == "failed"]
         result["blocked_on"] = [*failures, *(result.get("blocked_on") or [])]

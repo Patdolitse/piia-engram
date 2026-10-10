@@ -3690,13 +3690,21 @@ def _non_quarantining_read_guard(method):
             "list_user_portraits", "compare_user_portraits", "render_user_portrait",
             "render_user_portrait_html", "render_portrait_growth", "generate_context",
             "generate_context_report",
+            "get_recent_context", "get_session_digest", "get_daily_log",
         }
         if method.__name__ in export_reads and (mode == REPLAY_EXPERIENCE
                                                or carries_replay_marker((args, kwargs))):
             if method.__name__ == "generate_context_report":
                 text, omitted = result
                 return mark_replay_export(text), omitted
-            return mark_replay_export(result)
+            result = mark_replay_export(result)
+            if method.__name__ == "get_resume_brief":
+                markdown = result["markdown"]
+                result["byte_size"] = len(markdown.encode("utf-8"))
+                result["estimated_tokens"] = max(1, len(markdown) // 4)
+                result["budget"]["over_budget"] = (
+                    result["estimated_tokens"] > max(100, int(result["budget"]["requested_tokens"])))
+            return result
         return result
 
     return guarded
