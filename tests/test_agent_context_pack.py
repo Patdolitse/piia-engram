@@ -477,3 +477,5 @@ def test_agent_context_pack_bounds_project_and_focus_lists(tmp_path: Path) -> No
     assert len(pack["project"]["updated_at"]) <= 300
     assert len(pack["focus"]["next_actions"][0]) <= 300
     assert len(pack["focus"]["blocked_on"][0]) <= 300
+    assert pack["pack_meta"]["counts"]["omitted"] == 2
+    assert "get_resume_brief" in pack["pack_meta"]["retrieval_hint"]

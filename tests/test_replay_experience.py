@@ -334,11 +334,29 @@ def test_text_exports_keep_marker_and_normal_text_import_refuses_it(tmp_path, mo
     assert _snap(normal.root) == before
 
 
-@pytest.mark.parametrize("mode,cap", [("production", 1001), (MODE, 10001), (MODE, True), (MODE, 1400.5)])
+@pytest.mark.parametrize("mode,cap", [("production", -1), (MODE, 10001), (MODE, True), (MODE, 1400.5)])
 def test_capacity_upper_bound_and_type_validation(tmp_path, monkeypatch, mode, cap):
     with pytest.raises(GuardRefused) as exc:
         _world(tmp_path, monkeypatch, mode=mode, limits={"soft_cap": 1, "hard_cap": cap})
     assert exc.value.code == "guard_limits_invalid"
+
+
+@pytest.mark.parametrize("limits", [{"soft_cap": 1400, "hard_cap": 1400},
+    {"soft_cap": 10001, "hard_cap": 10001},
+    {"soft_cap": "1400", "hard_cap": "1400"},
+    {"soft_cap": True, "hard_cap": 1400.5},
+    {"soft_cap": 1, "hard_cap": 1400, "review_queue_max": 2, "review_queue_ceiling": 3}])
+def test_production_capacity_matches_released_423_rule(tmp_path, monkeypatch, limits):
+    from piia_engram import capacity
+    from piia_engram.isolated_store import check_environment, limits_env
+
+    w = _make_world(tmp_path, monkeypatch, init=False, limits=limits)
+    # 4.23.0 checks the pinned environment using limits_env_problem, without
+    # an additional numeric ceiling. Keep that released rule as the paired oracle.
+    assert capacity.limits_env_problem(limits_env(w.cfg.limits)) is None
+    check_environment(w.cfg)
+    store = init_root(w.cfg)
+    assert IsolatedStore.open(w.cfg).cfg.limits == store.cfg.limits
 
 
 def test_replay_capacity_holds_1400_real_cards_and_refuses_1401(tmp_path, monkeypatch):
