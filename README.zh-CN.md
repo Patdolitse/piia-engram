@@ -263,6 +263,10 @@ python demos/cross_tool_continuity_demo.py --json
 
 区别是：`engram continuity` 证明当前存储具备接续条件；demo JSON 用合成数据证明 write -> resume -> search -> provenance 这条隔离链路真的能跑通。
 
+### 回放经验模式
+
+按时间顺序重新输入历史材料的离线回放与评估，可在启动配置中设置 `"mode": "replay_experience"`，初始化独立的隔离根。根模式初始化后不可变。准入必须提供带时区的 `admitted_before` 和 `now`，召回也必须提供 `now`；历史准入采用调用方时间，收据仍保留真实时间，并关闭自动同族排除。证据仍受决策点 `as_of` 截断，去重门和容量限制继续生效。回放根可固定最高 10,000 的 `hard_cap`（例如 1,400），普通根默认仍为 1,000。原生备份与返回条目携带 `store_mode: replay_experience`，普通根拒绝加载回放根或导入带标记的材料。
+
 如果要做更完整的发布证据，可以运行合成 MCIC 基准：
 
 ```bash
