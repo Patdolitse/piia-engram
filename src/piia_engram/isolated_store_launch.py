@@ -47,6 +47,7 @@ PASSTHROUGH = frozenset({
     "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER",
     "PYTHONPATH", "PYTHONIOENCODING", "PYTHONUTF8", "PYTHONHASHSEED", "VIRTUAL_ENV",
     "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+    "PYTHONDONTWRITEBYTECODE",
 })
 
 
@@ -67,6 +68,7 @@ def build_child_env(parent_env: dict, cfg: Config) -> dict[str, str]:
         "HOME": str(home),
         "APPDATA": str(home / "AppData" / "Roaming"),
         "LOCALAPPDATA": str(home / "AppData" / "Local"),
+        "CLAUDE_CONFIG_DIR": str(home / ".claude"),
         # Temporary files stay in the caller's area too (tempfile probes and writes here).
         "TEMP": str(home / "Temp"),
         "TMP": str(home / "Temp"),

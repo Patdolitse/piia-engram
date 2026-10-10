@@ -29,7 +29,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -63,6 +63,12 @@ HOME_LIKE_VARS = ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP
 # Other tools' locations the library may read; the launcher drops them.
 FOREIGN_PATH_VARS = ("FASTEMBED_CACHE_PATH", "CODEX_HOME", "HF_HOME", "TRANSFORMERS_CACHE")
 MODES = {"live", "test", "replay"}
+PRODUCTION = "production"
+REPLAY_EXPERIENCE = "replay_experience"
+REPLAY_EXPORT_MARKER = "<!-- store_mode: replay_experience -->"
+ROOT_MODES = {PRODUCTION, REPLAY_EXPERIENCE}
+REPLAY_HARD_CAP_MAX = 10000
+ADMISSION_FUTURE_SKEW_SECONDS = 30
 _UTC_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$")
 _PROCESS_STARTED_UTC = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -130,6 +136,59 @@ def parse_utc_z(value: Any, field: str) -> datetime:
     if not _UTC_Z.match(text):
         raise ValueError(f"{field} must be UTC ISO time ending in Z, got {text!r}")
     return datetime.fromisoformat(text[:-1] + "+00:00")
+
+
+def _parse_clock(value: Any, field: str) -> datetime:
+    """An explicit ISO-8601 instant with a timezone, normalized to UTC."""
+    code = "clock" if field == "now" else field
+    if value is None or value == "":
+        raise GuardRefused(f"{code}_required")
+    try:
+        if not isinstance(value, str) or "T" not in value:
+            raise ValueError("expected ISO-8601 datetime")
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            raise ValueError("timezone required")
+        return instant.astimezone(timezone.utc)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise GuardRefused(f"{code}_invalid") from exc
+
+
+def root_mode(root: Path, expected: str) -> str:
+    """Check root metadata before the ordinary facade can attach or write."""
+    if not isinstance(expected, str) or expected not in ROOT_MODES:
+        raise GuardRefused("guard_mode_invalid")
+    path = root / MARKER
+    actual = PRODUCTION
+    if path.is_file():
+        try:
+            actual = json.loads(path.read_text(encoding="utf-8")).get("mode", PRODUCTION)
+        except (ValueError, AttributeError) as exc:
+            raise GuardRefused("guard_mode_invalid") from exc
+    if not isinstance(actual, str) or actual not in ROOT_MODES:
+        raise GuardRefused("guard_mode_invalid")
+    if expected == PRODUCTION and actual == REPLAY_EXPERIENCE:
+        raise GuardRefused("guard_replay_experience_root")
+    if actual != expected:
+        raise GuardRefused("guard_mode_immutable")
+    return actual
+
+
+def carries_replay_marker(value: Any) -> bool:
+    """Inspect bundles and nested entries without trusting their envelope."""
+    if isinstance(value, dict):
+        if value.get("store_mode") == REPLAY_EXPERIENCE or value.get("mode") == REPLAY_EXPERIENCE:
+            return True
+        return any(carries_replay_marker(part) for part in value.values())
+    if isinstance(value, list):
+        return any(carries_replay_marker(part) for part in value)
+    return False
+
+
+def export_mode_prefix(eng) -> str:
+    """Keep the mode visible in text exports as well as native JSON backups."""
+    mode = root_mode(eng.root, eng._store_mode)
+    return REPLAY_EXPORT_MARKER + "\n" if mode == REPLAY_EXPERIENCE else ""
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -216,6 +275,9 @@ class Config:
         self.decision_points_dir = Path(data["decision_points_dir"])
         self.deny_list_file = Path(data["deny_list_file"])
         self.deny_list_sha256 = str(data["deny_list_sha256"])
+        self.mode = data.get("mode", PRODUCTION)
+        if not isinstance(self.mode, str) or self.mode not in ROOT_MODES:
+            raise GuardRefused("guard_mode_invalid")
         self.limits = {**DEFAULT_LIMITS, **(data.get("limits") or {})}
 
     @classmethod
@@ -271,6 +333,17 @@ def check_candidate(path: Path, deny: Iterable[str], *, label: str) -> str:
 
 
 def check_environment(cfg: Config) -> None:
+    from . import capacity as _capacity
+
+    ceiling = REPLAY_HARD_CAP_MAX if cfg.mode == REPLAY_EXPERIENCE else DEFAULT_LIMITS["hard_cap"]
+    try:
+        valid_limits = (all(type(value) is int for value in cfg.limits.values())
+                        and _capacity.limits_are_valid(_capacity.Limits(**cfg.limits))
+                        and cfg.limits["hard_cap"] <= ceiling)
+    except TypeError:
+        valid_limits = False
+    if not valid_limits:
+        raise GuardRefused("guard_limits_invalid")
     allowed = set(ENGRAM_ALLOWED_FIXED) | ENGRAM_ALLOWED_FREE | set(limits_env(cfg.limits))
     present = {k.upper(): v for k, v in os.environ.items() if k.upper().startswith("ENGRAM_")}
     extra = sorted(set(present) - allowed)
@@ -317,9 +390,39 @@ class IsolatedStore:
         self.root = Path(root_real)
         self.receipts_dir = Path(receipts_real)
         self.receipts_path = self.receipts_dir / RECEIPTS_FILE
+        self._mode = cfg.mode
         from . import __version__
 
         self.lib_version = __version__
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    @mode.setter
+    def mode(self, value: str) -> None:
+        exc = GuardRefused("guard_mode_immutable")
+        _append_refusal(self.receipts_dir, exc)
+        raise exc
+
+    def _check_mode(self) -> None:
+        """Match the pinned init receipt, metadata and handle on every operation."""
+        try:
+            if self.cfg.mode != self.mode:
+                raise GuardRefused("guard_mode_immutable")
+            root_mode(self.root, self.mode)
+            try:
+                records = self.receipts()
+            except ReceiptsUnreadable:
+                return  # the operation's receipt guard owns this refusal
+            initial = next((r for r in records if r.get("op") == "init"), None)
+            if initial is not None and initial.get("store_mode", PRODUCTION) != self.mode:
+                raise GuardRefused("guard_mode_immutable")
+            if initial is None and self.mode == REPLAY_EXPERIENCE:
+                raise GuardRefused("guard_mode_immutable", "replay init receipt missing")
+        except GuardRefused as exc:
+            _append_refusal(self.receipts_dir, exc)
+            raise
 
     # -- opening -----------------------------------------------------------
 
@@ -342,6 +445,7 @@ class IsolatedStore:
             if not marker_path.is_file():
                 raise GuardRefused("guard_marker_missing")
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            root_mode(Path(root_real), cfg.mode)
             current = _identity(Path(root_real))
             bound = {k: marker.get(k) for k in ("realpath", "volume", "file_id")}
             if (marker.get("purpose") != "isolated-store"
@@ -356,6 +460,8 @@ class IsolatedStore:
             _append_refusal(Path(receipts_real), exc)
             raise
         pr = cls(cfg, root_real, receipts_real, deny)
+        if not pr._receipts_problem():
+            pr._check_mode()
         pr._check_version()
         return pr
 
@@ -411,6 +517,7 @@ class IsolatedStore:
             "proc_started_utc": _PROCESS_STARTED_UTC,
             "lib_version": self.lib_version,
             "limits": self.cfg.limits,
+            "store_mode": self.mode,
             "root_state_sha256": self.state_hash(),
         }
         full = {**base, **record}
@@ -438,9 +545,11 @@ class IsolatedStore:
     def _engram(self, *, read_only: bool):
         from .core import Engram
 
-        return Engram(root=self.root, read_only=read_only)
+        self._check_mode()
+        return Engram(root=self.root, read_only=read_only, store_mode=self.mode)
 
     def _recheck_before_write(self) -> None:
+        self._check_mode()
         if not _same_as_root(os.environ.get("ENGRAM_DIR", ""), self.cfg.root):
             raise GuardRefused("guard_engram_dir_mismatch", "ENGRAM_DIR changed after open")
         # The configured root (a config path, never an environment path) is resolved
@@ -489,7 +598,8 @@ class IsolatedStore:
 
     # -- the valve: admit, retire, restore --------------------------------------
 
-    def admit(self, card: dict, round_id: str, admission: dict) -> dict:
+    def admit(self, card: dict, round_id: str, admission: dict, *,
+              admitted_before: str | None = None, now: str | None = None) -> dict:
         """Write one admitted card as a verified lesson. Returns the receipt."""
         from .storage import NOT_ADDED_STATUSES, hold_directory_lock
 
@@ -503,10 +613,26 @@ class IsolatedStore:
                 return self._append({**base, "result": "admission_missing"})
         base["admission_sha256"] = _sha256_json(admission)
         try:
+            self._check_mode()
+            if self.mode == REPLAY_EXPERIENCE:
+                logical_admission, clock = self._replay_times(admitted_before, now)
+                base["admitted_before"] = logical_admission.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                base["clock"] = clock.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            elif admitted_before is not None or now is not None:
+                raise GuardRefused("replay_parameters_not_supported")
+        except GuardRefused as exc:
+            with self.serial():
+                return self._append({**base, "result": exc.code})
+        try:
             entry = self._entry_from_card(card, round_id)
         except ValueError as exc:
             with self.serial():
                 return self._append({**base, "result": "card_invalid", "detail": str(exc)[:200]})
+        if self.mode == REPLAY_EXPERIENCE:
+            if parse_utc_z(entry["evidence_as_of"], "evidence_as_of") > clock:
+                with self.serial():
+                    return self._append({**base, "result": "evidence_after_clock"})
+            entry["store_mode"] = self.mode
         base.update({k: entry[k] for k in ("subject_id", "evidence_as_of", "source_family")})
         with self.serial():
             self._recheck_before_write()
@@ -675,6 +801,7 @@ class IsolatedStore:
         problem = self._receipts_problem()
         if problem:  # refuse before acting: never clear the latch without a receipt
             return self._refuse_unreadable("veto_clear_latch", problem)
+        self._check_mode()
         with self.serial():
             cleared = _strict_mode.clear_marker(self.root)
             return self._append({"op": "veto_clear_latch", "result": "cleared" if cleared else "no_latch",
@@ -686,6 +813,7 @@ class IsolatedStore:
         problem = self._receipts_problem()
         if problem:  # refuse before acting: never rebind without a receipt
             return self._refuse_unreadable("rebind", problem)
+        self._check_mode()
         marker_path = self.root / MARKER
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
         with self.serial():
@@ -701,6 +829,16 @@ class IsolatedStore:
             return self._append({"op": "rebind", "result": "rebound", "operator": operator})
 
     # -- recall (design s8) ---------------------------------------------------------
+
+    @staticmethod
+    def _replay_times(admitted_before: str | None, now: str | None) -> tuple[datetime, datetime]:
+        admission = _parse_clock(admitted_before, "admitted_before")
+        if admission > datetime.now(timezone.utc) + timedelta(seconds=ADMISSION_FUTURE_SKEW_SECONDS):
+            raise GuardRefused("admitted_before_future")
+        clock = _parse_clock(now, "now")
+        if admission > clock:
+            raise GuardRefused("admitted_before_after_clock")
+        return admission, clock
 
     def _decision_point(self, decision_point_id: str) -> dict:
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(decision_point_id or "")):
@@ -720,7 +858,8 @@ class IsolatedStore:
         return dp
 
     @staticmethod
-    def _replay(receipts: list[dict], until: datetime | None) -> tuple[dict, set]:
+    def _replay(receipts: list[dict], until: datetime | None, *,
+                experience: bool = False) -> tuple[dict, set]:
         """(state by id, vetoed ids) from receipts up to ``until`` (all when None)."""
         state: dict[str, dict] = {}
         vetoed: set[str] = set()
@@ -728,7 +867,9 @@ class IsolatedStore:
             op, result, item_id = r.get("op"), r.get("result"), r.get("item_id")
             if op in ("veto_retire", "veto_reject") and result in ("retired", "tombstoned"):
                 vetoed.add(item_id)  # the Owner's veto hides a card at every time
-            if until is not None and parse_utc_z(r["ts"], "ts") >= until:
+            event_time = (r.get("admitted_before", r["ts"])
+                          if experience and op == "admit" and result == "admitted" else r["ts"])
+            if until is not None and parse_utc_z(event_time, "event_time") >= until:
                 continue
             if op == "admit" and result == "admitted":
                 state[item_id] = {"active": True, "receipt": r}
@@ -770,7 +911,7 @@ class IsolatedStore:
 
     def recall(self, decision_point_id: str, round_id: str, *, evidence_before: str, admitted_before: str,
                extra_exclude_families: Iterable[str] = (), subject_ids: Iterable[str] | None = None,
-               query: str | None = None, limit: int = 8) -> dict:
+               query: str | None = None, limit: int = 8, now: str | None = None) -> dict:
         from . import tombstones as _tombstones
 
         problem = self._receipts_problem()
@@ -778,11 +919,28 @@ class IsolatedStore:
             self._refuse_unreadable("recall", problem)
             raise RecallRefused(f"receipts_unreadable: {problem}")
         dp = self._decision_point(decision_point_id)
+        self._check_mode()
+        experience = self.mode == REPLAY_EXPERIENCE
+        if experience:
+            try:
+                logical_admission, clock = self._replay_times(admitted_before, now)
+            except GuardRefused as exc:
+                _append_refusal(self.receipts_dir, exc)
+                raise
+        elif now is not None:
+            raise GuardRefused("replay_parameters_not_supported")
         ev_before, adm_before = self._effective_cuts(
             dp["mode"], parse_utc_z(dp["as_of_utc"], "as_of_utc"),
-            parse_utc_z(evidence_before, "evidence_before"), parse_utc_z(admitted_before, "admitted_before"))
+            parse_utc_z(evidence_before, "evidence_before"),
+            logical_admission if experience else parse_utc_z(admitted_before, "admitted_before"))
+        if experience:
+            adm_before = logical_admission
+            if ev_before > clock:
+                exc = GuardRefused("evidence_after_clock")
+                _append_refusal(self.receipts_dir, exc)
+                raise exc
         exclude = {_family_key(f) for f in extra_exclude_families}
-        if dp["mode"] in MODES_EXCLUDING_OWN_FAMILY:
+        if not experience and dp["mode"] in MODES_EXCLUDING_OWN_FAMILY:
             exclude.add(_family_key(dp["family_code"]))
         wanted_subjects = {str(m) for m in subject_ids} if subject_ids is not None else None
         terms = [t for t in str(query or "").casefold().split() if t]
@@ -794,7 +952,7 @@ class IsolatedStore:
 
         with self.serial():
             receipts = self.receipts()
-            at_time, vetoed = self._replay(receipts, adm_before)
+            at_time, vetoed = self._replay(receipts, adm_before, experience=experience)
             latest, _ = self._replay(receipts, None)
             eng = self._engram(read_only=True)
             rows = {r.get("id"): r for r in self._rows(eng)}
@@ -836,6 +994,7 @@ class IsolatedStore:
                 {"id": item_id, "subject_id": row.get("subject_id"), "summary": row.get("summary"),
                  "detail": row.get("detail"), "evidence_as_of": row.get("evidence_as_of"),
                  "source_family": row.get("source_family"),
+                 **({"store_mode": self.mode} if experience else {}),
                  "admitted_round": row.get("admitted_round")}
                 for _ev, item_id, row in picked[:max(0, int(limit))]
             ]
@@ -846,9 +1005,11 @@ class IsolatedStore:
                 "evidence_before": evidence_before, "admitted_before": admitted_before,
                 "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                **({"clock": clock.strftime("%Y-%m-%dT%H:%M:%S.%fZ")} if experience else {}),
                 "returned_ids": [i["id"] for i in items], "excluded": excluded,
             })
-        return {"items": items, "excluded": excluded, "mode": dp["mode"], "excluded_families": sorted(exclude),
+        return {"items": items, "excluded": excluded, "mode": dp["mode"], "store_mode": self.mode,
+                "excluded_families": sorted(exclude),
                 "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
 
@@ -945,14 +1106,15 @@ def init_root(cfg: Config | None = None) -> IsolatedStore:
     if not _same_as_root(os.environ.get("ENGRAM_DIR", ""), cfg.root):
         raise GuardRefused("guard_engram_dir_mismatch")
     root.mkdir(parents=True, exist_ok=True)
-    marker = {"purpose": "isolated-store", "created_at": utc_now_z(), **_identity(root)}
+    marker = {"purpose": "isolated-store", "mode": cfg.mode, "created_at": utc_now_z(), **_identity(root)}
     (root / MARKER).write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
     (root / LIMITS_FILE).write_text(json.dumps(cfg.limits, ensure_ascii=False, indent=2), encoding="utf-8")
     (root / "telemetry_config.json").write_text(json.dumps({"reconcile_authorized": False}), encoding="utf-8")
-    pr = IsolatedStore.open(cfg)
+    # Pin the mode in the init ledger before exposing any opened handle.
+    pr = IsolatedStore(cfg, root_real, str(cfg.receipts_dir), deny)
     with pr.serial():
         pr._append({"op": "init", "result": "initialised"})
-    return pr
+    return IsolatedStore.open(cfg)
 
 
 # ---------------------------------------------------------------------------

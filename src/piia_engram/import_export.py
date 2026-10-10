@@ -1278,6 +1278,9 @@ class ImportExportMixin:
             ``{"path": 导出文件的完整路径, "skipped": {"tombstones": N}}``。
         """
         # Validate before reads that append audit records, mkdir or any writer.
+        from .isolated_store import REPLAY_EXPERIENCE, root_mode
+
+        mode = root_mode(self.root, self._store_mode)
         default_dir = self.root.resolve().with_name(self.root.resolve().name + '_exports')
         out = Path(output_path) if output_path else default_dir / (
             f'engram_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
@@ -1344,6 +1347,13 @@ class ImportExportMixin:
         if identity_review is not None:
             export_data['identity_review'] = identity_review
 
+        if mode == REPLAY_EXPERIENCE:
+            export_data["store_mode"] = mode
+            for section in (export_data["knowledge"], export_data["overflow_archive"]):
+                for kind in ("lessons", "decisions", "playbooks", "tombstones"):
+                    for row in section.get(kind, []):
+                        row["store_mode"] = mode
+
         # 导出所有项目快照
         for f in sorted(self._projects_dir.glob("*.json")):
             data = _read_json(f)
@@ -1393,6 +1403,12 @@ class ImportExportMixin:
         data = _read_json(path)
         if not data or "schema_version" not in data:
             return {"error": "不是有效的 Engram 备份文件"}
+
+        from .isolated_store import PRODUCTION, carries_replay_marker, root_mode
+
+        root_mode(self.root, self._store_mode)
+        if self._store_mode == PRODUCTION and carries_replay_marker(data):
+            return {"error": "replay_experience_import_refused", "changed": False}
 
         incoming_review = None
         try:

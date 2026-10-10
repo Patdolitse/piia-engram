@@ -215,6 +215,9 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     Returns:
         Dict with file paths and status.
     """
+    from .isolated_store import export_mode_prefix
+
+    mode_prefix = export_mode_prefix(engram)
     out = Path(output_dir)
     from .store_paths import export_destination
 
@@ -262,7 +265,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
         f"_Exported from Engram at {_now_iso()}_",
     ])
     soul_path = out / "SOUL.md"
-    soul_path.write_text("\n".join(soul_lines), encoding="utf-8")
+    soul_path.write_text(mode_prefix + "\n".join(soul_lines), encoding="utf-8")
     exported.append(str(soul_path))
 
     # --- USER.md: User personal info ---
@@ -276,7 +279,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
         f"_Source: Engram ({_now_iso()})_",
     ]
     user_path = out / "USER.md"
-    user_path.write_text("\n".join(user_lines), encoding="utf-8")
+    user_path.write_text(mode_prefix + "\n".join(user_lines), encoding="utf-8")
     exported.append(str(user_path))
 
     # --- MEMORY.md: Long-term memory (verified lessons + decisions) ---
@@ -284,7 +287,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
     memory_lines = ["# MEMORY", ""]
 
     def _would_fit(candidate_lines: list[str]) -> bool:
-        body = "\n".join(candidate_lines + [source_footer])
+        body = mode_prefix + "\n".join(candidate_lines + [source_footer])
         return len(body.encode("utf-8")) <= OPENCLAW_MEMORY_MAX_BYTES
 
     omitted = 0
@@ -344,7 +347,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
 
     memory_lines.append(source_footer)
     memory_path = out / "MEMORY.md"
-    memory_path.write_text("\n".join(memory_lines), encoding="utf-8")
+    memory_path.write_text(mode_prefix + "\n".join(memory_lines), encoding="utf-8")
     exported.append(str(memory_path))
 
     return {
@@ -408,6 +411,15 @@ def read_openclaw_files(soul_path: str = "", memory_path: str = "", user_path: s
     return texts, files
 
 
+def _replay_text_import_refusal(engram: "Engram", texts: dict) -> dict | None:
+    from .isolated_store import PRODUCTION, REPLAY_EXPORT_MARKER, root_mode
+
+    mode = root_mode(engram.root, engram._store_mode)
+    if mode == PRODUCTION and any(REPLAY_EXPORT_MARKER in text for text in texts.values()):
+        return {"error": "replay_experience_import_refused", "changed": False}
+    return None
+
+
 def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "", user_path: str = "") -> dict:
     """Metadata-only look at OpenClaw files: which exist and how many bullet lines each holds.
 
@@ -422,6 +434,9 @@ def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "
         return {"error": "give at least one OpenClaw file (soul, memory or user)",
                 "bridge_level": OPENCLAW_BRIDGE_LEVEL}
     _texts, files = read_openclaw_files(soul_path, memory_path, user_path)
+    mode_refusal = _replay_text_import_refusal(engram, _texts)
+    if mode_refusal:
+        return mode_refusal
     return {
         "status": "preview",
         "format": "openclaw",
@@ -466,6 +481,9 @@ def import_from_openclaw(
 
     # Everything is read and checked before anything is written.
     texts, files = read_openclaw_files(soul_path, memory_path, user_path)
+    mode_refusal = _replay_text_import_refusal(engram, texts)
+    if mode_refusal:
+        return mode_refusal
     unreadable = {name: info for name, info in files.items() if info.get("error")}
     if unreadable:
         return {"error": "unreadable_file", "files": files, "imported": [],

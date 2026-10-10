@@ -158,6 +158,10 @@ def build_agents_md_export(
         decisions or [], scope=scope, project=project, max_sensitivity=max_sensitivity
     )
 
+    from .isolated_store import REPLAY_EXPORT_MARKER, carries_replay_marker
+
+    mode_prefix = REPLAY_EXPORT_MARKER + "\n" if carries_replay_marker(sel_lessons + sel_decisions) else ""
+
     scope_label = "global" if scope == "global" else f"project: {project}"
     out: list[str] = [f"## {heading} ({scope_label})", ""]
     out.append(
@@ -171,7 +175,7 @@ def build_agents_md_export(
 
     if not lesson_lines and not decision_lines:
         out.append("_No verified, non-sensitive knowledge to export for this scope._")
-        return "\n".join(out) + "\n"
+        return mode_prefix + "\n".join(out) + "\n"
 
     if decision_lines:
         out.append("### Key decisions")
@@ -182,4 +186,4 @@ def build_agents_md_export(
         out.extend(lesson_lines)
         out.append("")
 
-    return "\n".join(out).rstrip() + "\n"
+    return mode_prefix + "\n".join(out).rstrip() + "\n"

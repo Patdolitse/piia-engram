@@ -42,6 +42,9 @@ class IdentityCardMixin:
         and the AI will immediately understand their work style.
         Language follows user's profile.language preference (Chinese default).
         """
+        from .isolated_store import export_mode_prefix
+
+        mode_prefix = export_mode_prefix(self)
         zh = get_lang() == "zh"
 
         lines = [
@@ -154,7 +157,7 @@ class IdentityCardMixin:
             else "_Paste this at the start of any AI conversation so the AI instantly understands you._"
         )
 
-        card = "\n".join(lines)
+        card = mode_prefix + "\n".join(lines)
 
         # Also save to exports folder
         export_path = self._exports_dir / "identity_card.md"
