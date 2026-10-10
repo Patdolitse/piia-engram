@@ -72,7 +72,10 @@ def render_weekly_text(recap: dict[str, Any]) -> str:
     if resurface:
         lines.append(f"Resurface: {resurface.get('summary', '')}")
 
-    return "\n".join(lines[:10])
+    from .isolated_store import carries_replay_marker, mark_replay_export
+
+    text = "\n".join(lines[:10])
+    return mark_replay_export(text) if carries_replay_marker(recap) else text
 
 
 def select_resurface(
@@ -177,7 +180,8 @@ def build_weekly_recap(
         root = getattr(engram, "root", None)
         if root is not None:
             try:
-                engram = type(engram)(root, read_only=True)
+                engram = type(engram)(root, read_only=True,
+                                      **({"store_mode": engram._store_mode} if hasattr(engram, "_store_mode") else {}))
             except Exception:
                 pass  # fall back to the caller's engram; reads still work
 
@@ -281,6 +285,10 @@ def build_weekly_recap(
     capacity = _weekly_capacity(engram, cutoff)
     if capacity is not None:
         recap["capacity"] = capacity
+    from .isolated_store import REPLAY_EXPERIENCE, root_mode
+
+    if hasattr(engram, "_store_mode") and root_mode(engram.root, engram._store_mode) == REPLAY_EXPERIENCE:
+        recap["store_mode"] = REPLAY_EXPERIENCE
     return recap
 
 

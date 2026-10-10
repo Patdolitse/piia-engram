@@ -199,9 +199,17 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) ->
         if (marker.get("purpose") != "isolated-store" or not isinstance(actual, str)
                 or actual not in ROOT_MODES):
             raise GuardRefused("guard_mode_invalid")
+        # Pre-replay production metadata has no ledger locator or mode fields.
+        # Ordinary Engram(root=...) never required its external launcher ledger;
+        # retain that attachment contract without guessing paths or migrating.
+        legacy = not any(key in marker for key in ("mode", "receipts_dir", "root_id"))
+        if legacy:
+            if expected != PRODUCTION:
+                raise GuardRefused("guard_mode_immutable", "initialized replay root required")
+            return PRODUCTION
         pinned = marker.get("receipts_dir")
-        if pinned is not None and (not isinstance(pinned, str) or not os.path.isabs(pinned)
-                                   or _norm(pinned) != _norm(str(audit_dir))):
+        if (not isinstance(pinned, str) or not os.path.isabs(pinned)
+                or _norm(pinned) != _norm(str(audit_dir))):
             raise GuardRefused("guard_mode_immutable", "ledger location mismatch")
         if not os.path.isabs(str(audit_dir)) or _within(str(audit_dir), str(root)):
             raise GuardRefused("guard_mode_immutable", "external ledger required")
@@ -218,6 +226,12 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) ->
                 raise GuardRefused("guard_mode_immutable", "initialization ledger mismatch")
         except (OSError, ValueError, AttributeError, TypeError) as exc:
             raise GuardRefused("guard_mode_immutable", "initialization ledger missing or unreadable") from exc
+        # Compare with the attached directory itself, independently of editable
+        # metadata. This catches accidental ledger substitution; it is not a
+        # tamper-proof boundary against writers controlling both directories.
+        actual_root_id = _root_id(root)
+        if marker.get("root_id") != actual_root_id or initial.get("root_id") != actual_root_id:
+            raise GuardRefused("guard_root_binding", "initialization ledger belongs to another root")
         if expected == PRODUCTION and actual == REPLAY_EXPERIENCE:
             raise GuardRefused("guard_replay_experience_root")
         if actual != expected:
@@ -268,6 +282,10 @@ def mark_replay_export(value: Any, *, _envelope: bool = True) -> Any:
         return result
     if isinstance(value, list):
         return [mark_replay_export(part) for part in value]
+    if isinstance(value, tuple):
+        return tuple(mark_replay_export(part) for part in value)
+    if isinstance(value, str) and _envelope:
+        return value if value.startswith(REPLAY_EXPORT_MARKER) else REPLAY_EXPORT_MARKER + "\n" + value
     return value
 
 
@@ -338,6 +356,12 @@ def _same_as_root(env_dir: str, configured_root: Path) -> bool:
 def _identity(path: Path) -> dict:
     st = os.stat(path)
     return {"realpath": os.path.realpath(path), "volume": st.st_dev, "file_id": st.st_ino}
+
+
+def _root_id(path: Path) -> str:
+    """Cheap directory identity, stable across a rename on the same volume."""
+    st = os.stat(path)
+    return f"{st.st_dev}:{st.st_ino}"
 
 
 # ---------------------------------------------------------------------------
@@ -1196,7 +1220,8 @@ def init_root(cfg: Config | None = None) -> IsolatedStore:
     if not _same_as_root(os.environ.get("ENGRAM_DIR", ""), cfg.root):
         raise GuardRefused("guard_engram_dir_mismatch")
     root.mkdir(parents=True, exist_ok=True)
-    marker = {"purpose": "isolated-store", "mode": cfg.mode, "receipts_dir": receipts_real,
+    root_id = _root_id(root)
+    marker = {"purpose": "isolated-store", "mode": cfg.mode, "receipts_dir": receipts_real, "root_id": root_id,
               "created_at": utc_now_z(), **_identity(root)}
     (root / MARKER).write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
     (root / LIMITS_FILE).write_text(json.dumps(cfg.limits, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1207,7 +1232,7 @@ def init_root(cfg: Config | None = None) -> IsolatedStore:
     pr = object.__new__(IsolatedStore)
     pr._configure(cfg, root_real, receipts_real, deny)
     with pr.serial():
-        pr._append({"op": "init", "result": "initialised", "store_mode": cfg.mode})
+        pr._append({"op": "init", "result": "initialised", "store_mode": cfg.mode, "root_id": root_id})
     return IsolatedStore.open(cfg)
 
 

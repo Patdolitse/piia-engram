@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -176,6 +177,13 @@ def legacy_production_root(tmp_path, monkeypatch):
     initial = {"seq": 1, "prev_sha256": "", "ts": "2020-01-01T00:00:00Z", "pid": 1,
                "proc_started_utc": "2020-01-01T00:00:00Z", "lib_version": "4.23.0",
                "limits": w.cfg.limits, "root_state_sha256": "", "op": "init", "result": "initialised"}
+    parts = []
+    for relative in ("lessons.json", "decisions.json", "tombstones.jsonl"):
+        path = eng.root / "knowledge" / relative
+        parts.append((relative, hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""))
+    initial["root_state_sha256"] = hashlib.sha256(
+        json.dumps(parts, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+    ).hexdigest()
     (w.cfg.receipts_dir / RECEIPTS_FILE).write_text(json.dumps(initial) + "\n", encoding="utf-8")
     monkeypatch.delenv("PIIA_ISOLATED_STORE_CONFIG", raising=False)
     return w

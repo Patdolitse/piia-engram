@@ -314,7 +314,7 @@ def build_context_preview(
     }
     if omitted:
         knowledge_panel["omitted"] = omitted
-    return {
+    preview = {
         "generated_at": generated_at,
         "level": level_key,
         "role": role_key,
@@ -346,6 +346,12 @@ def build_context_preview(
         },
         "invariant": "context_preview_read_only",
     }
+    from .isolated_store import REPLAY_EXPERIENCE, root_mode
+
+    if (getattr(eng, "_store_mode", None) == REPLAY_EXPERIENCE
+            and root_mode(eng.root, eng._store_mode) == REPLAY_EXPERIENCE):
+        preview["store_mode"] = REPLAY_EXPERIENCE
+    return preview
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +526,10 @@ def render_context_preview_text(preview: dict[str, Any]) -> str:
         "Note: read-only preview; nothing was sent to any AI tool. "
         "Withheld bodies are never shown — names/summaries only.",
     ))
-    return "\n".join(lines) + "\n"
+    from .isolated_store import carries_replay_marker, mark_replay_export
+
+    text = "\n".join(lines) + "\n"
+    return mark_replay_export(text) if carries_replay_marker(preview) else text
 
 
 def _sens_tag(sensitivity: Any) -> str:
@@ -801,7 +810,10 @@ def render_context_preview_html(preview: dict[str, Any]) -> str:
     )
     items_word = t("条", "items")
 
-    return f"""<!doctype html>
+    from .isolated_store import carries_replay_marker, REPLAY_EXPORT_MARKER
+
+    prefix = REPLAY_EXPORT_MARKER + "\n" if carries_replay_marker(preview) else ""
+    return prefix + f"""<!doctype html>
 <html lang="{lang}">
 <head>
 <meta charset="utf-8">

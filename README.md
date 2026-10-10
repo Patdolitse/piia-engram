@@ -297,6 +297,8 @@ python demos/cross_tool_continuity_demo.py --json
 
 Offline replays and evaluations that re-feed historical material in chronological order can initialize an isolated store with `"mode": "replay_experience"` in its launcher configuration. The root mode is immutable. Admission requires timezone-aware `admitted_before` and `now` parameters; recall also requires `now`. Historical admission uses the supplied time while receipts keep real timestamps, and automatic same-family exclusion is disabled. Evidence still stops at the decision point's `as_of`, with duplicate gates and capacity limits unchanged. Replay roots may pin `hard_cap` up to 10,000 (for example, 1,400); production roots retain the 1,000 default. Native backups and returned entries carry `store_mode: replay_experience`, and ordinary roots refuse replay roots and marked imports.
 
+The separation prevents accidental mixing, such as using the wrong configuration, attaching another root, or importing an unmarked export. New initialization receipts are bound to the directory identity, and context text retains its replay marker. This is not a tamper-proof boundary against someone who can edit both roots and their ledgers. Existing production roots created before replay mode retain direct attachment without launcher configuration.
+
 For broader release evidence, run the synthetic MCIC benchmark:
 
 ```bash
