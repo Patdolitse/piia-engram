@@ -393,6 +393,7 @@ def test_production_markdown_and_native_exports_match_base_bytes(tmp_path, monke
         def now(cls, tz=None):
             return cls(2020, 1, 1, tzinfo=tz)
     monkeypatch.setattr(import_export, "datetime", FrozenDateTime)
+    monkeypatch.setattr(import_export, "_now_iso", lambda: "2020-01-01T00:00:00")
     path = tmp_path / "out.json"
     expected = _base_function("import_export", "export_all_with_summary")(eng, str(path))
     expected_bytes = path.read_bytes()

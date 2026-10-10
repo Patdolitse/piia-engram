@@ -3662,7 +3662,7 @@ def _non_quarantining_read_guard(method):
     @functools.wraps(method)
     def guarded(self, *args, **kwargs):
         from .isolated_store import (root_mode, REPLAY_EXPERIENCE, mark_replay_export,
-                                     REPLAY_EXPORT_MARKER, carries_replay_marker)
+                                     carries_replay_marker)
 
         mode = root_mode(self.root, self._store_mode)
         if getattr(self, '_read_only', False):
@@ -3680,8 +3680,9 @@ def _non_quarantining_read_guard(method):
         }
         if method.__name__ in export_reads and (mode == REPLAY_EXPERIENCE
                                                or carries_replay_marker((args, kwargs))):
-            if isinstance(result, str):
-                return result if result.startswith(REPLAY_EXPORT_MARKER) else REPLAY_EXPORT_MARKER + "\n" + result
+            if method.__name__ == "generate_context_report":
+                text, omitted = result
+                return mark_replay_export(text), omitted
             return mark_replay_export(result)
         return result
 

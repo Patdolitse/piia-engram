@@ -12,6 +12,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - Generic replay experience mode for isolated offline replays and evaluations: immutable root mode, explicit historical admission and clock parameters, retained evidence truncation and duplicate gates, bounded larger capacity, and mode-marked native backups refused by ordinary roots.
 
+### Fixed
+
+- Bind new isolated initialization receipts to their root, preserve replay markers in context tuples and report text, and retain direct attachment for production roots created before replay mode. The boundary prevents accidental mixing; it does not resist deliberate edits by a writer controlling both roots and ledgers.
+
 ### Changed
 
 - Resume briefs and optional structured packs select next actions, blockers/failures, constraints and source status before background; cuts identify existing retrieval paths and token counts remain soft estimates.
