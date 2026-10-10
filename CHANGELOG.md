@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Changed
+
+- Resume briefs and optional structured packs select next actions, blockers/failures, constraints and source status before background; cuts identify existing retrieval paths and token counts remain soft estimates.
+- Raw resume material is labelled as an earlier session record with no approval or action authority. Briefs and capture diagnostics identify the current local store without exposing its full path.
+- Capture diagnostics report pending/quarantine/partial/receipt usage, closed processing reason codes, unknown host consumption, existing drain hints and read-only retention candidates; receipts remain retained and diagnostics never auto-drain or delete.
+
+See the [resume and capture guide](docs/resume-capture.md).
+
 ### Fixed
 
 - Offline install planning accepts local directory names containing `publish` or `upload`, while still rejecting network sources, upload commands and artifacts outside the allowed directory.

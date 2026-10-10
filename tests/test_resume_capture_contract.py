@@ -28,6 +28,9 @@ def test_key_fields_survive_before_background(tmp_path, monkeypatch, mode, budge
     state = {"current_focus": "Validate sample.", "last_completed": ["background " * 80],
              "next_actions": [] if scenario == "missing_next" else [next_action],
              "blocked_on": [blocker], "constraints": [constraint]}
+    if scenario == "failure":
+        state["blocked_on"] = []
+        state["latest_failure"] = blocker
     eng.save_project_snapshot(str(project), {"title": "Sample", "current_state": state,
                                             "notes": "background " * 500})
     forbidden = []
@@ -69,10 +72,15 @@ def test_key_fields_survive_before_background(tmp_path, monkeypatch, mode, budge
     assert resume["handoff"]["next_actions"] == agent["focus"]["next_actions"]
     assert resume["handoff"]["blocked_on"] == agent["focus"]["blocked_on"]
     assert blocker in resume["handoff"]["blocked_on"]
+    if scenario == "missing_next":
+        assert resume["handoff"]["next_actions"] == []
+        assert "- **next_action**: unknown" in md
     assert constraint in json.dumps(resume, ensure_ascii=False)
     assert constraint in agent["constraints"]
     for text in forbidden:
-        assert text not in md
+        # Supporting earlier records may contain a historical action; the
+        # current handoff must not promote it over the chosen checkpoint.
+        assert text not in md.split("## Recent session contexts", 1)[0]
         assert text not in json.dumps(resume["handoff"], ensure_ascii=False)
     if scenario == "pending_verified":
         assert "Pending sample rule." not in md
@@ -95,6 +103,9 @@ def test_long_key_fields_report_field_cuts_without_inventing_completion(tmp_path
     assert "constraints" in brief["omitted"]["sections"]
     assert "…" in brief["resume_pack"]["handoff"]["next_actions"][0]
     assert isinstance(brief["estimated_tokens"], int)
+    source = eng.get_project_snapshot(str(project))
+    assert source["current_state"]["next_actions"] == ["action " * 400]
+    assert source["current_state"]["constraints"] == ["constraint " * 400]
 
 
 def test_failure_in_digest_is_visible_as_earlier_record(tmp_path):
@@ -114,3 +125,21 @@ def test_store_identity_distinguishes_same_leaf_roots(tmp_path):
     second = Engram(root=tmp_path / "two" / "store", read_only=True).get_resume_brief()
     assert first["store"]["id"] != second["store"]["id"]
     assert str(tmp_path) not in json.dumps(first["store"])
+
+
+@pytest.mark.parametrize("budget", [128, 256, 512, 2000])
+def test_direct_pack_budget_contract_matches_brief(tmp_path, budget):
+    eng = Engram(root=tmp_path / "store")
+    project = tmp_path / "sample"
+    project.mkdir()
+    eng.save_project_snapshot(str(project), {"current_state": {
+        "current_focus": "Validate sample.", "next_actions": ["Run focused validation."],
+        "blocked_on": ["Blocked: prior check failed."], "constraints": ["Keep input format."]}})
+    resume = eng.build_project_resume_pack(str(project), token_budget=budget)
+    agent = eng.build_agent_context_pack(str(project), token_budget=budget)
+    brief = eng.get_resume_brief(str(project), token_budget=budget)
+    assert resume["handoff"]["next_actions"] == agent["focus"]["next_actions"]
+    assert resume["handoff"]["blocked_on"] == agent["focus"]["blocked_on"]
+    assert "Run focused validation." in brief["markdown"]
+    assert "Blocked: prior check failed." in brief["markdown"]
+    assert "Keep input format." in agent["constraints"]

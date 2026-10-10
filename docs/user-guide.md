@@ -8,6 +8,9 @@
 > [Quickstart](quickstart-first-value.md). For data boundaries, see the
 > [Trust model](trust.md).
 
+For resume budget contracts, source labels, store identities and metadata-only capture
+diagnostics, see [Resume budgets and capture diagnostics](resume-capture.md).
+
 Engram is a **local-first personal memory and identity layer for AI tools**. It
 lets Claude Code, Codex, Cursor, Windsurf, Claude Desktop, and other
 MCP-compatible tools share the same approved context about you — preferences,

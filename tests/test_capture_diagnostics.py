@@ -92,3 +92,41 @@ def test_success_receipt_is_not_approval_or_host_confirmation(tmp_path):
     assert "processed" in json.dumps(result["recent_results"])
     assert result["host_consumption"] == "unknown"
     assert "not approved" in result["states"]["processed"]
+
+
+def test_doctor_json_and_text_show_metadata_and_same_store_without_writes(tmp_path, monkeypatch, capsys):
+    from piia_engram import doctor
+    root = tmp_path / "store"
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    spool.enqueue("cursor_writeback", "cursor", {"summary": "BODY_MARKER"}, root=root)
+    before = snapshot(root)
+    assert doctor.run_doctor_json() == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["hook_spool"]["store"] == spool.backlog(root)["store"]
+    doctor._print_connection_report(root)
+    text = capsys.readouterr().out
+    assert "Host consumption: unknown" in text
+    assert report["hook_spool"]["store"]["id"] in text
+    assert "receipts kept for dedup" in text
+    assert "BODY_MARKER" not in text
+    assert "BODY_MARKER" not in json.dumps(report)
+    assert snapshot(root) == before
+
+
+def test_receipt_failure_and_poison_keep_evidence_with_closed_codes(tmp_path, monkeypatch):
+    spool.enqueue("cursor_writeback", "cursor", {"summary": "Validate sample inputs before processing because shape mismatch causes failures."}, root=tmp_path)
+    publish = spool._publish
+    def fail_receipt(path, data):
+        if path.parent.name == "receipts":
+            raise OSError("BODY_MARKER")
+        publish(path, data)
+    monkeypatch.setattr(spool, "_publish", fail_receipt)
+    assert spool.drain(tmp_path)["failed"] == 1
+    assert "receipt-failed" in json.dumps(spool.backlog(tmp_path)["recent_results"])
+    assert spool.backlog(tmp_path)["pending"] == 1
+    monkeypatch.setattr(spool, "_publish", publish)
+    assert spool.drain(tmp_path)["processed"] == 1
+    (spool.spool_dir(tmp_path) / "bad.jsonl").write_text("BODY_MARKER", encoding="utf-8")
+    assert spool.drain(tmp_path)["quarantined"] == 1
+    assert "invalid-event" in json.dumps(spool.backlog(tmp_path)["recent_results"])
+    assert "BODY_MARKER" not in json.dumps(spool.backlog(tmp_path))
