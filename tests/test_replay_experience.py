@@ -64,8 +64,11 @@ def test_paired_same_query_excludes_normal_and_returns_replay(tmp_path, monkeypa
 
 
 def test_admitted_before_injection_uses_logical_time_not_receipt_time(tmp_path, monkeypatch):
-    w = _world(tmp_path, monkeypatch)
-    receipt = _admit(w)
+    normal = _world(tmp_path / "normal", monkeypatch, mode="production")
+    assert normal.pr.admit(_card("1", "Q2", EARLY), "R1", ADMIT)["result"] == "admitted"
+    assert normal.pr.recall("dp-replay", "R2", evidence_before=CUT, admitted_before=CUT)["items"] == []
+    w = _world(tmp_path / "replay", monkeypatch)
+    receipt = _admit(w, family="Q2")
     assert receipt["result"] == "admitted"
     assert datetime.fromisoformat(receipt["ts"].replace("Z", "+00:00")) > datetime(2020, 1, 4, tzinfo=timezone.utc)
     assert [row["id"] for row in _recall(w)["items"]] == [receipt["item_id"]]
@@ -73,7 +76,9 @@ def test_admitted_before_injection_uses_logical_time_not_receipt_time(tmp_path, 
 
 
 def test_clock_injection_refuses_evidence_after_caller_clock(tmp_path, monkeypatch):
-    w = _world(tmp_path, monkeypatch)
+    normal = _world(tmp_path / "normal", monkeypatch, mode="production")
+    assert normal.pr.admit(_card("1", "Q1", "2020-01-05T00:00:00Z"), "R1", ADMIT)["result"] == "admitted"
+    w = _world(tmp_path / "replay", monkeypatch)
     receipt = _admit(w, evidence="2020-01-05T00:00:00Z")
     assert receipt["result"] == "evidence_after_clock"
     assert w.pr._rows(w.pr._engram(read_only=True)) == []
@@ -210,6 +215,120 @@ def test_replay_near_duplicate_gate_still_applies(tmp_path, monkeypatch):
     assert _admit(w)["result"] == "admitted"
     assert _admit(w)["result"] == "duplicate"
     assert len(w.pr._rows(w.pr._engram(read_only=True))) == 1
+
+
+def test_replay_near_duplicate_candidate_keeps_existing_gate(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch)
+    assert _admit(w)["result"] == "admitted"
+    similar = _card("1", "Q1", EARLY)
+    similar["summary"] += " revised"
+    result = w.pr.admit(similar, "R1", ADMIT, admitted_before=ADMITTED, now=CLOCK)
+    assert result["result"] != "admitted"
+    assert len(_recall(w)["items"]) == 1
+
+
+def test_normal_direct_entry_ingest_refuses_marker(tmp_path):
+    normal = Engram(root=tmp_path / "normal")
+    result = normal.add_lesson({"summary": "generic replay observation", "store_mode": MODE})
+    assert result["error"] == "replay_experience_import_refused"
+    assert normal.get_lessons() == []
+
+
+@pytest.mark.parametrize("mode", ["unknown", None, [], True])
+def test_invalid_root_mode_is_refused(tmp_path, monkeypatch, mode):
+    with pytest.raises(GuardRefused) as exc:
+        _world(tmp_path, monkeypatch, mode=mode)
+    assert exc.value.code == "guard_mode_invalid"
+
+
+def test_opened_handle_refuses_metadata_change_on_recall_and_rebind(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch)
+    path = w.pr.root / "isolated_store_root.json"
+    data = json.loads(path.read_text())
+    data["mode"] = "production"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    for action in (lambda: _recall(w), lambda: w.pr.owner_rebind("Owner")):
+        with pytest.raises(GuardRefused) as exc:
+            action()
+        assert exc.value.code == "guard_mode_immutable"
+    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+
+
+def test_legacy_normal_root_defaults_to_production(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch, mode="production")
+    path = w.pr.root / "isolated_store_root.json"
+    data = json.loads(path.read_text())
+    data.pop("mode")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    records = w.pr.receipts()
+    records[0].pop("store_mode")
+    w.pr.receipts_path.write_text(json.dumps(records[0]) + "\n", encoding="utf-8")
+    assert IsolatedStore.open(w.cfg).mode == "production"
+    assert Engram(root=w.pr.root, read_only=True)._store_mode == "production"
+
+
+def test_replay_init_ledger_prevents_metadata_mode_replacement(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch)
+    path = w.pr.root / "isolated_store_root.json"
+    data = json.loads(path.read_text())
+    data["mode"] = "production"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(GuardRefused) as exc:
+        IsolatedStore.open(Config({**w.data, "mode": "production"}))
+    assert exc.value.code == "guard_mode_immutable"
+
+
+@pytest.mark.parametrize("args,code", [
+    ({"now": None}, "clock_required"),
+    ({"now": "2020-01-04T00:00:00"}, "clock_invalid"),
+    ({"admitted_before": "2099-01-01T00:00:00Z"}, "admitted_before_future"),
+    ({"admitted_before": None}, "admitted_before_required"),
+    ({"now": ADMITTED}, "admitted_before_after_clock"),
+])
+def test_recall_injection_validation_is_audited(tmp_path, monkeypatch, args, code):
+    w = _world(tmp_path, monkeypatch)
+    with pytest.raises(GuardRefused) as exc:
+        _recall(w, **args)
+    assert exc.value.code == code
+    assert code in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+
+
+def test_recall_evidence_order_uses_injected_clock(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch)
+    with pytest.raises(GuardRefused) as exc:
+        _recall(w, now=ADMITTED, admitted_before=ADMITTED)
+    assert exc.value.code == "evidence_after_clock"
+
+
+def test_production_refuses_replay_only_admission_parameters(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch, mode="production")
+    assert _admit(w)["result"] == "replay_parameters_not_supported"
+    assert w.pr._rows(w.pr._engram(read_only=True)) == []
+
+
+def test_text_exports_keep_marker_and_normal_text_import_refuses_it(tmp_path, monkeypatch):
+    from piia_engram.agents_md_export import build_agents_md_export
+    from piia_engram.compat import export_to_openclaw, import_from_openclaw, preview_openclaw
+    from piia_engram.isolated_store import REPLAY_EXPORT_MARKER
+
+    w = _world(tmp_path / "replay", monkeypatch)
+    assert _admit(w)["result"] == "admitted"
+    eng = w.pr._engram(read_only=False)
+    assert REPLAY_EXPORT_MARKER in eng.export_identity_card()
+    assert REPLAY_EXPORT_MARKER in eng.export_knowledge_report()
+    assert REPLAY_EXPORT_MARKER in eng.export_review_page().read_text(encoding="utf-8")
+    assert REPLAY_EXPORT_MARKER in build_agents_md_export(lessons=eng.get_lessons())
+    exported = export_to_openclaw(eng, str(tmp_path / "text-export"))
+    assert all(REPLAY_EXPORT_MARKER in Path(path).read_text(encoding="utf-8") for path in exported["files"])
+    monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
+    normal = Engram(root=tmp_path / "normal")
+    memory = str(tmp_path / "text-export" / "MEMORY.md")
+    before = _snap(normal.root)
+    for operation in (preview_openclaw, import_from_openclaw):
+        result = operation(normal, memory_path=memory)
+        assert result["error"] == "replay_experience_import_refused"
+        assert result["changed"] is False
+    assert _snap(normal.root) == before
 
 
 @pytest.mark.parametrize("mode,cap", [("production", 1001), (MODE, 10001), (MODE, True), (MODE, 1400.5)])

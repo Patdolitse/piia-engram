@@ -508,6 +508,9 @@ class AnalyticsMixin:
 
     def export_knowledge_report(self) -> str:
         """Generate and save a Chinese Markdown knowledge report."""
+        from .isolated_store import export_mode_prefix
+
+        mode_prefix = export_mode_prefix(self)
         lessons = self._read_entries(self._knowledge_dir / "lessons.json", "lesson")
         decisions = self._read_entries(self._knowledge_dir / "decisions.json", "decision")
         active_lessons = [l for l in lessons if l.get("status") == "active"]
@@ -609,7 +612,7 @@ class AnalyticsMixin:
             lines.append(f"暂无超过 {STALE_KNOWLEDGE_DAYS} 天未访问的活跃知识。")
         lines.append("")
 
-        report = "\n".join(lines)
+        report = mode_prefix + "\n".join(lines)
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_path = self._exports_dir / f"knowledge_report_{date_str}.md"
         counter = 1

@@ -168,11 +168,16 @@ class Engram(
 ):
     """Read/write interface to the user's global Engram."""
 
-    def __init__(self, root: Path | None = None, *, read_only: bool = False):
+    def __init__(self, root: Path | None = None, *, read_only: bool = False,
+                 store_mode: str = "production"):
         from contextlib import nullcontext
+        from .isolated_store import root_mode
+
+        candidate = root or _engram_root()
+        self._store_mode = root_mode(candidate, store_mode)
 
         with non_quarantining_reads() if read_only else nullcontext():
-            self._initialize(root, read_only=read_only)
+            self._initialize(candidate, read_only=read_only)
 
     def _initialize(self, root: Path | None, *, read_only: bool):
         # read_only: open the store for a guaranteed zero-write read — e.g. a
@@ -2186,6 +2191,12 @@ class Engram(
         A re-proposal with different text that cites a tombstoned id is staged and
         flagged ``reproposal_of_rejected``.
         """
+        from .isolated_store import PRODUCTION, REPLAY_EXPERIENCE, carries_replay_marker
+
+        if self._store_mode == PRODUCTION and carries_replay_marker(entry):
+            return {"status": "replay_experience_import_refused", "error": "replay_experience_import_refused"}
+        if self._store_mode == REPLAY_EXPERIENCE:
+            entry["store_mode"] = REPLAY_EXPERIENCE
         stone = _tombstones.lookup(self.root, kind, entry)
         if stone is not None:
             self._audit.log(
@@ -2518,7 +2529,8 @@ class Engram(
 
         outcome = self._update_entries(path, "lesson", _mutate_lessons, capacity_ctx=lesson_ctx)
         result = result_box["result"]
-        if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
+        if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired",
+                                    "replay_experience_import_refused"):
             return result
         _gate_note = result_box.get("gate_note", _gate_note)
 
@@ -3084,7 +3096,8 @@ class Engram(
         with hold_directory_lock(self._knowledge_dir, timeout=30):
             outcome = self._update_entries(path, "decision", _mutate_decisions, capacity_ctx=decision_ctx)
             result = result_box["result"]
-            if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired"):
+            if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired",
+                                        "replay_experience_import_refused"):
                 return result
             _gate_note = result_box.get("gate_note", _gate_note)
             title = new_decision.get("question", "") or new_decision.get("title", "")

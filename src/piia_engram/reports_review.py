@@ -522,7 +522,9 @@ function copyResult() {{
 
         Returns the file path.
         """
-        html = self.generate_review_page(lang=lang)
+        from .isolated_store import export_mode_prefix
+
+        html = export_mode_prefix(self) + self.generate_review_page(lang=lang)
         export_dir = self._exports_dir
         export_dir.mkdir(parents=True, exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
