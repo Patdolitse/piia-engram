@@ -127,7 +127,7 @@ def test_replay_keeps_as_of_truncation_and_explicit_family_exclusion(tmp_path, m
 
 def test_root_mode_is_pinned_in_metadata_and_receipt_ledger(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
-    assert json.loads((w.pr.root / "isolated_store_root.json").read_text())["mode"] == MODE
+    assert json.loads((w.pr.root / "isolated_store_root.json").read_text(encoding="utf-8"))["mode"] == MODE
     assert w.pr.receipts()[0]["store_mode"] == MODE
     assert IsolatedStore.open(w.cfg).mode == MODE
 
@@ -141,14 +141,14 @@ def test_mode_change_is_refused_and_audited(tmp_path, monkeypatch, target):
             IsolatedStore.open(w.cfg)
         elif target == "metadata":
             path = w.pr.root / "isolated_store_root.json"
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             data["mode"] = "production"
             path.write_text(json.dumps(data), encoding="utf-8")
             IsolatedStore.open(w.cfg)
         else:
             w.pr.mode = "production"
     assert exc.value.code in {"guard_mode_immutable", "guard_replay_experience_root"}
-    assert exc.value.code in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+    assert exc.value.code in (w.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("read_only", [False, True])
@@ -244,20 +244,20 @@ def test_invalid_root_mode_is_refused(tmp_path, monkeypatch, mode):
 def test_opened_handle_refuses_metadata_change_on_recall_and_rebind(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
     path = w.pr.root / "isolated_store_root.json"
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data["mode"] = "production"
     path.write_text(json.dumps(data), encoding="utf-8")
     for action in (lambda: _recall(w), lambda: w.pr.owner_rebind("Owner")):
         with pytest.raises(GuardRefused) as exc:
             action()
         assert exc.value.code == "guard_mode_immutable"
-    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8")
 
 
 def test_legacy_normal_root_defaults_to_production(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch, mode="production")
     path = w.pr.root / "isolated_store_root.json"
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data.pop("mode")
     path.write_text(json.dumps(data), encoding="utf-8")
     records = w.pr.receipts()
@@ -270,7 +270,7 @@ def test_legacy_normal_root_defaults_to_production(tmp_path, monkeypatch):
 def test_replay_init_ledger_prevents_metadata_mode_replacement(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
     path = w.pr.root / "isolated_store_root.json"
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data["mode"] = "production"
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(GuardRefused) as exc:
@@ -290,7 +290,7 @@ def test_recall_injection_validation_is_audited(tmp_path, monkeypatch, args, cod
     with pytest.raises(GuardRefused) as exc:
         _recall(w, **args)
     assert exc.value.code == code
-    assert code in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+    assert code in (w.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8")
 
 
 def test_recall_evidence_order_uses_injected_clock(tmp_path, monkeypatch):

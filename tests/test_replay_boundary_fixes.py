@@ -54,7 +54,7 @@ def test_all_attachment_routes_require_consistent_initialisation(tmp_path, monke
                 project_id="sample", task_id="task", task_class="maintenance", objective="cache",
             )
     assert _snap(w.pr.root) == before
-    records = [json.loads(line) for line in (w.pr.receipts_dir / "refusals.jsonl").read_text().splitlines()]
+    records = [json.loads(line) for line in (w.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8").splitlines()]
     assert records[-1]["result"] == "guard_refused"
 
 
@@ -65,7 +65,7 @@ def test_attachment_uses_pinned_ledger_without_launcher_environment(tmp_path, mo
     _tamper(w, "metadata_edited")
     with pytest.raises(GuardRefused, match="guard_mode_immutable"):
         Engram(root=w.pr.root, read_only=True)
-    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("placement", ["top", "nested", "tuple", "text"])
@@ -115,7 +115,7 @@ def test_production_ingestion_cannot_normalise_away_original_markers(tmp_path, m
     else:
         result = eng.save_project_snapshot("example", {"notes": "sample", "discarded": marker})
     assert result["error"] == "replay_experience_import_refused"
-    assert "replay_experience_import_refused" in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+    assert "replay_experience_import_refused" in (w.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8")
 
 
 def test_legacy_migration_checks_whole_source_before_extraction(tmp_path, monkeypatch):
@@ -147,13 +147,13 @@ def test_replay_and_production_export_pairs(tmp_path, monkeypatch, mode, surface
         if mode == MODE:
             assert result["active_decisions"][0]["store_mode"] == MODE
     elif surface == "native":
-        result = json.loads(Path(eng.export_all(str(tmp_path / "out.json"))).read_text())
+        result = json.loads(Path(eng.export_all(str(tmp_path / "out.json"))).read_text(encoding="utf-8"))
         if mode == MODE:
             assert all(row["store_mode"] == MODE for row in result["projects"].values())
     elif surface == "openclaw":
         result = export_to_openclaw(eng, str(tmp_path / "bridge"))
         for name in ("SOUL.md", "MEMORY.md", "USER.md"):
-            assert (REPLAY_EXPORT_MARKER in (tmp_path / "bridge" / name).read_text()) == (mode == MODE)
+            assert (REPLAY_EXPORT_MARKER in (tmp_path / "bridge" / name).read_text(encoding="utf-8")) == (mode == MODE)
     elif surface == "identity":
         result = eng.export_identity_card()
     elif surface == "knowledge":
@@ -196,7 +196,7 @@ def test_other_snapshot_and_handoff_pairs(tmp_path, monkeypatch, surface, mode):
             result = eng.render_user_portrait_html(portrait)
         elif surface == "saved_portrait":
             result = eng.save_user_portrait(portrait)
-            assert carries_replay_marker(json.loads(Path(result["_path"]).read_text())) == (mode == MODE)
+            assert carries_replay_marker(json.loads(Path(result["_path"]).read_text(encoding="utf-8"))) == (mode == MODE)
         else:
             result = portrait
     elif surface == "resume":
@@ -237,7 +237,7 @@ def test_attachment_refuses_missing_initial_receipt_in_both_modes(tmp_path, monk
     w.pr.receipts_path.write_text("", encoding="utf-8")
     with pytest.raises(GuardRefused, match="guard_mode_immutable"):
         Engram(root=w.pr.root, read_only=True, store_mode=mode)
-    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text()
+    assert "guard_mode_immutable" in (w.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8")
 
 
 def test_missing_metadata_without_config_is_refused_with_external_audit(tmp_path, monkeypatch):
@@ -248,7 +248,7 @@ def test_missing_metadata_without_config_is_refused_with_external_audit(tmp_path
     with pytest.raises(GuardRefused, match="guard_mode_immutable"):
         Engram(root=w.pr.root, read_only=True)
     assert _snap(w.pr.root) == before
-    assert "guard_mode_immutable" in (w.pr.root.with_name(w.pr.root.name + "_guard") / "refusals.jsonl").read_text()
+    assert "guard_mode_immutable" in (w.pr.root.with_name(w.pr.root.name + "_guard") / "refusals.jsonl").read_text(encoding="utf-8")
 
 
 def test_external_text_import_checks_marker_before_section_filtering(tmp_path, monkeypatch):
@@ -288,7 +288,7 @@ def test_native_export_marks_identity_and_domain_entries(tmp_path, monkeypatch):
     eng.update_profile({"role": "sample"})
     eng.update_domain("example", {"project_count": 1})
     eng.add_lesson({"summary": "cache domain observation", "domain": "example", "tier": "verified"})
-    payload = json.loads(Path(eng.export_all(str(tmp_path / "out.json"))).read_text())
+    payload = json.loads(Path(eng.export_all(str(tmp_path / "out.json"))).read_text(encoding="utf-8"))
     assert payload["identity"]["profile"]["store_mode"] == MODE
     assert payload["knowledge"]["domains"]["example"]["store_mode"] == MODE
 
@@ -297,7 +297,7 @@ def test_native_export_marks_identity_and_domain_entries(tmp_path, monkeypatch):
 def test_production_nonempty_recall_matches_base_bytes(tmp_path, monkeypatch, point):
     w = _world(tmp_path, monkeypatch, mode="production")
     path = w.dps / f"{point}.json"
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data["as_of_utc"] = LATER
     path.write_text(json.dumps(data), encoding="utf-8")
     receipt = w.pr.admit(_card("1", "Q2", EARLY), "R1", ADMIT)

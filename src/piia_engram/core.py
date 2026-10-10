@@ -283,7 +283,9 @@ class Engram(
         # Data fragmentation detection — warn, don't silently split.
         # Skip in test environments (ENGRAM_TEST=1) to avoid noisy warnings
         # when a temporary ENGRAM_DIR coexists with the real ~/.engram.
-        if os.environ.get("ENGRAM_TEST", "").strip().lower() in ("1", "true", "yes"):
+        # Replay roots only inspect their dedicated data area, including on startup.
+        if (self._store_mode == "replay_experience"
+                or os.environ.get("ENGRAM_TEST", "").strip().lower() in ("1", "true", "yes")):
             self.data_orphans: list[str] = []
         else:
             self.data_orphans = detect_data_fragmentation(self.root)

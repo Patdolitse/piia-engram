@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -1278,10 +1279,15 @@ class ImportExportMixin:
             ``{"path": 导出文件的完整路径, "skipped": {"tombstones": N}}``。
         """
         # Validate before reads that append audit records, mkdir or any writer.
-        from .isolated_store import REPLAY_EXPERIENCE, root_mode
+        from .isolated_store import GuardRefused, REPLAY_EXPERIENCE, root_mode
 
         mode = root_mode(self.root, self._store_mode)
         default_dir = self.root.resolve().with_name(self.root.resolve().name + '_exports')
+        if mode == REPLAY_EXPERIENCE and not output_path:
+            cache_dir = os.environ.get("ENGRAM_CACHE_DIR", "").strip()
+            if not cache_dir:
+                raise GuardRefused("guard_replay_cache_required")
+            default_dir = Path(cache_dir) / "exports"
         out = Path(output_path) if output_path else default_dir / (
             f'engram_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
         export_destination(self.root, out)
