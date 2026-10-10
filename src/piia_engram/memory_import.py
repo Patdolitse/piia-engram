@@ -346,6 +346,12 @@ def write_items(
         "not_written": 0, "source_changed": 0, "partial": False, "error": "",
         "receipt": "",
     }
+    from .isolated_store import root_mode, refuse_replay_import
+
+    root_mode(eng.root, eng._store_mode)
+    mode_refusal = refuse_replay_import(eng, items)
+    if mode_refusal is not None:
+        return {**result, **mode_refusal, "not_written": len(items)}
     record = ImportRecord(eng, sources=sources, command=command, resource=resource,
                           source_tool=source_tool)
     handled = 0

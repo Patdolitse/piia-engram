@@ -432,6 +432,11 @@ class ReconcileMixin:
                 except (OSError, UnicodeDecodeError):
                     continue
 
+                from .isolated_store import refuse_replay_import
+
+                mode_refusal = refuse_replay_import(self, content)
+                if mode_refusal is not None:
+                    return {**mode_refusal, "items": [], "imported": 0}
                 parsed = _parse_memory_file(content)
                 if parsed is None:
                     continue
@@ -500,6 +505,8 @@ class ReconcileMixin:
     def _finish_reconcile(self, plan: dict, *, dry_run: bool, source: str, name: str) -> dict:
         """Public result of reconcile_*: the dry-run plan or the written result,
         with items reduced to id, source, file, hash and status (no text)."""
+        if plan.get("error") == "replay_experience_import_refused":
+            return plan
         if plan.get("skipped_reason"):
             if not dry_run:
                 self._note_reconcile_env_conflict()
@@ -607,6 +614,13 @@ class ReconcileMixin:
                 except (OSError, UnicodeDecodeError):
                     continue
 
+                from .isolated_store import refuse_replay_import
+
+                mode_refusal = refuse_replay_import(self, content)
+                if mode_refusal is not None:
+                    from .isolated_store import GuardRefused
+
+                    raise GuardRefused("replay_experience_import_refused")
                 parsed = _parse_memory_file(content)
                 if parsed is None:
                     continue
@@ -846,6 +860,11 @@ class ReconcileMixin:
             except OSError:
                 continue
 
+            from .isolated_store import refuse_replay_import
+
+            mode_refusal = refuse_replay_import(self, content)
+            if mode_refusal is not None:
+                return {**mode_refusal, "items": [], "imported": 0}
             # Parse into sections by ## headers
             sections = self._parse_config_sections(content, cfg.name)
             for section_title, section_body in sections:

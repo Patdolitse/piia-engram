@@ -163,6 +163,12 @@ def apply_reconcile(
 
     Returns a metadata-only payload (see module docstring for the contract).
     """
+    from .isolated_store import root_mode, refuse_replay_import
+
+    root_mode(eng.root, eng._store_mode)
+    mode_refusal = refuse_replay_import(eng, candidates)
+    if mode_refusal is not None:
+        return mode_refusal
     candidates = [c for c in (candidates or []) if isinstance(c, dict)]
     if existing is None:
         existing = _load_existing(eng)

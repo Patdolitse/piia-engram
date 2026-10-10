@@ -2327,6 +2327,7 @@ def _run_export_agents_md(args: list[str]) -> int:
         scope=scope,
         project=project,
         max_sensitivity=max_sensitivity,
+        store_mode=eng._store_mode,
     )
 
     if out_path:

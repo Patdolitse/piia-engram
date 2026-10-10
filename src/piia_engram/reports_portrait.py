@@ -110,6 +110,11 @@ class PortraitMixin:
         if portrait is None:
             portrait = self.build_user_portrait()
 
+        from .isolated_store import root_mode, REPLAY_EXPERIENCE, mark_replay_export
+
+        if root_mode(self.root, self._store_mode) == REPLAY_EXPERIENCE:
+            portrait = mark_replay_export(portrait)
+
         self._portraits_dir.mkdir(parents=True, exist_ok=True)
         stem = _safe_ts(portrait.get("generated_at", _now_iso()))
         path = self._portraits_dir / f"{stem}.json"

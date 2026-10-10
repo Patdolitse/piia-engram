@@ -1349,16 +1349,31 @@ class ImportExportMixin:
 
         if mode == REPLAY_EXPERIENCE:
             export_data["store_mode"] = mode
+            for row in export_data["identity"].values():
+                if isinstance(row, dict):
+                    row["store_mode"] = mode
             for section in (export_data["knowledge"], export_data["overflow_archive"]):
-                for kind in ("lessons", "decisions", "playbooks", "tombstones"):
-                    for row in section.get(kind, []):
-                        row["store_mode"] = mode
+                for entries in section.values():
+                    if isinstance(entries, list):
+                        for row in entries:
+                            if isinstance(row, dict):
+                                row["store_mode"] = mode
+                    elif isinstance(entries, dict):
+                        for row in entries.values():
+                            if isinstance(row, dict):
+                                row["store_mode"] = mode
 
         # 导出所有项目快照
         for f in sorted(self._projects_dir.glob("*.json")):
             data = _read_json(f)
             if data:
+                if mode == REPLAY_EXPERIENCE:
+                    data["store_mode"] = mode
                 export_data["projects"][f.stem] = data
+
+        if mode == REPLAY_EXPERIENCE:
+            for row in export_data["environment"]["tools"]:
+                row["store_mode"] = mode
 
         export_destination(self.root, out)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -1404,11 +1419,12 @@ class ImportExportMixin:
         if not data or "schema_version" not in data:
             return {"error": "不是有效的 Engram 备份文件"}
 
-        from .isolated_store import PRODUCTION, carries_replay_marker, root_mode
+        from .isolated_store import root_mode, refuse_replay_import
 
         root_mode(self.root, self._store_mode)
-        if self._store_mode == PRODUCTION and carries_replay_marker(data):
-            return {"error": "replay_experience_import_refused", "changed": False}
+        mode_refusal = refuse_replay_import(self, data)
+        if mode_refusal is not None:
+            return mode_refusal
 
         incoming_review = None
         try:

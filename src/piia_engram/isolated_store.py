@@ -154,35 +154,121 @@ def _parse_clock(value: Any, field: str) -> datetime:
         raise GuardRefused(f"{code}_invalid") from exc
 
 
-def root_mode(root: Path, expected: str) -> str:
-    """Check root metadata before the ordinary facade can attach or write."""
-    if not isinstance(expected, str) or expected not in ROOT_MODES:
-        raise GuardRefused("guard_mode_invalid")
-    path = root / MARKER
-    actual = PRODUCTION
-    if path.is_file():
+def _mode_context(root: Path, receipts_dir: Path | None = None) -> tuple[dict | None, Path, bool]:
+    """Find the external ledger without treating missing metadata as production."""
+    marker = None
+    marker_path = root / MARKER
+    if marker_path.is_file():
         try:
-            actual = json.loads(path.read_text(encoding="utf-8")).get("mode", PRODUCTION)
-        except (ValueError, AttributeError) as exc:
-            raise GuardRefused("guard_mode_invalid") from exc
-    if not isinstance(actual, str) or actual not in ROOT_MODES:
-        raise GuardRefused("guard_mode_invalid")
-    if expected == PRODUCTION and actual == REPLAY_EXPERIENCE:
-        raise GuardRefused("guard_replay_experience_root")
-    if actual != expected:
-        raise GuardRefused("guard_mode_immutable")
-    return actual
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            marker = {}  # root_mode refuses it, using the configured audit path
+        if not isinstance(marker, dict):
+            marker = {}
+    configured = receipts_dir is not None
+    config_path = os.environ.get(CONFIG_ENV, "")
+    if receipts_dir is None and config_path:
+        try:
+            data = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            if _norm(os.path.abspath(data.get("root", ""))) == _norm(os.path.abspath(root)):
+                configured = True
+                receipts_dir = Path(data["receipts_dir"])
+        except (ValueError, OSError, TypeError, KeyError, AttributeError):
+            pass
+    if receipts_dir is None and marker and isinstance(marker.get("receipts_dir"), str):
+        receipts_dir = Path(marker["receipts_dir"])
+    audit_dir = receipts_dir or root.with_name(root.name + "_guard")
+    isolated = configured or marker is not None or (root / LIMITS_FILE).exists()
+    return marker, audit_dir, isolated
+
+
+def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) -> str:
+    """Validate metadata AND the initialization receipt for every attachment."""
+    root = Path(root)
+    marker, audit_dir, isolated = _mode_context(root, receipts_dir)
+    try:
+        if not isinstance(expected, str) or expected not in ROOT_MODES:
+            raise GuardRefused("guard_mode_invalid")
+        if not isolated:
+            if expected != PRODUCTION:
+                raise GuardRefused("guard_mode_immutable", "initialized replay root required")
+            return PRODUCTION
+        if marker is None:
+            raise GuardRefused("guard_mode_immutable", "root metadata missing")
+        actual = marker.get("mode", PRODUCTION)
+        if (marker.get("purpose") != "isolated-store" or not isinstance(actual, str)
+                or actual not in ROOT_MODES):
+            raise GuardRefused("guard_mode_invalid")
+        pinned = marker.get("receipts_dir")
+        if pinned is not None and (not isinstance(pinned, str) or not os.path.isabs(pinned)
+                                   or _norm(pinned) != _norm(str(audit_dir))):
+            raise GuardRefused("guard_mode_immutable", "ledger location mismatch")
+        if not os.path.isabs(str(audit_dir)) or _within(str(audit_dir), str(root)):
+            raise GuardRefused("guard_mode_immutable", "external ledger required")
+        try:
+            # Initialization must be the first receipt. Read that immutable
+            # header on every attachment; full-chain diagnostics remain with
+            # the existing operation and reconcile guards.
+            with (audit_dir / RECEIPTS_FILE).open(encoding="utf-8") as ledger:
+                initial = json.loads(next((line for line in ledger if line.strip()), "null"))
+            if (not isinstance(initial, dict) or initial.get("op") != "init"
+                    or initial.get("result") != "initialised"
+                    or initial.get("seq") != 1 or initial.get("prev_sha256") != ""
+                    or initial.get("store_mode", PRODUCTION) != actual):
+                raise GuardRefused("guard_mode_immutable", "initialization ledger mismatch")
+        except (OSError, ValueError, AttributeError, TypeError) as exc:
+            raise GuardRefused("guard_mode_immutable", "initialization ledger missing or unreadable") from exc
+        if expected == PRODUCTION and actual == REPLAY_EXPERIENCE:
+            raise GuardRefused("guard_replay_experience_root")
+        if actual != expected:
+            raise GuardRefused("guard_mode_immutable")
+        return actual
+    except GuardRefused as exc:
+        _append_refusal(audit_dir, exc)
+        raise
 
 
 def carries_replay_marker(value: Any) -> bool:
     """Inspect bundles and nested entries without trusting their envelope."""
-    if isinstance(value, dict):
-        if value.get("store_mode") == REPLAY_EXPERIENCE or value.get("mode") == REPLAY_EXPERIENCE:
+    pending, seen = [value], set()
+    while pending:
+        part = pending.pop()
+        if isinstance(part, (dict, list, tuple)):
+            if id(part) in seen:
+                continue
+            seen.add(id(part))
+            if isinstance(part, dict):
+                if part.get("store_mode") == REPLAY_EXPERIENCE or part.get("mode") == REPLAY_EXPERIENCE:
+                    return True
+                pending.extend(part.values())
+            else:
+                pending.extend(part)
+        elif isinstance(part, str) and REPLAY_EXPORT_MARKER in part:
             return True
-        return any(carries_replay_marker(part) for part in value.values())
-    if isinstance(value, list):
-        return any(carries_replay_marker(part) for part in value)
     return False
+
+
+def refuse_replay_import(eng, original: Any) -> dict | None:
+    """Refuse original marked input before any normalization; audit metadata only."""
+    if eng._store_mode == PRODUCTION and carries_replay_marker(original):
+        _marker, audit_dir, _isolated = _mode_context(eng.root)
+        _append_refusal(audit_dir, GuardRefused("replay_experience_import_refused"), op="ingest")
+        return {"error": "replay_experience_import_refused",
+                "status": "replay_experience_import_refused", "changed": False}
+    return None
+
+
+def mark_replay_export(value: Any, *, _envelope: bool = True) -> Any:
+    """Mark exported envelopes and nested entries, on a copy of the payload."""
+    if isinstance(value, dict):
+        result = {key: mark_replay_export(part, _envelope=key in {"snapshot", "identity_summary"})
+                  for key, part in value.items()}
+        if _envelope:
+            result["store_mode"] = REPLAY_EXPERIENCE
+        return result
+    if isinstance(value, list):
+        return [mark_replay_export(part) for part in value]
+    return value
 
 
 def export_mode_prefix(eng) -> str:
@@ -385,6 +471,10 @@ class IsolatedStore:
     """An opened isolated store. Build with :meth:`open` (or :func:`init_root`)."""
 
     def __init__(self, cfg: Config, root_real: str, receipts_real: str, deny: list[str] | None = None):
+        root_mode(Path(root_real), cfg.mode, receipts_dir=Path(receipts_real))
+        self._configure(cfg, root_real, receipts_real, deny)
+
+    def _configure(self, cfg: Config, root_real: str, receipts_real: str, deny: list[str] | None) -> None:
         self.cfg = cfg
         self.deny = list(deny or [])
         self.root = Path(root_real)
@@ -410,19 +500,10 @@ class IsolatedStore:
         try:
             if self.cfg.mode != self.mode:
                 raise GuardRefused("guard_mode_immutable")
-            root_mode(self.root, self.mode)
-            try:
-                records = self.receipts()
-            except ReceiptsUnreadable:
-                return  # the operation's receipt guard owns this refusal
-            initial = next((r for r in records if r.get("op") == "init"), None)
-            if initial is not None and initial.get("store_mode", PRODUCTION) != self.mode:
-                raise GuardRefused("guard_mode_immutable")
-            if initial is None and self.mode == REPLAY_EXPERIENCE:
-                raise GuardRefused("guard_mode_immutable", "replay init receipt missing")
         except GuardRefused as exc:
             _append_refusal(self.receipts_dir, exc)
             raise
+        root_mode(self.root, self.mode, receipts_dir=self.receipts_dir)
 
     # -- opening -----------------------------------------------------------
 
@@ -444,8 +525,8 @@ class IsolatedStore:
             marker_path = Path(root_real) / MARKER
             if not marker_path.is_file():
                 raise GuardRefused("guard_marker_missing")
+            root_mode(Path(root_real), cfg.mode, receipts_dir=Path(receipts_real))
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
-            root_mode(Path(root_real), cfg.mode)
             current = _identity(Path(root_real))
             bound = {k: marker.get(k) for k in ("realpath", "volume", "file_id")}
             if (marker.get("purpose") != "isolated-store"
@@ -517,7 +598,7 @@ class IsolatedStore:
             "proc_started_utc": _PROCESS_STARTED_UTC,
             "lib_version": self.lib_version,
             "limits": self.cfg.limits,
-            "store_mode": self.mode,
+            **({"store_mode": self.mode} if self.mode == REPLAY_EXPERIENCE else {}),
             "root_state_sha256": self.state_hash(),
         }
         full = {**base, **record}
@@ -614,6 +695,9 @@ class IsolatedStore:
         base["admission_sha256"] = _sha256_json(admission)
         try:
             self._check_mode()
+            if self.mode == PRODUCTION and carries_replay_marker(card):
+                with self.serial():
+                    return self._append({**base, "result": "replay_experience_import_refused"})
             if self.mode == REPLAY_EXPERIENCE:
                 logical_admission, clock = self._replay_times(admitted_before, now)
                 base["admitted_before"] = logical_admission.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -1008,7 +1092,8 @@ class IsolatedStore:
                 **({"clock": clock.strftime("%Y-%m-%dT%H:%M:%S.%fZ")} if experience else {}),
                 "returned_ids": [i["id"] for i in items], "excluded": excluded,
             })
-        return {"items": items, "excluded": excluded, "mode": dp["mode"], "store_mode": self.mode,
+        return {"items": items, "excluded": excluded, "mode": dp["mode"],
+                **({"store_mode": self.mode} if experience else {}),
                 "excluded_families": sorted(exclude),
                 "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
@@ -1081,39 +1166,48 @@ class IsolatedStore:
 # ---------------------------------------------------------------------------
 
 
-def _append_refusal(receipts_dir: Path, exc: GuardRefused) -> None:
+def _append_refusal(receipts_dir: Path, exc: GuardRefused, *, op: str = "open") -> None:
     """Record a guard refusal next to (not inside) the receipt chain."""
+    if getattr(exc, "_audited", False):
+        return
     receipts_dir.mkdir(parents=True, exist_ok=True)
     with (receipts_dir / REFUSALS_FILE).open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps({"op": "open", "result": "guard_refused", "code": exc.code,
+        fh.write(json.dumps({"op": op, "result": "guard_refused", "code": exc.code,
                              "ts": utc_now_z(), "pid": os.getpid()}, sort_keys=True) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
+    exc._audited = True
 
 
 def init_root(cfg: Config | None = None) -> IsolatedStore:
     """Create a new root in an EMPTY directory: marker, pinned limits, reconcile off."""
     cfg = cfg or Config.from_env()
     deny = cfg.deny_list()
-    check_candidate(cfg.receipts_dir, deny, label="receipts_dir")
+    receipts_real = check_candidate(cfg.receipts_dir, deny, label="receipts_dir")
     root = cfg.root
     if root.name.lower() in (".engram", ".piia"):
         raise GuardRefused("guard_init_legacy_name", "never initialise a .engram or .piia directory")
     if root.exists() and (not root.is_dir() or any(root.iterdir())):
         raise GuardRefused("guard_init_not_empty", "initialise only an empty directory")
     root_real = check_candidate(root, deny, label="root")
+    if _within(receipts_real, root_real) or _within(root_real, receipts_real):
+        raise GuardRefused("guard_receipts_in_root")
     check_environment(cfg)
     if not _same_as_root(os.environ.get("ENGRAM_DIR", ""), cfg.root):
         raise GuardRefused("guard_engram_dir_mismatch")
     root.mkdir(parents=True, exist_ok=True)
-    marker = {"purpose": "isolated-store", "mode": cfg.mode, "created_at": utc_now_z(), **_identity(root)}
+    marker = {"purpose": "isolated-store", "mode": cfg.mode, "receipts_dir": receipts_real,
+              "created_at": utc_now_z(), **_identity(root)}
     (root / MARKER).write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
     (root / LIMITS_FILE).write_text(json.dumps(cfg.limits, ensure_ascii=False, indent=2), encoding="utf-8")
     (root / "telemetry_config.json").write_text(json.dumps({"reconcile_authorized": False}), encoding="utf-8")
     # Pin the mode in the init ledger before exposing any opened handle.
-    pr = IsolatedStore(cfg, root_real, str(cfg.receipts_dir), deny)
+    # Bootstrap only within this initializer; public constructors always verify
+    # an existing initialization receipt before attaching.
+    pr = object.__new__(IsolatedStore)
+    pr._configure(cfg, root_real, receipts_real, deny)
     with pr.serial():
-        pr._append({"op": "init", "result": "initialised"})
+        pr._append({"op": "init", "result": "initialised", "store_mode": cfg.mode})
     return IsolatedStore.open(cfg)
 
 

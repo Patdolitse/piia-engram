@@ -47,6 +47,21 @@ def migrate_from_oca_memory(oca_memory_dir: str, engram: "Engram") -> dict:
     mem_dir = Path(oca_memory_dir)
     migrated: list[str] = []
 
+    from .isolated_store import refuse_replay_import, root_mode
+
+    root_mode(engram.root, engram._store_mode)
+    # Inspect all originals before updating identity or reconstructing rows.
+    for name in ("owner_profile.json", "project_patterns.json", "near_misses.json"):
+        path = mem_dir / name
+        if path.is_file():
+            try:
+                original = json.loads(path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue  # the existing per-file migration handles malformed input
+            mode_refusal = refuse_replay_import(engram, original)
+            if mode_refusal is not None:
+                return mode_refusal
+
     # Owner profile → Engram profile
     profile_path = mem_dir / "owner_profile.json"
     if profile_path.exists():
@@ -158,6 +173,9 @@ def hermes_handoff_payload(engram: "Engram") -> dict:
     identity summary and active verified decision summaries without raw paths,
     session IDs, full memory bodies, or decision reasoning.
     """
+    from .isolated_store import root_mode, REPLAY_EXPERIENCE, mark_replay_export
+
+    mode = root_mode(engram.root, engram._store_mode)
     try:
         profile = engram.get_profile(safe=True)
     except TypeError:  # pragma: no cover - older Engram-like facade
@@ -193,13 +211,14 @@ def hermes_handoff_payload(engram: "Engram") -> dict:
         if value:
             identity_summary[key] = value
 
-    return {
+    payload = {
         "schema": "hermes_handoff_v1",
         "source": "piia-engram",
         "identity_summary": identity_summary,
         "active_decisions": active_decisions,
         "lessons_count": len(lessons),
     }
+    return mark_replay_export(payload) if mode == REPLAY_EXPERIENCE else payload
 
 
 def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
@@ -354,6 +373,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
         "status": "success",
         "bridge_level": OPENCLAW_BRIDGE_LEVEL,
         "files": exported,
+        **({"store_mode": "replay_experience"} if mode_prefix else {}),
     }
 
 
@@ -412,12 +432,10 @@ def read_openclaw_files(soul_path: str = "", memory_path: str = "", user_path: s
 
 
 def _replay_text_import_refusal(engram: "Engram", texts: dict) -> dict | None:
-    from .isolated_store import PRODUCTION, REPLAY_EXPORT_MARKER, root_mode
+    from .isolated_store import root_mode, refuse_replay_import
 
-    mode = root_mode(engram.root, engram._store_mode)
-    if mode == PRODUCTION and any(REPLAY_EXPORT_MARKER in text for text in texts.values()):
-        return {"error": "replay_experience_import_refused", "changed": False}
-    return None
+    root_mode(engram.root, engram._store_mode)
+    return refuse_replay_import(engram, texts)
 
 
 def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "", user_path: str = "") -> dict:

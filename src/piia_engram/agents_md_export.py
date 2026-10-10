@@ -144,6 +144,7 @@ def build_agents_md_export(
     project: str = "",
     max_sensitivity: str = _DEFAULT_MAX_SENSITIVITY,
     heading: str = "Engram — durable knowledge",
+    store_mode: str = "production",
 ) -> str:
     """Build an AGENTS.md/CLAUDE.md-compatible Markdown block.
 
@@ -151,6 +152,7 @@ def build_agents_md_export(
     The output is summary/metadata only — safe to commit into an AGENTS.md or
     CLAUDE.md. Returns a short "nothing to export" block if nothing qualifies.
     """
+    lessons, decisions = list(lessons or []), list(decisions or [])
     sel_lessons = select_exportable(
         lessons or [], scope=scope, project=project, max_sensitivity=max_sensitivity
     )
@@ -160,7 +162,8 @@ def build_agents_md_export(
 
     from .isolated_store import REPLAY_EXPORT_MARKER, carries_replay_marker
 
-    mode_prefix = REPLAY_EXPORT_MARKER + "\n" if carries_replay_marker(sel_lessons + sel_decisions) else ""
+    mode_prefix = (REPLAY_EXPORT_MARKER + "\n" if store_mode == "replay_experience"
+                   or carries_replay_marker((lessons, decisions)) else "")
 
     scope_label = "global" if scope == "global" else f"project: {project}"
     out: list[str] = [f"## {heading} ({scope_label})", ""]

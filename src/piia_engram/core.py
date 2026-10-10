@@ -2194,7 +2194,9 @@ class Engram(
         from .isolated_store import PRODUCTION, REPLAY_EXPERIENCE, carries_replay_marker
 
         if self._store_mode == PRODUCTION and carries_replay_marker(entry):
-            return {"status": "replay_experience_import_refused", "error": "replay_experience_import_refused"}
+            from .isolated_store import refuse_replay_import
+
+            return refuse_replay_import(self, entry)
         if self._store_mode == REPLAY_EXPERIENCE:
             entry["store_mode"] = REPLAY_EXPERIENCE
         stone = _tombstones.lookup(self.root, kind, entry)
@@ -3638,6 +3640,12 @@ def _read_only_guard(method):
                 "method": method.__name__,
                 "message": "This Engram handle is read-only; nothing was written.",
             }
+        from .isolated_store import root_mode, refuse_replay_import
+
+        root_mode(self.root, self._store_mode)
+        refused = refuse_replay_import(self, (args, kwargs))
+        if refused is not None:
+            return refused
         return method(self, *args, **kwargs)
 
     guarded.__engram_write_verb__ = True
@@ -3653,10 +3661,29 @@ def _non_quarantining_read_guard(method):
 
     @functools.wraps(method)
     def guarded(self, *args, **kwargs):
+        from .isolated_store import (root_mode, REPLAY_EXPERIENCE, mark_replay_export,
+                                     REPLAY_EXPORT_MARKER, carries_replay_marker)
+
+        mode = root_mode(self.root, self._store_mode)
         if getattr(self, '_read_only', False):
             with non_quarantining_reads():
-                return method(self, *args, **kwargs)
-        return method(self, *args, **kwargs)
+                result = method(self, *args, **kwargs)
+        else:
+            result = method(self, *args, **kwargs)
+        export_reads = {
+            "get_project_snapshot", "get_knowledge_history", "build_project_resume_pack",
+            "build_agent_context_pack", "get_resume_brief", "build_user_portrait",
+            "build_user_portrait_rich", "get_latest_portrait", "get_previous_portrait",
+            "list_user_portraits", "compare_user_portraits", "render_user_portrait",
+            "render_user_portrait_html", "render_portrait_growth", "generate_context",
+            "generate_context_report",
+        }
+        if method.__name__ in export_reads and (mode == REPLAY_EXPERIENCE
+                                               or carries_replay_marker((args, kwargs))):
+            if isinstance(result, str):
+                return result if result.startswith(REPLAY_EXPORT_MARKER) else REPLAY_EXPORT_MARKER + "\n" + result
+            return mark_replay_export(result)
+        return result
 
     return guarded
 
