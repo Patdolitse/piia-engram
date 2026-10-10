@@ -282,6 +282,45 @@ def test_reconcile_apply_checks_original_before_projection(tmp_path, dry_run):
     assert eng.get_lessons() == []
 
 
+def test_native_export_marks_identity_and_domain_entries(tmp_path, monkeypatch):
+    w = _world(tmp_path, monkeypatch)
+    eng = w.pr._engram(read_only=False)
+    eng.update_profile({"role": "sample"})
+    eng.update_domain("example", {"project_count": 1})
+    eng.add_lesson({"summary": "cache domain observation", "domain": "example", "tier": "verified"})
+    payload = json.loads(Path(eng.export_all(str(tmp_path / "out.json"))).read_text())
+    assert payload["identity"]["profile"]["store_mode"] == MODE
+    assert payload["knowledge"]["domains"]["example"]["store_mode"] == MODE
+
+
+@pytest.mark.parametrize("point", ["dp-live", "dp-replay", "dp-test"])
+def test_production_nonempty_recall_matches_base_bytes(tmp_path, monkeypatch, point):
+    w = _world(tmp_path, monkeypatch, mode="production")
+    path = w.dps / f"{point}.json"
+    data = json.loads(path.read_text())
+    data["as_of_utc"] = LATER
+    path.write_text(json.dumps(data), encoding="utf-8")
+    receipt = w.pr.admit(_card("1", "Q2", EARLY), "R1", ADMIT)
+    assert receipt["result"] == "admitted"
+    args = dict(evidence_before=LATER, admitted_before=LATER, query="cache")
+    expected = _base_function("isolated_store", "recall")(w.pr, point, "R2", **args)
+    actual = w.pr.recall(point, "R2", **args)
+    assert [row["id"] for row in actual["items"]] == [receipt["item_id"]]
+    assert _bytes(actual) == _bytes(expected)
+
+
+def test_production_recall_digest_matches_base_bytes(tmp_path):
+    from datetime import timezone
+    from piia_engram.recall_service import gather_recall, render_recall_text
+    eng = Engram(root=tmp_path / "normal")
+    eng.add_lesson({"summary": "cache observation", "tier": "verified"})
+    args = dict(query="cache", now=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    expected = _base_function("recall_service", "gather_recall")(eng, **args)
+    actual = gather_recall(eng, **args)
+    assert _bytes(actual) == _bytes(expected)
+    assert render_recall_text(actual) == _base_function("recall_service", "render_recall_text")(expected)
+
+
 def _base_function(module_name, name):
     """Execute the actual function frozen from 86547e88b with the same adapters."""
     module = importlib.import_module(f"piia_engram.{module_name}")

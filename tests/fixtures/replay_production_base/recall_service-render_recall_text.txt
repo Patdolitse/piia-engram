@@ -1,0 +1,118 @@
+def render_recall_text(payload: dict[str, Any]) -> str:
+    """Render a recall payload as a compact, owner-facing text digest."""
+    lines: list[str] = []
+    # [Engram] presence header — brand the recall block. Counts come ONLY from
+    # freshness_status; the recall payload projects no tier, so we never imply a
+    # "verified" count we cannot substantiate. Degrades to a bare memory count
+    # when no item carries freshness (include_freshness=False) or knowledge=[].
+    _knowledge = payload.get("knowledge", []) if isinstance(payload, dict) else []
+
+    def _fresh_status(_it: object) -> str:
+        if isinstance(_it, dict) and isinstance(_it.get("freshness"), dict):
+            return str(_it["freshness"].get("freshness_status") or "")
+        return ""
+
+    if any(_fresh_status(_it) for _it in _knowledge):
+        _fresh_n = sum(1 for _it in _knowledge if _fresh_status(_it) == "fresh")
+        _stale_n = sum(1 for _it in _knowledge if _fresh_status(_it) == "stale")
+        lines.append(
+            f"[Engram Recall] {len(_knowledge)} memories · "
+            f"{_fresh_n} fresh · {_stale_n} stale"
+        )
+    else:
+        lines.append(f"[Engram Recall] {len(_knowledge)} memories")
+    meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
+    project = meta.get("project") or "(all projects)"
+    lines.append(f"Recall digest — project: {project}")
+    if meta.get("query"):
+        lines.append(f"  query focus: {meta['query']}")
+
+    identity = payload.get("identity", {})
+    if identity:
+        lines.append("Identity:")
+        for key in _IDENTITY_FIELDS:
+            if key in identity:
+                lines.append(f"  {key}: {identity[key]}")
+        for key in _IDENTITY_LIST_FIELDS:
+            if key in identity:
+                lines.append(f"  {key}: {', '.join(identity[key])}")
+
+    activity = payload.get("recent_activity", {})
+    if activity:
+        bits = [f"{k}={v}" for k, v in activity.items()]
+        lines.append("Recent activity: " + ", ".join(bits))
+
+    knowledge = payload.get("knowledge", [])
+    lines.append(f"Knowledge ({len(knowledge)} items):")
+    for item in knowledge:
+        label = item.get("summary") or item.get("choice") or item.get("question") or "(no summary)"
+        prefix = item.get("type", "item")
+        fresh = ""
+        fr = item.get("freshness")
+        if isinstance(fr, dict) and fr.get("freshness_status"):
+            fresh = f" [{fr['freshness_status']}]"
+        labeling_tag = ""
+        lb = item.get("labeling")
+        if isinstance(lb, dict):
+            validation = str(lb.get("validation_state") or "").strip()
+            quality = str(lb.get("annotation_quality") or "").strip()
+            if validation and quality:
+                labeling_tag = f" [{validation}/{quality}]"
+        # Surface provenance (source agent) by default so the owner can see where
+        # each item came from — same data already in the payload, just rendered.
+        prov = ""
+        pv = item.get("provenance")
+        if isinstance(pv, dict) and pv.get("source_agent"):
+            prov = f" «src:{pv['source_agent']}»"
+        lines.append(f"  - ({prefix}){fresh}{labeling_tag}{prov} {label}")
+        # Owner trust block (owner/private-self only; gated upstream by
+        # include_trust). Surfaces the 4.5.0 first-value payoff — why a fact is
+        # trustworthy, its anchor, when it was validated, and when it expires.
+        trust = item.get("trust")
+        if isinstance(trust, dict):
+            bits: list[str] = []
+            if trust.get("confirmation_source"):
+                bits.append(f"why={trust['confirmation_source']}")
+            if trust.get("anchor"):
+                bits.append(f"anchor={trust['anchor']}")
+            if trust.get("anchor_status"):
+                bits.append(f"status={trust['anchor_status']}")
+            if trust.get("validated_at"):
+                bits.append(f"validated={trust['validated_at']}")
+            expires = trust.get("decay_policy") or trust.get("freshness_status")
+            if expires:
+                bits.append(f"expires={expires}")
+            if bits:
+                lines.append("      trust: " + ", ".join(bits))
+
+    gov = meta.get("governance", {})
+    excluded = gov.get("excluded_count", 0) if isinstance(gov, dict) else 0
+    collapsed = meta.get("collapsed_versions", 0)
+    vcmeta = meta.get("version_chain", {}) if isinstance(meta, dict) else {}
+    heads_present = vcmeta.get("heads_present", 0) if isinstance(vcmeta, dict) else 0
+    footer = (
+        f"  (trimmed by budget: {excluded}; older versions hidden: {collapsed}; "
+        f"current versions/HEAD surfaced: {heads_present})"
+    )
+    lines.append(footer)
+    usage = meta.get("context_usage", {}) if isinstance(meta, dict) else {}
+    if isinstance(usage, dict):
+        knowledge_usage = usage.get("knowledge", {})
+        budget_usage = usage.get("budget", {})
+        if isinstance(knowledge_usage, dict) and isinstance(budget_usage, dict):
+            returned = knowledge_usage.get("returned", len(knowledge))
+            trimmed = knowledge_usage.get("trimmed_by_budget", excluded)
+            used = budget_usage.get("estimated_used_tokens", 0)
+            requested = budget_usage.get("requested_tokens", meta.get("token_budget", 0))
+            lines.append(
+                "  context usage: "
+                f"returned={returned}, trimmed={trimmed}, budget={used}/{requested}"
+            )
+    omission = _recall_policy.omission_line(
+        meta.get("omitted") if isinstance(meta, dict) else None, lang="en"
+    )
+    if omission:
+        lines.append(omission)
+    return "\n".join(lines)
+
+
