@@ -256,7 +256,7 @@
 ## [4.19.1] - 2026-08-28
 
 ### 修复
-v4.19.0 发布后 Codex 终审发现的合同保真度缺口（全部由在 `main@ec4178d` 上验证为红的负控测试封印；收据本地留存）：
+v4.19.0 发布后终审发现的合同保真度缺口（全部由在 `main@ec4178d` 上验证为红的负控测试封印；收据本地留存）：
 - **历史快照不可变**：更新被取代的快照 id（lesson/decision/playbook）现在返回 `snapshot_immutable` 拒绝，而不是改掉记录并嵌套出"快照的快照"（后者打穿星形版本拓扑）。
 - **caller lineage 字段显式拒绝**（`lineage_fields_rejected`）：更新载荷里的 `version` / `snapshot_of` / `superseded_by` / `superseded_at` / `snapshot_version` / `supersedes` 直接中止更新——静默不再冒充成功。调用方面向的 `add_relation` 拒绝 `rel="supersedes"`（版本 lineage 只由修订原语生成）。
 - **模糊去重命中绝不自动指认修订目标**：只有标题/摘要完全一致才填 `guidance.revision.target_id`；相似但不同的命中只给显式新建提示。
