@@ -168,9 +168,10 @@ def test_session_start_worker_corruption_does_not_quarantine(tmp_path, monkeypat
     monkeypatch.delenv('CLAUDE_INVOKED_BY', raising=False)
     monkeypatch.setattr(sys, 'argv', ['hook'])
     monkeypatch.setattr(sys, 'stdin', io.StringIO('{}'))
-    from piia_engram.hooks import _log
-    monkeypatch.setattr(_log, 'log_failure', lambda *a, **k: None)
+    from piia_engram.hooks import _budget
     hook = importlib.import_module('piia_engram.hooks.' + module)
+    # Patch the callers, not the source of aliases held by later imports.
+    monkeypatch.setattr(_budget, 'log_failure', lambda *a, **k: None)
     monkeypatch.setattr(hook, 'log_failure', lambda *a, **k: None)
     copies = []
     monkeypatch.setattr(storage.shutil, 'copy2', lambda *a, **k: copies.append(a))
