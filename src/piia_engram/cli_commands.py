@@ -1192,6 +1192,7 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
     sub = sub_args[0] if sub_args else "status"
 
     if sub == "status":
+        print(_usage_ping.NOTICE)
         ping = _usage_ping.status()
         print(f"\n  Daily usage ping: {'ON' if ping['will_send'] else 'OFF'} "
               f"(decided by: {ping['decided_by']})")
@@ -1202,7 +1203,7 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         status = get_status()
         state = "ON" if status["enabled"] else "OFF"
         remote_state = "ON" if status.get("remote_enabled") else "OFF"
-        print(f"\n  Anonymous usage statistics: {state}")
+        print(f"\n  Detailed statistics: {state} (opt-in / 需显式开启)")
         print(f"  Remote sending: {remote_state}")
         print(f"  Phase: {status['phase']}")
         print(f"  Config: {status['config_path']}")
@@ -1215,9 +1216,10 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print()
 
     elif sub == "preview":
-        print("\n  Daily usage ping (sent at most once a day unless turned off):\n")
+        print(_usage_ping.NOTICE)
+        print("\n  Daily usage ping payload (at most once per UTC day when enabled):\n")
         print(_usage_ping.preview())
-        print("\n  Next payload (if enabled):\n")
+        print("\n  Detailed statistics payload (opt-in / 需显式开启):\n")
         print(preview_payload())
         print()
 
@@ -1240,7 +1242,7 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print()
         if ping_saved:
             print("  ✅ Daily usage ping disabled.")
-        print("  ✅ Anonymous usage statistics disabled (local + remote).")
+        print("  ✅ Detailed statistics disabled (local + remote).")
         print("  No data will be logged or sent.\n")
 
     elif sub in ("on", "enable"):
@@ -1249,7 +1251,7 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print()
         if ping_saved:
             print("  ✅ Daily usage ping enabled.")
-        print("  ✅ Anonymous usage statistics enabled.")
+        print("  ✅ Detailed local statistics enabled.")
         print("  Run 'engram telemetry preview' to see what will be logged.")
         print("  Run 'engram telemetry remote on' to also enable remote sending.\n")
 
@@ -1310,7 +1312,7 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print("\n  Could not delete the install ID file.\n")
 
     elif sub == "--show-payload":
-        print("\n  Next payload (if enabled):\n")
+        print("\n  Detailed statistics payload (opt-in / 需显式开启):\n")
         print(preview_payload())
         print()
 
@@ -1320,9 +1322,9 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             "  engram telemetry status         Show current status\n"
             "  engram telemetry reset-id       Create a new random install ID for the daily ping\n"
             "  engram telemetry funnel         Show the local first-value funnel\n"
-            "  engram telemetry preview        Show what data will be logged\n"
-            "  engram telemetry on             Enable the daily ping and anonymous usage statistics\n"
-            "  engram telemetry off            Disable the daily ping and all usage statistics\n"
+            "  engram telemetry preview        Preview the daily ping and detailed statistics payloads\n"
+            "  engram telemetry on             Enable the daily ping and detailed local statistics\n"
+            "  engram telemetry off            Disable the daily ping and all detailed statistics\n"
             "  engram telemetry remote on      Enable remote sending (Phase 2)\n"
             "  engram telemetry remote off     Disable remote sending and the daily ping\n"
             "  engram telemetry feedback on    Enable weekly feedback reports\n"

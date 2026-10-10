@@ -2609,7 +2609,7 @@ def _run_seed_knowledge_onboarding(
 
 
 # ---------------------------------------------------------------------------
-# Privacy & data preferences (one-time import offer + telemetry opt-in)
+# Privacy & data preferences (one-time import offer + daily ping disclosure)
 # ---------------------------------------------------------------------------
 
 def _offer_setup_import(data_dir: str, *, project_roots: tuple = ()) -> dict | None:
@@ -2654,69 +2654,33 @@ def _offer_setup_import(data_dir: str, *, project_roots: tuple = ()) -> dict | N
 
 
 def _run_privacy_preferences(data_dir: str, *, offer_import: bool = True) -> None:
-    """Offer a one-time import from other AI tools; ask about usage statistics."""
+    """Offer a one-time import and disclose the daily ping without changing choices."""
 
     print(_t("\nStep 5 — 隐私与数据偏好", "\nStep 5 — Privacy & data preferences"))
     print(_t("  你的记忆只留在本机。",
              "  Your memories stay on this machine."))
-    print(_t("  以下可选功能需要你明确同意。\n",
-             "  The following optional features require your explicit consent.\n"))
-
     if offer_import:
+        print(_t("  导入记忆需要你明确同意。\n",
+                 "  Importing memories requires your explicit consent.\n"))
         _offer_setup_import(data_dir)
 
-    _ask_setup_statistics(data_dir)
+    _show_setup_usage_notice()
 
 
 def _run_privacy_defaults(data_dir: str, *, offer_import: bool = True) -> None:
-    """Offer a one-time import from other AI tools, then ask about telemetry."""
+    """Offer a one-time import and show the same daily ping disclosure."""
 
     if offer_import:
         _offer_setup_import(data_dir)
 
-    _ask_setup_statistics(data_dir)
+    _show_setup_usage_notice()
 
 
-def _ask_setup_statistics(data_dir: str) -> None:
-    """Both setup paths ask the same detailed-statistics question, default Yes."""
-    from piia_engram.telemetry import set_statistics_enabled
+def _show_setup_usage_notice() -> None:
+    """One informational line in the selected language; never changes consent."""
+    from piia_engram.usage_ping import NOTICE_EN, NOTICE_ZH
 
-    # --- Ask about telemetry — one question, all-or-nothing ---
-    print(_t("  [匿名使用统计]",
-             "  [Anonymous Usage Statistics]"))
-    print(_t("      帮助我们了解哪些功能被使用、哪些需要改进。",
-             "      Help us understand which features are used and need improvement."))
-    print(_t("      包含：工具调用次数、知识条目数、每周治理概况",
-             "      Includes: tool call counts, knowledge totals, weekly governance summary"))
-    print(_t("      选择“是”会开启本地记录、远程匿名统计和每周匿名反馈；远程发送需配置端点。",
-             "      Yes enables local logging, remote anonymous statistics and weekly anonymous feedback;"
-             " remote sending requires a configured endpoint."))
-    print(_t(f"      本地日志位置：{data_dir}/telemetry.log",
-             f"      Local log location: {data_dir}/telemetry.log"))
-    print(_t("      查看统计内容：engram telemetry preview",
-             "      Preview statistics: engram telemetry preview"))
-    print(_t("      绝不包含：知识内容、prompt、文件路径、邮箱、IP",
-             "      Never includes: knowledge content, prompts, file paths, email, IP"))
-    print(_t("      每日匿名使用信号默认开启（随机安装 ID、版本、系统、Python 版本、"
-             "AI 客户端名称、日期）；随时运行 engram telemetry off 关闭。",
-             "      The daily anonymous usage ping is on by default (random install ID, version, OS,"
-             " Python version, AI client name, date); turn it off anytime with engram telemetry off."))
-    print(_t("      本题仅控制详细统计，不改变每日使用信号设置或此前的退出选择。\n",
-             "      This question controls only detailed statistics; it preserves the daily ping preference"
-             " and earlier opt-outs.\n"))
-
-    enabled = _yn(
-        _t("  开启匿名使用统计？",
-           "  Enable anonymous usage statistics?"),
-        default=True,
-    )
-    set_statistics_enabled(enabled)
-    if enabled:
-        print(_t("  ✅ 已开启（含每周匿名反馈报告）\n",
-                 "  ✅ Enabled (including weekly anonymous feedback reports)\n"))
-    else:
-        print(_t("  ℹ️  未开启详细统计。可随时运行 engram telemetry on 开启本地统计。\n",
-                 "  ℹ️  Detailed statistics not enabled. Run engram telemetry on to enable local statistics anytime.\n"))
+    print(_t(NOTICE_ZH, NOTICE_EN))
 
 
 # ---------------------------------------------------------------------------
@@ -3860,7 +3824,7 @@ def main() -> None:
             pass
     is_setup = not args or args[0] == "setup"
     # Daily usage ping: never for the commands _skips_usage_ping names; for setup
-    # only after its questions (a "no" to statistics must stop the first ping).
+    # only after setup completes, honoring all existing opt-outs.
     if not is_setup and not quiet and not _skips_usage_ping(args[0]):
         _show_usage_notice(sys.stderr)
         _start_usage_ping_cli()
@@ -3869,7 +3833,6 @@ def main() -> None:
             advanced="--advanced" in args,
             apply_external_config="--apply-external-config" in args,
         )
-        _show_usage_notice(sys.stdout)
         _start_usage_ping_cli()
     elif args[0] == "doctor":
         sys.exit(_run_doctor_cli(args[1:]))

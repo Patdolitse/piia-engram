@@ -2031,61 +2031,19 @@ class TestPrivacyPreferences:
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("USERPROFILE", str(home))
 
-    def test_both_defaults(self, tmp_path, monkeypatch, capsys):
-        """Pressing Enter twice keeps defaults: no import now, statistics=Yes.
+    @pytest.mark.parametrize("answer", ["", "n"])
+    def test_import_answer_does_not_enable_statistics(self, tmp_path, monkeypatch, capsys, answer):
+        """Only the one-time import question remains; it never changes statistics."""
+        from piia_engram import telemetry
 
-        Setup used to store reconcile_authorized=true here (automatic import on
-        every start). It now only offers a one-time import and stores no switch.
-        """
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
-        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
-        answers = iter(["", ""])  # both defaults
+        answers = iter([answer])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
         _run_privacy_preferences(str(tmp_path))
-
-        cfg_path = tmp_path / "telemetry_config.json"
-        assert cfg_path.is_file()
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        assert "reconcile_authorized" not in cfg
-        assert cfg["enabled"] is True
-        assert cfg["remote_enabled"] is True
-        assert cfg["feedback_enabled"] is True
-        assert "engram import-memories" in capsys.readouterr().out
-
-    def test_opt_in_telemetry(self, tmp_path, monkeypatch, capsys):
-        """Answering 'y' to telemetry should enable it."""
-        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
-        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
-        # import default, combined statistics yes
-        answers = iter(["", "y"])
-        monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-        _run_privacy_preferences(str(tmp_path))
-
-        cfg = json.loads((tmp_path / "telemetry_config.json").read_text(encoding="utf-8"))
-        assert cfg["enabled"] is True
-        assert "opted_in_at" in cfg
-
-    def test_declining_the_import_stores_no_switch(self, tmp_path, monkeypatch, capsys):
-        """'n' to "import once now?" imports nothing and stores no switch.
-
-        This used to store reconcile_authorized=false. A "not now" is not a
-        standing refusal; `engram import-memories` stays available.
-        """
-        monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-        monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
-        monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
-        answers = iter(["n", ""])  # import no, telemetry default
-        monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-        _run_privacy_preferences(str(tmp_path))
-
-        cfg = json.loads((tmp_path / "telemetry_config.json").read_text(encoding="utf-8"))
-        assert "reconcile_authorized" not in cfg
+        assert telemetry._load_config() == {}
         assert not (tmp_path / "import_receipts").exists()
+        assert "engram import-memories" in capsys.readouterr().out
 
 
 class TestPrivacyCopyMentionsTheDailyPing:
@@ -2105,17 +2063,17 @@ class TestPrivacyCopyMentionsTheDailyPing:
 
     @pytest.mark.parametrize("lang,needles", [
         ("en", ("Your memories stay on this machine",
-                "daily anonymous usage ping is on by default",
+                "one anonymous usage ping a day by default",
                 "engram telemetry off")),
         ("zh", ("你的记忆只留在本机",
-                "每日匿名使用信号默认开启",
+                "默认每天发送一次匿名使用信号",
                 "engram telemetry off")),
     ])
     def test_advanced_privacy_text(self, tmp_path, monkeypatch, capsys, lang, needles):
         from piia_engram import i18n
 
         monkeypatch.setattr(i18n, "_runtime_lang", lang)
-        answers = iter(["", ""])
+        answers = iter([""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         _run_privacy_preferences(str(tmp_path))
         out = capsys.readouterr().out
@@ -2125,12 +2083,12 @@ class TestPrivacyCopyMentionsTheDailyPing:
         assert "你的数据默认只留在本机" not in out
 
     @pytest.mark.parametrize("lang,needles", [
-        ("en", ("daily anonymous usage ping is on by default",
-                "turn it off anytime with engram telemetry off")),
-        ("zh", ("每日匿名使用信号默认开启",
-                "随时运行 engram telemetry off 关闭")),
+        ("en", ("one anonymous usage ping a day by default",
+                "Off: engram telemetry off")),
+        ("zh", ("默认每天发送一次匿名使用信号",
+                "关闭：engram telemetry off")),
     ])
-    def test_default_statistics_question(self, tmp_path, monkeypatch, capsys, lang, needles):
+    def test_default_statistics_disclosure(self, tmp_path, monkeypatch, capsys, lang, needles):
         from piia_engram import i18n
         from piia_engram.setup_wizard import _run_privacy_defaults
 
@@ -2142,7 +2100,7 @@ class TestPrivacyCopyMentionsTheDailyPing:
             assert needle in out
 
     @pytest.mark.parametrize("flow", ["defaults", "preferences"])
-    def test_a_no_leaves_an_explicit_ping_on_unchanged(self, tmp_path, monkeypatch, capsys, flow):
+    def test_setup_leaves_an_explicit_ping_on_unchanged(self, tmp_path, monkeypatch, capsys, flow):
         from piia_engram import usage_ping
         from piia_engram.setup_wizard import _run_privacy_defaults
 
@@ -2151,20 +2109,20 @@ class TestPrivacyCopyMentionsTheDailyPing:
             monkeypatch.setattr("builtins.input", lambda _: "n")
             _run_privacy_defaults(str(tmp_path))
         else:
-            answers = iter(["", "n"])
+            answers = iter([""])
             monkeypatch.setattr("builtins.input", lambda _: next(answers))
             _run_privacy_preferences(str(tmp_path))
         assert usage_ping._load_settings()["enabled"] is True
 
-    def test_statistics_yes_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
+    def test_advanced_setup_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
         from piia_engram import usage_ping
 
-        answers = iter(["", "y"])
+        answers = iter([""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         _run_privacy_preferences(str(tmp_path))
         assert not (usage_ping.state_dir() / "usage_ping.json").exists()
 
-    def test_a_yes_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
+    def test_default_setup_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
         from piia_engram import usage_ping
         from piia_engram.setup_wizard import _run_privacy_defaults
 
@@ -2184,7 +2142,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Anonymous usage statistics: OFF" in out
+        assert "Detailed statistics: OFF" in out
 
     def test_on_then_status(self, tmp_path, monkeypatch, capsys):
         """engram telemetry on, then status should show ON."""
@@ -2196,7 +2154,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Anonymous usage statistics: ON" in out
+        assert "Detailed statistics: ON" in out
 
     def test_off_disables(self, tmp_path, monkeypatch, capsys):
         """engram telemetry off should disable."""
@@ -2209,7 +2167,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Anonymous usage statistics: OFF" in out
+        assert "Detailed statistics: OFF" in out
 
     def test_preview_returns_json(self, tmp_path, monkeypatch, capsys):
         """engram telemetry preview should output valid JSON."""
@@ -3703,7 +3661,7 @@ class TestTelemetryCLIExtended:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Anonymous usage statistics: ON" in out
+        assert "Detailed statistics: ON" in out
 
     def test_disable_alias(self, tmp_path, monkeypatch, capsys):
         """'disable' should work same as 'off'."""
@@ -3716,7 +3674,7 @@ class TestTelemetryCLIExtended:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Anonymous usage statistics: OFF" in out
+        assert "Detailed statistics: OFF" in out
 
     def test_empty_args_defaults_to_status(self, tmp_path, monkeypatch, capsys):
         """No subcommand should default to status."""

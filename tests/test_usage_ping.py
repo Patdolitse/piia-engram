@@ -756,7 +756,7 @@ def test_engram_telemetry_never_starts_the_ping(ping, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("argv", [["engram"], ["engram", "setup"]])
-def test_setup_shows_the_notice_and_starts_the_ping_only_after_its_questions(monkeypatch, argv):
+def test_setup_starts_the_ping_only_after_setup(monkeypatch, argv):
     from piia_engram import setup_wizard as sw
 
     order = []
@@ -766,13 +766,12 @@ def test_setup_shows_the_notice_and_starts_the_ping_only_after_its_questions(mon
     monkeypatch.setattr(sw, "run_setup", lambda **kw: order.append(("setup",)))
     monkeypatch.setattr(sys, "argv", argv)
     sw.main()
-    assert order == [("setup",), ("notice", sys.stdout), ("send", "cli")]
+    assert order == [("setup",), ("send", "cli")]
 
 
 @pytest.mark.parametrize("advanced", [False, True])
-@pytest.mark.parametrize("answer", ["n", ""])
-def test_setup_statistics_answer_does_not_stop_the_first_ping(
-        ping, monkeypatch, tmp_path, advanced, answer):
+def test_setup_without_statistics_answers_keeps_the_first_ping(
+        ping, monkeypatch, tmp_path, advanced):
     from piia_engram import setup_wizard as sw
 
     store = tmp_path / "store"
@@ -780,7 +779,7 @@ def test_setup_statistics_answer_does_not_stop_the_first_ping(
     monkeypatch.setenv("ENGRAM_DIR", str(store))
     monkeypatch.setattr(up, "_legacy_opted_out", ping.orig_legacy)
     flow = sw._run_privacy_preferences if advanced else sw._run_privacy_defaults
-    monkeypatch.setattr("builtins.input", lambda _: answer)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected setup question"))
     monkeypatch.setattr(sw, "run_setup", lambda **kw: flow(str(store), offer_import=False))
     monkeypatch.setattr(sys, "argv", ["engram", "setup"] + (["--advanced"] if advanced else []))
     sw.main()
@@ -818,14 +817,14 @@ def test_telemetry_status_shows_the_ping(tele_cli, capsys):
     tele_cli(["status"])
     out = capsys.readouterr().out
     assert "Daily usage ping: ON (decided by: default)" in out
-    assert "Anonymous usage statistics:" in out  # detailed stats line unchanged
+    assert "Detailed statistics: OFF (opt-in" in out
 
 
 def test_telemetry_preview_shows_the_ping_body(tele_cli, capsys):
     tele_cli(["preview"])
     out = capsys.readouterr().out
     assert '"schema": "ping/1"' in out
-    assert "Next payload (if enabled):" in out
+    assert "Detailed statistics payload (opt-in" in out
 
 
 def test_telemetry_reset_id(tele_cli, ping, capsys):
