@@ -182,6 +182,67 @@ def _mode_context(root: Path, receipts_dir: Path | None = None) -> tuple[dict | 
     return marker, audit_dir, isolated
 
 
+def _initial_receipt(receipts_dir: Path, *, required: bool = True) -> dict | None:
+    """Read the initialization header; an existing unreadable ledger is unsafe."""
+    try:
+        with (receipts_dir / RECEIPTS_FILE).open(encoding="utf-8") as ledger:
+            initial = json.loads(next((line for line in ledger if line.strip()), "null"))
+    except FileNotFoundError as exc:
+        if not required:
+            return None
+        raise GuardRefused("guard_mode_immutable", "initialization ledger missing") from exc
+    except (OSError, ValueError, AttributeError, TypeError) as exc:
+        raise GuardRefused("guard_mode_immutable", "initialization ledger unreadable") from exc
+    if (not isinstance(initial, dict) or initial.get("op") != "init"
+            or initial.get("result") != "initialised"
+            or initial.get("seq") != 1 or initial.get("prev_sha256") != ""):
+        raise GuardRefused("guard_mode_immutable", "initialization ledger mismatch")
+    return initial
+
+
+def _check_legacy_root(root: Path, marker: dict, audit_dir: Path) -> None:
+    """Accept old production metadata only with confirmed directory provenance."""
+    ledger_dirs = [audit_dir]
+    configured_mode = PRODUCTION
+    config_path = os.environ.get(CONFIG_ENV, "")
+    if config_path:
+        try:
+            data = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            if _norm(os.path.abspath(data.get("root", ""))) == _norm(os.path.abspath(root)):
+                # A supplied ledger must not hide the launcher's initial ledger.
+                ledger_dirs.append(Path(data["receipts_dir"]))
+                configured_mode = data.get("mode", PRODUCTION)
+        except (ValueError, OSError, TypeError, KeyError, AttributeError) as exc:
+            raise GuardRefused("guard_mode_immutable", "legacy launcher configuration unreadable") from exc
+    seen = set()
+    for directory in ledger_dirs:
+        location = _norm(str(directory))
+        if location in seen:
+            continue
+        seen.add(location)
+        if not os.path.isabs(str(directory)) or _within(str(directory), str(root)):
+            raise GuardRefused("guard_mode_immutable", "external ledger required")
+        initial = _initial_receipt(directory, required=False)
+        if initial is not None:
+            if carries_replay_marker(initial):
+                raise GuardRefused("guard_mode_immutable", "replay initialization receipt contradicts legacy metadata")
+            if "store_mode" in initial or "root_id" in initial:
+                raise GuardRefused("guard_mode_immutable", "modern initialization receipt requires bound metadata")
+    if configured_mode != PRODUCTION:
+        raise GuardRefused("guard_mode_immutable", "replay configuration contradicts legacy metadata")
+    try:
+        current = _identity(root)
+    except OSError as exc:
+        raise GuardRefused("guard_root_binding", "legacy directory identity unavailable") from exc
+    realpath = marker.get("realpath")
+    if (not isinstance(realpath, str) or not os.path.isabs(realpath)
+            or _norm(realpath) != _norm(current["realpath"])
+            or type(marker.get("volume")) is not int or marker["volume"] != current["volume"]
+            or type(marker.get("file_id")) is not int or marker["file_id"] <= 0
+            or marker["file_id"] != current["file_id"]):
+        raise GuardRefused("guard_root_binding", "legacy directory identity missing or mismatched")
+
+
 def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) -> str:
     """Validate metadata AND the initialization receipt for every attachment."""
     root = Path(root)
@@ -200,12 +261,13 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) ->
                 or actual not in ROOT_MODES):
             raise GuardRefused("guard_mode_invalid")
         # Pre-replay production metadata has no ledger locator or mode fields.
-        # Ordinary Engram(root=...) never required its external launcher ledger;
-        # retain that attachment contract without guessing paths or migrating.
+        # Preserve genuine old roots without migration, but absence of the new
+        # fields alone cannot establish production provenance.
         legacy = not any(key in marker for key in ("mode", "receipts_dir", "root_id"))
         if legacy:
             if expected != PRODUCTION:
                 raise GuardRefused("guard_mode_immutable", "initialized replay root required")
+            _check_legacy_root(root, marker, audit_dir)
             return PRODUCTION
         pinned = marker.get("receipts_dir")
         if (not isinstance(pinned, str) or not os.path.isabs(pinned)
@@ -213,19 +275,10 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None) ->
             raise GuardRefused("guard_mode_immutable", "ledger location mismatch")
         if not os.path.isabs(str(audit_dir)) or _within(str(audit_dir), str(root)):
             raise GuardRefused("guard_mode_immutable", "external ledger required")
-        try:
-            # Initialization must be the first receipt. Read that immutable
-            # header on every attachment; full-chain diagnostics remain with
-            # the existing operation and reconcile guards.
-            with (audit_dir / RECEIPTS_FILE).open(encoding="utf-8") as ledger:
-                initial = json.loads(next((line for line in ledger if line.strip()), "null"))
-            if (not isinstance(initial, dict) or initial.get("op") != "init"
-                    or initial.get("result") != "initialised"
-                    or initial.get("seq") != 1 or initial.get("prev_sha256") != ""
-                    or initial.get("store_mode", PRODUCTION) != actual):
-                raise GuardRefused("guard_mode_immutable", "initialization ledger mismatch")
-        except (OSError, ValueError, AttributeError, TypeError) as exc:
-            raise GuardRefused("guard_mode_immutable", "initialization ledger missing or unreadable") from exc
+        # Full-chain diagnostics remain with the operation and reconcile guards.
+        initial = _initial_receipt(audit_dir)
+        if initial.get("store_mode", PRODUCTION) != actual:
+            raise GuardRefused("guard_mode_immutable", "initialization ledger mismatch")
         # Compare with the attached directory itself, independently of editable
         # metadata. This catches accidental ledger substitution; it is not a
         # tamper-proof boundary against writers controlling both directories.
