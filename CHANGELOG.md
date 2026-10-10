@@ -14,6 +14,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- Keep distinct normalized template summaries verified during isolated replay experience admission, while preserving exact duplicate guards and production near-duplicate review behavior.
 - Bind new isolated initialization receipts to their root, preserve replay markers in context tuples and report text, and retain direct attachment for production roots created before replay mode. The boundary prevents accidental mixing; it does not resist deliberate edits by a writer controlling both roots and ledgers.
 
 ### Changed
