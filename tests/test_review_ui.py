@@ -171,11 +171,14 @@ def test_reading_and_notices_do_not_approve_and_restart_recovers_queue(eng):
 
 
 def test_card_removes_controls_and_shows_entire_body(eng):
-    row = eng.add_lesson({"summary": "Fake\u202eApprove\x1b[2J", "detail": "x" * 1500 + " END",
+    row = eng.add_lesson({"summary": "Fake\u202eApprove\x1b[2J\u2028\u2029", "detail": "x" * 1500 + " END 正常中文",
                            "domain": "type:lesson"})
     current = card(eng, row)
     assert "\u202e" not in current.text and "\x1b" not in current.text
+    assert r"\u202e" in current.text and r"\u001b" in current.text
+    assert r"\u2028" in current.text and r"\u2029" in current.text
     assert "x" * 1500 + " END" in current.text
+    assert "正常中文" in current.text
 
 
 def test_gui_entrypoint_is_packaged():

@@ -35,6 +35,16 @@ def _safe_text(value: Any) -> str:
                      for line in str(value).replace("\r\n", "\n").split("\n"))
 
 
+def _display_json(value: Any) -> str:
+    # Keep ordinary Unicode readable while exposing invisible characters in the
+    # complete record. JSON already escapes C0 controls; escape other format and
+    # control characters before the human-readable card sanitizer removes them.
+    document = json.dumps(value, ensure_ascii=False, indent=2)
+    return "".join(json.dumps(char, ensure_ascii=True)[1:-1]
+                   if char != "\n" and review_interactive._unsafe(char)
+                   else char for char in document)
+
+
 def _card(eng: Engram, kind: str, row: dict) -> ReviewCard:
     target_id = str(row.get("pending_supersedes") or "")
     target_kind, target = eng._find_item_by_id(target_id) if target_id else ("", None)
@@ -49,12 +59,12 @@ def _card(eng: Engram, kind: str, row: dict) -> ReviewCard:
             old_lines, _ = review_interactive.card(1, 1, target_kind, target, eng=eng,
                                                    lookup={}, edges=[], full=True)
             lines += old_lines
-            lines += ["完整旧条目 / Complete previous entry", json.dumps(target, ensure_ascii=False, indent=2)]
+            lines += ["完整旧条目 / Complete previous entry", _display_json(target)]
         else:
             lines.append("取代目标不存在 / Replacement target missing")
     # Preserve the complete proposal, not only a terminal card's selected fields:
     # this includes evidence/review dates, project scope and structured steps.
-    lines += ["", "完整提案 / Complete proposal", json.dumps(row, ensure_ascii=False, indent=2)]
+    lines += ["", "完整提案 / Complete proposal", _display_json(row)]
     title = row.get("summary") or row.get("question") or row.get("title") or row.get("field") or kind
     return ReviewCard(kind, str(row["id"]), review_cli._row_version(row), digest,
                       _safe_text(title).replace("\n", " "), _safe_text("\n".join(lines)))
