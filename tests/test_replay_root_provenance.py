@@ -9,7 +9,7 @@ import pytest
 
 from piia_engram.core import Engram
 from piia_engram.isolated_store import (
-    CONFIG_ENV, Config, GuardRefused, IsolatedStore, LIMITS_FILE, MARKER, RECEIPTS_FILE,
+    CONFIG_ENV, Config, GuardRefused, IsolatedStore, LIMITS_FILE, MARKER, RECEIPTS_FILE, root_mode,
 )
 from piia_engram.isolated_store_launch import build_child_env
 from test_isolated_store import _snap
@@ -178,3 +178,54 @@ def test_rebind_still_rejects_a_different_legacy_directory(legacy_production_roo
     with pytest.raises(GuardRefused, match="guard_root_binding"):
         IsolatedStore.open(w.cfg, allow_rebind=True).owner_rebind("Owner")
     assert _snap(destination) == before
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+@pytest.mark.parametrize("archive", [False, True])
+def test_unmarked_corruption_keeps_existing_production_attachment(legacy_production_root, isolated, archive):
+    w = legacy_production_root
+    if not isolated:
+        (w.cfg.root / MARKER).unlink()
+        (w.cfg.root / LIMITS_FILE).unlink()
+    path = w.cfg.root / "knowledge" / "lessons.json"
+    if archive:
+        path = path.parent / "overflow_archive" / "lessons.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{torn unmarked data", encoding="utf-8")
+    before = _snap(w.cfg.root)
+    assert root_mode(w.cfg.root, "production") == "production"
+    assert _snap(w.cfg.root) == before
+
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_stored_signal_survives_unrelated_torn_data(legacy_production_root, archive):
+    w = legacy_production_root
+    path = w.cfg.root / "knowledge" / "lessons.json"
+    if archive:
+        path = path.parent / "overflow_archive" / "lessons.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = '{torn unmarked data\n{"store_mode": "replay_experience"}\n'
+    else:
+        text = '[{"store_mode": "replay_experience"}, {torn data'
+    path.write_text(text, encoding="utf-8")
+    before = _snap(w.cfg.root)
+    with pytest.raises(GuardRefused, match="replay root signal"):
+        root_mode(w.cfg.root, "production")
+    assert _snap(w.cfg.root) == before
+
+
+def test_legacy_rename_rebind_precedes_version_upgrade(legacy_production_root, monkeypatch):
+    w = legacy_production_root
+    ledger = w.cfg.receipts_dir / RECEIPTS_FILE
+    initial = json.loads(ledger.read_text(encoding="utf-8"))
+    initial["lib_version"] = "4.22.0"
+    ledger.write_text(json.dumps(initial) + "\n", encoding="utf-8")
+    destination = _rename(w, monkeypatch)
+    before, ledger_before = _snap(destination), ledger.read_bytes()
+    store = IsolatedStore.open(w.cfg, allow_rebind=True)
+    assert _snap(destination) == before
+    assert ledger.read_bytes() == ledger_before
+    assert store.owner_rebind("Owner")["result"] == "rebound"
+    reopened = IsolatedStore.open(w.cfg)
+    assert reopened.receipts()[-1]["op"] == "version"
+    assert reopened.receipts()[-1]["result"] == "upgraded"
