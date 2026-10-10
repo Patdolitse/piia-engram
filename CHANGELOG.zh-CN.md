@@ -6,6 +6,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 修复
+
+- 离线安装规划支持名称含 `publish` 或 `upload` 的本地目录，仍拒绝网络源、上传命令及允许目录之外的产物。
+
 ## [4.23.0] - 2026-10-10
 
 ### 不兼容变更

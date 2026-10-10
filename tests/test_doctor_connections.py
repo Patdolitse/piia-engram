@@ -230,7 +230,21 @@ def _without_mcp_server_module(fn):
             delattr(piia_engram, "mcp_server")
 
 
-def test_doctor_prints_the_section_and_writes_nothing(world, monkeypatch):
+@pytest.fixture
+def successful_startup_probe(monkeypatch):
+    """Display contracts do not depend on subprocess startup latency."""
+    calls = []
+
+    def probe(entry):
+        calls.append(entry)
+        return None
+
+    # _check_engram_entry calls the setup_wizard re-export, not doctor's copy.
+    monkeypatch.setattr(W, "_probe_mcp_entry", probe)
+    return calls
+
+
+def test_doctor_prints_the_section_and_writes_nothing(world, monkeypatch, successful_startup_probe):
     monkeypatch.setenv("ENGRAM_AUDIT", "1")
     monkeypatch.delenv("ENGRAM_TEST", raising=False)
     before = _snapshot(world["store"], world["home"])
@@ -244,10 +258,27 @@ def test_doctor_prints_the_section_and_writes_nothing(world, monkeypatch):
     _without_mcp_server_module(run)
 
     out = buf.getvalue()
+    assert successful_startup_probe
     assert _snapshot(world["store"], world["home"]) == before
     assert "Client Connections (last 14 days)" in out
     assert "Claude Code (claude_code): connected" in out
     assert "Cursor (cursor): configured, no Engram calls" in out
+    assert _SECRET not in out
+
+
+def test_doctor_probe_timeout_returns_early_and_writes_nothing(world, monkeypatch):
+    monkeypatch.setattr(W, "_probe_mcp_entry", lambda entry: "MCP launch probe timed out after 5s")
+    monkeypatch.setenv("ENGRAM_AUDIT", "1")
+    monkeypatch.delenv("ENGRAM_TEST", raising=False)
+    before = _snapshot(world["store"], world["home"])
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        code = doctor.run_doctor(fix=False)
+    out = buf.getvalue()
+    assert code > 0
+    assert _snapshot(world["store"], world["home"]) == before
+    assert "MCP launch probe timed out after 5s" in out
+    assert "Client Connections (last 14 days)" not in out
     assert _SECRET not in out
 
 
@@ -415,7 +446,7 @@ def test_json_reports_an_error_type_only(world, monkeypatch, capsys):
     assert "private-dir-name" not in out
 
 
-def test_full_doctor_prints_only_the_error_type(world, monkeypatch):
+def test_full_doctor_prints_only_the_error_type(world, monkeypatch, successful_startup_probe):
     secret_path = str(world["home"] / "private-dir-name")
 
     def boom(*args, **kwargs):
