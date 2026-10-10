@@ -182,6 +182,63 @@ def test_filtered_markdown_export_keeps_original_provenance():
     assert text.startswith(REPLAY_EXPORT_MARKER)
 
 
+@pytest.mark.parametrize("surface", ["portrait", "portrait_text", "portrait_html", "saved_portrait", "resume", "agent_pack", "project_pack", "recall_digest"])
+@pytest.mark.parametrize("mode", ["production", MODE])
+def test_other_snapshot_and_handoff_pairs(tmp_path, monkeypatch, surface, mode):
+    w = _world(tmp_path, monkeypatch, mode=mode)
+    eng = w.pr._engram(read_only=False)
+    eng.add_lesson({"summary": "cache observation", "tier": "verified"})
+    if surface.startswith("portrait") or surface == "saved_portrait":
+        portrait = eng.build_user_portrait()
+        if surface == "portrait_text":
+            result = eng.render_user_portrait(portrait)
+        elif surface == "portrait_html":
+            result = eng.render_user_portrait_html(portrait)
+        elif surface == "saved_portrait":
+            result = eng.save_user_portrait(portrait)
+            assert carries_replay_marker(json.loads(Path(result["_path"]).read_text())) == (mode == MODE)
+        else:
+            result = portrait
+    elif surface == "resume":
+        result = eng.get_resume_brief()
+    elif surface == "agent_pack":
+        result = eng.build_agent_context_pack(task_summary="cache")
+    elif surface == "project_pack":
+        result = eng.build_project_resume_pack("sample")
+    else:
+        from piia_engram.recall_service import gather_recall
+        result = gather_recall(eng, query="cache")
+    if isinstance(result, str):
+        assert (REPLAY_EXPORT_MARKER in result) == (mode == MODE)
+    else:
+        assert carries_replay_marker(result) == (mode == MODE)
+
+
+def test_empty_replay_markdown_export_has_explicit_root_marker():
+    from piia_engram.agents_md_export import build_agents_md_export
+    assert build_agents_md_export(store_mode=MODE).startswith(REPLAY_EXPORT_MARKER)
+
+
+def test_external_text_import_checks_marker_before_section_filtering(tmp_path, monkeypatch):
+    eng = Engram(root=tmp_path / "normal")
+    monkeypatch.setenv("ENGRAM_RECONCILE", "1")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "CLAUDE.md").write_text(REPLAY_EXPORT_MARKER + "\n## Rules\nUse bounded cache entries for repeated reads.\n", encoding="utf-8")
+    result = eng.reconcile_ai_configs(search_roots=[str(project)])
+    assert result["error"] == "replay_experience_import_refused"
+    assert eng.get_lessons() == []
+
+
+def test_planned_memory_writer_checks_original_before_reconstruction(tmp_path):
+    from piia_engram.memory_import import write_items
+    eng = Engram(root=tmp_path / "normal")
+    result = write_items(eng, [{"summary": "cache observation", "detail": "sample",
+                              "discarded": {"store_mode": MODE}}], sources=("memories",))
+    assert result["error"] == "replay_experience_import_refused"
+    assert eng.get_lessons() == []
+
+
 def _base_function(module_name, name):
     """Execute the actual function frozen from 86547e88b with the same adapters."""
     module = importlib.import_module(f"piia_engram.{module_name}")
