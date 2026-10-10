@@ -120,13 +120,25 @@ def test_genuine_legacy_rename_requires_and_accepts_owner_rebind(legacy_producti
     # Recovery authorization must not enable ordinary reads before the rebind.
     with pytest.raises(GuardRefused, match="guard_root_binding"):
         store._engram(read_only=True)
-    assert store.owner_rebind("Owner")["result"] == "rebound"
+    rebind = store.owner_rebind("Owner")
+    assert rebind["result"] == "rebound"
     marker = json.loads((destination / MARKER).read_text(encoding="utf-8"))
     assert marker["realpath"] == str(destination.resolve())
     assert not any(field in marker for field in ("mode", "receipts_dir", "root_id"))
     assert store.receipts_path.read_bytes().startswith(ledger_before)
-    assert store.receipts()[-1]["op"] == "rebind"
-    assert store.receipts()[-1]["operator"] == "Owner"
+    receipts = store.receipts()
+    assert receipts[1] == rebind
+    assert rebind["op"] == "rebind"
+    assert rebind["operator"] == "Owner"
+    assert rebind["lib_version"] == receipts[0]["lib_version"]
+    if store.lib_version == rebind["lib_version"]:
+        assert len(receipts) == 2
+    else:
+        assert len(receipts) == 3
+        upgraded = receipts[-1]
+        assert (upgraded["op"], upgraded["result"]) == ("version", "upgraded")
+        assert upgraded["from_version"] == rebind["lib_version"]
+        assert upgraded["to_version"] == upgraded["lib_version"] == store.lib_version
     assert IsolatedStore.open(w.cfg).mode == "production"
     monkeypatch.delenv(CONFIG_ENV, raising=False)
     eng = Engram(root=destination, read_only=True)

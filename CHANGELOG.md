@@ -6,7 +6,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.24.0] - 2026-10-11
 
 ### Added
 
@@ -23,6 +23,10 @@ See the [resume and capture guide](docs/resume-capture.md).
 ### Fixed
 
 - Offline install planning accepts local directory names containing `publish` or `upload`, while still rejecting network sources, upload commands and artifacts outside the allowed directory.
+
+### Release Evidence
+
+See the [release evidence declarations](release-evidence/README.md) for the checks required before publication.
 
 ## [4.23.0] - 2026-10-10
 
