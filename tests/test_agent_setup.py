@@ -83,6 +83,39 @@ def test_plan_has_byte_level_zero_writes(sandbox, tmp_path, monkeypatch, capsys,
     assert not output.err
 
 
+@pytest.mark.parametrize('apply', [False, True])
+@pytest.mark.parametrize('enabled', [False, True])
+def test_noninteractive_setup_preserves_statistics_and_ping(
+        sandbox, monkeypatch, capsys, apply, enabled):
+    from piia_engram import telemetry, usage_ping
+
+    home, store = sandbox
+    config(home)
+    store.mkdir()
+    path = store / 'telemetry_config.json'
+    path.write_text(json.dumps({'enabled': enabled, 'remote_enabled': enabled,
+                                'feedback_enabled': enabled}), encoding='utf-8')
+    usage_ping.set_enabled(enabled)
+    before_config = path.read_bytes()
+    ping_path = usage_ping.state_dir() / 'usage_ping.json'
+    before_ping = ping_path.read_bytes()
+    before_decision = usage_ping.decision()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('non-interactive setup must not ask or change consent')
+
+    monkeypatch.setattr(W, '_run_privacy_defaults', forbidden)
+    monkeypatch.setattr(W, '_run_privacy_preferences', forbidden)
+    monkeypatch.setattr(telemetry, 'set_statistics_enabled', forbidden)
+    args = ['--non-interactive', '--clients', 'cursor', '--json']
+    if apply:
+        args.append('--apply')
+    assert cli(monkeypatch, capsys, *args)[0] == 0
+    assert path.read_bytes() == before_config
+    assert ping_path.read_bytes() == before_ping
+    assert usage_ping.decision() == before_decision
+
+
 def test_apply_only_planned_files_backups_and_ledger(sandbox, tmp_path, monkeypatch, capsys):
     home, store = sandbox
     path = config(home, text='{"mcpServers": {"peer": {"command": "sample"}}}\r\n')

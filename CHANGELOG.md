@@ -26,6 +26,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Changed
 
+- Declining detailed statistics in setup no longer turns off the daily anonymous usage ping; both setup paths ask one question with default Yes, and the ping can be disabled anytime with `engram telemetry off`.
 - Writing hooks atomically publish durable local events and exit without waiting for storage locks; local draining retries failures, deduplicates event IDs, quarantines malformed or excess events and keeps extracted knowledge in staging.
 - Deferred hooks retain unreadable transcripts, continue after individual failures, quarantine missing references after three failed attempts or seven days, validate prepared fields and preserve the project revision captured on first preparation.
 - Writing hooks limit stdin to 128 KiB and one second, while SessionStart uses a read-only store and a one-second application budget with a continue response on failure and no weekly hints.
