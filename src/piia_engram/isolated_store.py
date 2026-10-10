@@ -281,9 +281,9 @@ def mark_replay_export(value: Any, *, _envelope: bool = True) -> Any:
             result["store_mode"] = REPLAY_EXPERIENCE
         return result
     if isinstance(value, list):
-        return [mark_replay_export(part) for part in value]
+        return [mark_replay_export(part, _envelope=_envelope or isinstance(part, dict)) for part in value]
     if isinstance(value, tuple):
-        return tuple(mark_replay_export(part) for part in value)
+        return tuple(mark_replay_export(part, _envelope=_envelope or isinstance(part, dict)) for part in value)
     if isinstance(value, str) and _envelope:
         return value if value.startswith(REPLAY_EXPORT_MARKER) else REPLAY_EXPORT_MARKER + "\n" + value
     return value

@@ -212,3 +212,15 @@ def test_pre_replay_layout_attaches_and_reads_without_launcher_config(legacy_pro
 def test_legacy_production_cannot_be_attached_as_replay(legacy_production_root):
     with pytest.raises(GuardRefused, match="guard_mode_immutable"):
         Engram(root=legacy_production_root.cfg.root, read_only=True, store_mode=MODE)
+
+
+def test_structured_export_keeps_scalar_reference_lists():
+    from piia_engram.isolated_store import mark_replay_export
+
+    payload = {"ids": ["sample-reference"], "references": ("sample-reference",),
+               "entries": [{"id": "sample-reference", "summary": "generic observation"}]}
+    marked = mark_replay_export(payload)
+    assert carries_replay_marker(marked)
+    assert marked["ids"] == payload["ids"]
+    assert marked["references"] == payload["references"]
+    assert marked["entries"][0]["id"] in marked["ids"]
