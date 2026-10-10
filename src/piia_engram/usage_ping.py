@@ -108,6 +108,10 @@ def _legacy_opted_out() -> bool:
             continue  # missing or corrupt: not an opt-out
         if not isinstance(cfg, dict):
             continue
+        # Setup may change the detailed-statistics flags, but cannot revoke an
+        # earlier explicit refusal. New setup refusals never create this marker.
+        if cfg.get("legacy_ping_opted_out_at"):
+            return True
         if cfg.get("enabled") is False and cfg.get("opted_out_at"):
             return True
         if cfg.get("remote_enabled") is False and cfg.get("remote_opted_out_at"):

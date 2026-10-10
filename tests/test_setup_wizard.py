@@ -2032,7 +2032,7 @@ class TestPrivacyPreferences:
         monkeypatch.setenv("USERPROFILE", str(home))
 
     def test_both_defaults(self, tmp_path, monkeypatch, capsys):
-        """Pressing Enter twice keeps defaults: no import now, telemetry=No.
+        """Pressing Enter twice keeps defaults: no import now, statistics=Yes.
 
         Setup used to store reconcile_authorized=true here (automatic import on
         every start). It now only offers a one-time import and stores no switch.
@@ -2049,7 +2049,9 @@ class TestPrivacyPreferences:
         assert cfg_path.is_file()
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         assert "reconcile_authorized" not in cfg
-        assert cfg["enabled"] is False
+        assert cfg["enabled"] is True
+        assert cfg["remote_enabled"] is True
+        assert cfg["feedback_enabled"] is True
         assert "engram import-memories" in capsys.readouterr().out
 
     def test_opt_in_telemetry(self, tmp_path, monkeypatch, capsys):
@@ -2057,8 +2059,8 @@ class TestPrivacyPreferences:
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.delenv("ENGRAM_TELEMETRY", raising=False)
         monkeypatch.delenv("ENGRAM_RECONCILE", raising=False)
-        # reconcile default, telemetry yes, remote default (no)
-        answers = iter(["", "y", ""])
+        # import default, combined statistics yes
+        answers = iter(["", "y"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
         _run_privacy_preferences(str(tmp_path))
@@ -2103,11 +2105,11 @@ class TestPrivacyCopyMentionsTheDailyPing:
 
     @pytest.mark.parametrize("lang,needles", [
         ("en", ("Your memories stay on this machine",
-                "Engram sends one anonymous usage ping a day",
-                "also turns it off")),
+                "daily anonymous usage ping is on by default",
+                "engram telemetry off")),
         ("zh", ("你的记忆只留在本机",
-                "Engram 每天发送一次匿名使用信号",
-                "也会关闭它")),
+                "每日匿名使用信号默认开启",
+                "engram telemetry off")),
     ])
     def test_advanced_privacy_text(self, tmp_path, monkeypatch, capsys, lang, needles):
         from piia_engram import i18n
@@ -2123,10 +2125,10 @@ class TestPrivacyCopyMentionsTheDailyPing:
         assert "你的数据默认只留在本机" not in out
 
     @pytest.mark.parametrize("lang,needles", [
-        ("en", ("Engram also sends one anonymous usage ping a day",
-                "answering no here also turns it off")),
-        ("zh", ("Engram 另外每天发送一次匿名使用信号",
-                "这里选择“否”也会关闭它")),
+        ("en", ("daily anonymous usage ping is on by default",
+                "turn it off anytime with engram telemetry off")),
+        ("zh", ("每日匿名使用信号默认开启",
+                "随时运行 engram telemetry off 关闭")),
     ])
     def test_default_statistics_question(self, tmp_path, monkeypatch, capsys, lang, needles):
         from piia_engram import i18n
@@ -2140,7 +2142,7 @@ class TestPrivacyCopyMentionsTheDailyPing:
             assert needle in out
 
     @pytest.mark.parametrize("flow", ["defaults", "preferences"])
-    def test_a_no_turns_the_ping_off_even_after_an_explicit_on(self, tmp_path, monkeypatch, capsys, flow):
+    def test_a_no_leaves_an_explicit_ping_on_unchanged(self, tmp_path, monkeypatch, capsys, flow):
         from piia_engram import usage_ping
         from piia_engram.setup_wizard import _run_privacy_defaults
 
@@ -2152,23 +2154,12 @@ class TestPrivacyCopyMentionsTheDailyPing:
             answers = iter(["", "n"])
             monkeypatch.setattr("builtins.input", lambda _: next(answers))
             _run_privacy_preferences(str(tmp_path))
-        assert usage_ping.decision() == (False, "settings")
+        assert usage_ping._load_settings()["enabled"] is True
 
-    def test_local_yes_and_remote_no_turns_the_ping_off(self, tmp_path, monkeypatch, capsys):
-        from piia_engram import i18n, usage_ping
-
-        monkeypatch.setattr(i18n, "_runtime_lang", "en")
-        usage_ping.set_enabled(True)  # an earlier `engram telemetry on`
-        answers = iter(["", "y", "n"])  # reconcile default, local statistics yes, remote no
-        monkeypatch.setattr("builtins.input", lambda _: next(answers))
-        _run_privacy_preferences(str(tmp_path))
-        assert usage_ping.decision() == (False, "settings")
-        assert "daily usage ping is off too" in capsys.readouterr().out
-
-    def test_local_yes_and_remote_yes_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
+    def test_statistics_yes_leaves_the_ping_setting_alone(self, tmp_path, monkeypatch, capsys):
         from piia_engram import usage_ping
 
-        answers = iter(["", "y", "y"])
+        answers = iter(["", "y"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         _run_privacy_preferences(str(tmp_path))
         assert not (usage_ping.state_dir() / "usage_ping.json").exists()

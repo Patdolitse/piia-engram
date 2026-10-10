@@ -118,18 +118,47 @@ def is_enabled() -> bool:
     return _load_config().get("enabled", False)
 
 
-def set_enabled(enabled: bool) -> None:
-    """Persist the opt-in/opt-out choice."""
-    cfg = _load_config()
+def _set_local_statistics(cfg: dict[str, Any], enabled: bool, now: str) -> None:
+    """Update local consent and install metadata in a config being saved."""
     cfg["enabled"] = enabled
-    now = datetime.now(timezone.utc).isoformat()
     if enabled and "local_uuid" not in cfg:
         cfg["local_uuid"] = str(uuid.uuid4())
         cfg["opted_in_at"] = now
     if enabled and "first_seen_at" not in cfg:
         cfg["first_seen_at"] = cfg.get("opted_in_at") or now
+
+
+def set_enabled(enabled: bool) -> None:
+    """Persist the explicit opt-in/opt-out choice (including legacy ping consent)."""
+    cfg = _load_config()
+    now = datetime.now(timezone.utc).isoformat()
+    _set_local_statistics(cfg, enabled, now)
     if not enabled:
         cfg["opted_out_at"] = now
+    _save_config(cfg)
+
+
+def set_statistics_enabled(enabled: bool) -> None:
+    """Setup consent for detailed local/remote statistics and weekly feedback.
+
+    A new setup refusal writes only statistics_opted_out_at, which the daily
+    ping does not consume. Preserve an active historical refusal before changing
+    its statistics flags, so even a setup yes cannot lift an earlier ping opt-out.
+    Only the existing explicit ping-on command overrides that historical choice.
+    """
+    cfg = _load_config()
+    for flag, marker in (("enabled", "opted_out_at"),
+                         ("remote_enabled", "remote_opted_out_at")):
+        if cfg.get(flag) is False and cfg.get(marker):
+            cfg.setdefault("legacy_ping_opted_out_at", cfg[marker])
+    now = datetime.now(timezone.utc).isoformat()
+    _set_local_statistics(cfg, enabled, now)
+    cfg["remote_enabled"] = enabled
+    cfg["feedback_enabled"] = enabled
+    cfg["statistics_opted_in_at" if enabled else "statistics_opted_out_at"] = now
+    cfg["feedback_opted_in_at" if enabled else "feedback_opted_out_at"] = now
+    if enabled:
+        cfg["remote_opted_in_at"] = now
     _save_config(cfg)
 
 

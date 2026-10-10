@@ -769,20 +769,24 @@ def test_setup_shows_the_notice_and_starts_the_ping_only_after_its_questions(mon
     assert order == [("setup",), ("notice", sys.stdout), ("send", "cli")]
 
 
-def test_a_no_to_statistics_during_setup_stops_the_first_ping(ping, monkeypatch, tmp_path):
+@pytest.mark.parametrize("advanced", [False, True])
+@pytest.mark.parametrize("answer", ["n", ""])
+def test_setup_statistics_answer_does_not_stop_the_first_ping(
+        ping, monkeypatch, tmp_path, advanced, answer):
     from piia_engram import setup_wizard as sw
-    from piia_engram import telemetry
 
     store = tmp_path / "store"
     store.mkdir()
     monkeypatch.setenv("ENGRAM_DIR", str(store))
     monkeypatch.setattr(up, "_legacy_opted_out", ping.orig_legacy)
-    monkeypatch.setattr(sw, "run_setup", lambda **kw: telemetry.set_enabled(False))
-    monkeypatch.setattr(sys, "argv", ["engram", "setup"])
+    flow = sw._run_privacy_preferences if advanced else sw._run_privacy_defaults
+    monkeypatch.setattr("builtins.input", lambda _: answer)
+    monkeypatch.setattr(sw, "run_setup", lambda **kw: flow(str(store), offer_import=False))
+    monkeypatch.setattr(sys, "argv", ["engram", "setup"] + (["--advanced"] if advanced else []))
     sw.main()
-    assert up.decision() == (False, "earlier opt-out")
-    assert ping.sent == []
-    assert not (ping.dir / "install_id").exists()
+    assert up.decision() == (True, "default")
+    assert len(ping.sent) == 1  # fake_urlopen only; no real ping
+    assert (ping.dir / "install_id").exists()
 
 
 # --- engram telemetry -----------------------------------------------------------

@@ -2612,20 +2612,6 @@ def _run_seed_knowledge_onboarding(
 # Privacy & data preferences (one-time import offer + telemetry opt-in)
 # ---------------------------------------------------------------------------
 
-def _turn_off_usage_ping() -> None:
-    """A "no" to statistics also turns the daily usage ping off (best effort).
-
-    The detailed-statistics opt-out already keeps the ping off; saving the ping
-    setting too covers an earlier explicit `engram telemetry on`.
-    """
-    try:
-        from piia_engram import usage_ping as _usage_ping
-
-        _usage_ping.set_enabled(False)
-    except Exception:
-        pass
-
-
 def _offer_setup_import(data_dir: str, *, project_roots: tuple = ()) -> dict | None:
     """Setup's import step: ask once; a yes runs `engram import-memories`.
 
@@ -2669,91 +2655,31 @@ def _offer_setup_import(data_dir: str, *, project_roots: tuple = ()) -> dict | N
 
 def _run_privacy_preferences(data_dir: str, *, offer_import: bool = True) -> None:
     """Offer a one-time import from other AI tools; ask about usage statistics."""
-    from piia_engram.telemetry import set_enabled, set_remote_enabled
 
     print(_t("\nStep 5 — 隐私与数据偏好", "\nStep 5 — Privacy & data preferences"))
-    print(_t("  你的记忆只留在本机。Engram 每天发送一次匿名使用信号；下面第 [2] 或 [2b] 项选择“否”也会关闭它。",
-             "  Your memories stay on this machine. Engram sends one anonymous usage ping a day;"
-             " answering no to [2] or [2b] below also turns it off."))
+    print(_t("  你的记忆只留在本机。",
+             "  Your memories stay on this machine."))
     print(_t("  以下可选功能需要你明确同意。\n",
              "  The following optional features require your explicit consent.\n"))
 
     if offer_import:
         _offer_setup_import(data_dir)
 
-    # --- Anonymous usage statistics ---
-    print(_t("  [2] 匿名使用统计",
-             "  [2] Anonymous usage statistics"))
-    print(_t("      帮助我们了解哪些功能被使用、哪些需要改进。",
-             "      Help us understand which features are used and need improvement."))
-    print(_t("      每天最多记录一次，内容如下：",
-             "      Logged at most once per day:"))
-    print(_t("        • 工具调用计数（只有工具名和次数，无参数和内容）",
-             "        • Tool call counts (names + counts only, no arguments or content)"))
-    print(_t("        • 知识条目总数（只有数字，无内容）",
-             "        • Knowledge entry totals (counts only, no content)"))
-    print(_t("        • Engram 版本号 / 操作系统 / Python 版本",
-             "        • Engram version / OS / Python version"))
-    print(_t("      绝不发送：知识内容、prompt、文件路径、邮箱、IP 地址",
-             "      Never sent: knowledge content, prompts, file paths, email, IP"))
-    print(_t(f"      本地日志位置：{data_dir}/telemetry.log",
-             f"      Local log location: {data_dir}/telemetry.log"))
-    print(_t("      查看将记录的内容：engram telemetry preview",
-             "      Preview what's logged: engram telemetry preview"))
-    print(_t("      随时关闭：engram telemetry off\n",
-             "      Disable anytime: engram telemetry off\n"))
-
-    telemetry_enabled = _yn(
-        _t("  开启匿名使用统计？",
-           "  Enable anonymous usage statistics?"),
-        default=False,
-    )
-    set_enabled(telemetry_enabled)
-    if telemetry_enabled:
-        print(_t("  ✅ 已开启本地统计\n",
-                 "  ✅ Local statistics enabled\n"))
-        # --- Remote sending (Phase 2) ---
-        print(_t("  [2b] 远程匿名统计（帮助开发者改进 Engram）",
-                 "  [2b] Remote anonymous statistics (help improve Engram)"))
-        print(_t("      同样的匿名数据，每日发送一次到 Engram 开发团队。",
-                 "      Same anonymous data, sent once daily to the Engram team."))
-        print(_t("      数据通过 HTTPS 发送到 Cloudflare Worker，不经过任何第三方。",
-                 "      Data sent via HTTPS to Cloudflare Worker, no third parties."))
-        print(_t("      发送失败不会影响任何功能（静默跳过）。",
-                 "      Send failures are silently ignored (never affects functionality)."))
-        print(_t("      随时关闭：engram telemetry remote off\n",
-                 "      Disable anytime: engram telemetry remote off\n"))
-
-        remote_enabled = _yn(
-            _t("  同时开启远程发送？",
-               "  Also enable remote sending?"),
-            default=False,
-        )
-        set_remote_enabled(remote_enabled)
-        if remote_enabled:
-            print(_t("  ✅ 远程统计已开启\n",
-                     "  ✅ Remote statistics enabled\n"))
-        else:
-            _turn_off_usage_ping()
-            print(_t("  ℹ️  仅本地统计，每日使用信号也已关闭。可随时运行 engram telemetry remote on 开启远程。\n",
-                     "  ℹ️  Local only; the daily usage ping is off too."
-                     " Run engram telemetry remote on to enable remote anytime.\n"))
-    else:
-        set_remote_enabled(False)
-        _turn_off_usage_ping()
-        print(_t("  ℹ️  未开启，每日使用信号也已关闭。可随时运行 engram telemetry on 改变。\n",
-                 "  ℹ️  Not enabled; the daily usage ping is off too. Run engram telemetry on to change anytime.\n"))
-
+    _ask_setup_statistics(data_dir)
 
 
 def _run_privacy_defaults(data_dir: str, *, offer_import: bool = True) -> None:
     """Offer a one-time import from other AI tools, then ask about telemetry."""
-    from piia_engram.telemetry import (
-        set_enabled, set_feedback_enabled, set_remote_enabled,
-    )
 
     if offer_import:
         _offer_setup_import(data_dir)
+
+    _ask_setup_statistics(data_dir)
+
+
+def _ask_setup_statistics(data_dir: str) -> None:
+    """Both setup paths ask the same detailed-statistics question, default Yes."""
+    from piia_engram.telemetry import set_statistics_enabled
 
     # --- Ask about telemetry — one question, all-or-nothing ---
     print(_t("  [匿名使用统计]",
@@ -2762,30 +2688,35 @@ def _run_privacy_defaults(data_dir: str, *, offer_import: bool = True) -> None:
              "      Help us understand which features are used and need improvement."))
     print(_t("      包含：工具调用次数、知识条目数、每周治理概况",
              "      Includes: tool call counts, knowledge totals, weekly governance summary"))
+    print(_t("      选择“是”会开启本地记录、远程匿名统计和每周匿名反馈；远程发送需配置端点。",
+             "      Yes enables local logging, remote anonymous statistics and weekly anonymous feedback;"
+             " remote sending requires a configured endpoint."))
+    print(_t(f"      本地日志位置：{data_dir}/telemetry.log",
+             f"      Local log location: {data_dir}/telemetry.log"))
+    print(_t("      查看统计内容：engram telemetry preview",
+             "      Preview statistics: engram telemetry preview"))
     print(_t("      绝不包含：知识内容、prompt、文件路径、邮箱、IP",
              "      Never includes: knowledge content, prompts, file paths, email, IP"))
-    print(_t("      Engram 另外每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、"
-             "AI 客户端名称、日期）；这里选择“否”也会关闭它。",
-             "      Engram also sends one anonymous usage ping a day (random install ID, version, OS,"
-             " Python version, AI client name, date); answering no here also turns it off."))
-    print(_t("      随时关闭：engram telemetry off\n",
-             "      Disable anytime: engram telemetry off\n"))
+    print(_t("      每日匿名使用信号默认开启（随机安装 ID、版本、系统、Python 版本、"
+             "AI 客户端名称、日期）；随时运行 engram telemetry off 关闭。",
+             "      The daily anonymous usage ping is on by default (random install ID, version, OS,"
+             " Python version, AI client name, date); turn it off anytime with engram telemetry off."))
+    print(_t("      本题仅控制详细统计，不改变每日使用信号设置或此前的退出选择。\n",
+             "      This question controls only detailed statistics; it preserves the daily ping preference"
+             " and earlier opt-outs.\n"))
 
     enabled = _yn(
         _t("  开启匿名使用统计？",
            "  Enable anonymous usage statistics?"),
         default=True,
     )
-    set_enabled(enabled)
-    set_remote_enabled(enabled)
-    set_feedback_enabled(enabled)
+    set_statistics_enabled(enabled)
     if enabled:
         print(_t("  ✅ 已开启（含每周匿名反馈报告）\n",
                  "  ✅ Enabled (including weekly anonymous feedback reports)\n"))
     else:
-        _turn_off_usage_ping()
-        print(_t("  ℹ️  未开启，每日使用信号也已关闭。可随时运行 engram telemetry on 改变。\n",
-                 "  ℹ️  Not enabled; the daily usage ping is off too. Run engram telemetry on to change anytime.\n"))
+        print(_t("  ℹ️  未开启详细统计。可随时运行 engram telemetry on 开启本地统计。\n",
+                 "  ℹ️  Detailed statistics not enabled. Run engram telemetry on to enable local statistics anytime.\n"))
 
 
 # ---------------------------------------------------------------------------
