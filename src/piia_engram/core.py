@@ -2331,13 +2331,24 @@ class Engram(
         source_url: str = "",
         _audit_metadata_only: bool = False,
         allow_similar_new: bool = False,
+        *,
+        _replay_admission: bool = False,
         **extra: Any,
     ) -> dict:
         """Add a lesson learned.
 
         Accepts either the original dict form or a convenience form:
         add_lesson("summary", "domain", source_tool="codex").
+        Isolated replay admission may keep similar new summaries in the related
+        tier; this internal option is unavailable to production roots or MCP.
         """
+        if _replay_admission:
+            from .isolated_store import GuardRefused, REPLAY_EXPERIENCE
+
+            if (_replay_admission is not True or self._store_mode != REPLAY_EXPERIENCE
+                    or _review_boundary.mcp_origin()):
+                raise GuardRefused("replay_parameters_not_supported")
+            allow_similar_new = True
         path = self._knowledge_dir / "lessons.json"
 
         allow_internal_provenance = extra.pop("_allow_internal_provenance", False) is True

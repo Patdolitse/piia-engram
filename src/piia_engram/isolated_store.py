@@ -857,8 +857,11 @@ class IsolatedStore:
             with hold_directory_lock(eng._knowledge_dir, timeout=60):
                 if self._verified_budget_full(eng):
                     return self._append({**base, "result": "capacity_full"})
+                # Template similarity is only a relation in replay admission;
+                # exact, retired and archived twin guards still run in core.
+                write_options = {"_replay_admission": True} if self.mode == REPLAY_EXPERIENCE else {}
                 try:
-                    result = _with_retry(lambda: eng.add_lesson(dict(entry)))
+                    result = _with_retry(lambda: eng.add_lesson(dict(entry), **write_options))
                 except IoRetryExhausted as exc:
                     return self._append({**base, "result": "io_retry_exhausted", "detail": str(exc)})
             status = str(result.get("status") or "")
