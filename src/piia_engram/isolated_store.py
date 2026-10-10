@@ -302,7 +302,7 @@ def _check_legacy_root(root: Path, marker: dict, audit_dir: Path, *, allow_rebin
 
 
 def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None,
-              allow_rebind: bool = False) -> str:
+              allow_rebind: bool = False, audit_refusal: bool = True) -> str:
     """Validate metadata AND the initialization receipt for every attachment."""
     root = Path(root)
     marker, audit_dir, isolated = _mode_context(root, receipts_dir)
@@ -357,7 +357,8 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None,
                                    f"replay root signal contradicts production metadata: {signal}")
         return actual
     except GuardRefused as exc:
-        _append_refusal(audit_dir, exc)
+        if audit_refusal:
+            _append_refusal(audit_dir, exc)
         raise
 
 
@@ -381,11 +382,12 @@ def carries_replay_marker(value: Any) -> bool:
     return False
 
 
-def refuse_replay_import(eng, original: Any) -> dict | None:
+def refuse_replay_import(eng, original: Any, *, audit_refusal: bool = True) -> dict | None:
     """Refuse original marked input before any normalization; audit metadata only."""
     if eng._store_mode == PRODUCTION and carries_replay_marker(original):
-        _marker, audit_dir, _isolated = _mode_context(eng.root)
-        _append_refusal(audit_dir, GuardRefused("replay_experience_import_refused"), op="ingest")
+        if audit_refusal:
+            _marker, audit_dir, _isolated = _mode_context(eng.root)
+            _append_refusal(audit_dir, GuardRefused("replay_experience_import_refused"), op="ingest")
         return {"error": "replay_experience_import_refused",
                 "status": "replay_experience_import_refused", "changed": False}
     return None

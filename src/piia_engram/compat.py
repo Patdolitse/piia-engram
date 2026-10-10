@@ -431,11 +431,11 @@ def read_openclaw_files(soul_path: str = "", memory_path: str = "", user_path: s
     return texts, files
 
 
-def _replay_text_import_refusal(engram: "Engram", texts: dict) -> dict | None:
+def _replay_text_import_refusal(engram: "Engram", texts: dict, *, audit_refusal: bool = True) -> dict | None:
     from .isolated_store import root_mode, refuse_replay_import
 
-    root_mode(engram.root, engram._store_mode)
-    return refuse_replay_import(engram, texts)
+    root_mode(engram.root, engram._store_mode, audit_refusal=audit_refusal)
+    return refuse_replay_import(engram, texts, audit_refusal=audit_refusal)
 
 
 def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "", user_path: str = "") -> dict:
@@ -452,7 +452,7 @@ def preview_openclaw(engram: "Engram", soul_path: str = "", memory_path: str = "
         return {"error": "give at least one OpenClaw file (soul, memory or user)",
                 "bridge_level": OPENCLAW_BRIDGE_LEVEL}
     _texts, files = read_openclaw_files(soul_path, memory_path, user_path)
-    mode_refusal = _replay_text_import_refusal(engram, _texts)
+    mode_refusal = _replay_text_import_refusal(engram, _texts, audit_refusal=False)
     if mode_refusal:
         return mode_refusal
     return {
