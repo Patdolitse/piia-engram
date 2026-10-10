@@ -6,6 +6,12 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Offline install planning accepts local directory names containing `publish` or `upload`, while still rejecting network sources, upload commands and artifacts outside the allowed directory.
+
 ## [4.23.0] - 2026-10-10
 
 ### Breaking changes

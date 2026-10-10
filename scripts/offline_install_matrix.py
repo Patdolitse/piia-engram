@@ -21,7 +21,8 @@ Planning invariants (asserted by the planner and the tests):
 - every install command carries ``--no-index`` (no PyPI fallback);
 - every artifact path points inside the given ``dist`` dir;
 - every venv / work path lives under one base (a temp dir by default);
-- the plan never references an index URL, ``twine``, ``upload``, or ``publish``.
+- only the local venv, install and smoke commands are allowed (no upload or
+  network index options); local path names are not treated as commands.
 
 Usage (from the repo root)::
 
@@ -55,9 +56,10 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
 DIST_REL = "dist"
 PACKAGE = "piia_engram"
 
-# Substrings that must never appear in a planned command (this is a *local*
-# matrix — any of these would mean we reached for the network or a publish path).
-_FORBIDDEN_TOKENS = ("pypi.org", "upload", "twine", "publish", "--index-url", "--extra-index-url")
+_IMPORT_SMOKE = (
+    f"import {PACKAGE}, sys; "
+    f"print(getattr({PACKAGE}, '__version__', 'unknown'))"
+)
 
 
 def read_pyproject_version(root: str | Path) -> str:
@@ -148,10 +150,6 @@ def _install_step(
 ) -> dict[str, Any]:
     venv_dir = base / f"venv-{name}"
     vpy = str(_venv_python(venv_dir))
-    import_check = (
-        f"import {PACKAGE}, sys; "
-        f"print(getattr({PACKAGE}, '__version__', 'unknown'))"
-    )
     return {
         "name": name,
         "artifact": str(artifact),
@@ -161,7 +159,7 @@ def _install_step(
             [python, "-m", "venv", str(venv_dir)],
             [vpy, "-m", "pip", "install", "--no-index",
              "--find-links", str(dist_dir), str(artifact)],
-            [vpy, "-c", import_check],
+            [vpy, "-c", _IMPORT_SMOKE],
             [vpy, "-m", f"{PACKAGE}.mcp_server", "--help"],
         ],
         # mcp boot smoke runs with an ephemeral store so it never writes a real one.
@@ -236,20 +234,34 @@ def plan_matrix(
 
 
 def _assert_plan_is_local(plan: dict[str, Any]) -> None:
-    """Fail loudly if the plan ever reaches for the network or a publish path."""
-    base = Path(plan["base"])
-    dist = Path(plan["dist_dir"])
+    """Check command structure, keeping local path arguments out of token scans."""
+    base = Path(plan["base"]).resolve()
+    dist = Path(plan["dist_dir"]).resolve()
+    python = plan["python"]
+    executable = Path(python).name.lower()
+    assert re.fullmatch(r"(?:pythonw?|pypy)(?:\d+(?:\.\d+)*)?(?:\.exe)?", executable), (
+        f"not a Python executable: {python}"
+    )
     for step in plan["steps"]:
         # venvs must live under the single base dir.
         assert Path(step["venv"]).resolve().is_relative_to(base), step["venv"]
         # the installed artifact must come from the dist dir.
         assert Path(step["artifact"]).resolve().is_relative_to(dist), step["artifact"]
-        install_cmds = [c for c in step["commands"] if "install" in c]
-        for cmd in install_cmds:
-            assert "--no-index" in cmd, f"install without --no-index: {cmd}"
-        flat = " ".join(tok for cmd in step["commands"] for tok in cmd).lower()
-        for token in _FORBIDDEN_TOKENS:
-            assert token not in flat, f"forbidden token {token!r} in plan"
+        vpy = str(_venv_python(Path(step["venv"])))
+        # Each form fixes the executable, operation, options and path positions.
+        # Extra index / find-links options, remote artifacts, other modules and
+        # arbitrary -c code cannot be smuggled into an otherwise offline plan.
+        allowed = [
+            [python, "-m", "venv", step["venv"]],
+            [vpy, "-m", "pip", "install", "--no-index",
+             "--find-links", plan["dist_dir"], step["artifact"]],
+            [vpy, "-c", _IMPORT_SMOKE],
+            [vpy, "-m", f"{PACKAGE}.mcp_server", "--help"],
+        ]
+        for cmd in step["commands"]:
+            if cmd[1:4] == ["-m", "pip", "install"]:
+                assert "--no-index" in cmd, f"install without --no-index: {cmd}"
+            assert cmd in allowed, f"non-local command in plan: {cmd}"
 
 
 def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:

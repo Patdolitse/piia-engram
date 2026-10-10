@@ -4,7 +4,7 @@ These exercise the *planning* logic only (no real installs, no network): given a
 fake ``dist/`` with a local wheel and sdist, the planner must produce a command
 matrix that installs strictly from local artifacts (``--no-index``), boots the
 MCP server with an ephemeral store, keeps every venv under one temp base, and
-never references PyPI / upload / twine.
+rejects network options and upload commands without rejecting local path names.
 """
 
 from __future__ import annotations
@@ -79,13 +79,104 @@ def test_all_venvs_under_single_base(fake_dist: Path, tmp_path: Path):
         assert Path(step["venv"]).resolve().is_relative_to(base.resolve())
 
 
+@pytest.mark.parametrize("name", ["publish", "upload", "twine", "pypi.org", "--index-url"])
+def test_local_path_names_are_not_commands(fake_dist: Path, tmp_path: Path, name: str):
+    local = tmp_path / name
+    local.mkdir()
+    dist = local / "dist"
+    dist.mkdir()
+    for artifact in fake_dist.iterdir():
+        (dist / artifact.name).write_bytes(artifact.read_bytes())
+    base = local / "venvs"
+    plan = oim.plan_matrix(
+        dist, base=base, python=str(local / "python.exe"), expected_version="9.9.9",
+    )
+    assert plan["offline"] is True
+    assert len(plan["steps"]) == 2
+    assert not base.exists()
+    for step in plan["steps"]:
+        install = step["commands"][1]
+        assert "--no-index" in install
+        assert Path(install[-1]).resolve().is_relative_to(dist.resolve())
+
+
 def test_plan_never_references_network_or_publish(fake_dist: Path, tmp_path: Path):
     plan = oim.plan_matrix(fake_dist, base=tmp_path / "base")
-    flat = " ".join(
-        tok for step in plan["steps"] for cmd in step["commands"] for tok in cmd
-    ).lower()
-    for token in oim._FORBIDDEN_TOKENS:
-        assert token not in flat
+    for step in plan["steps"]:
+        assert step["commands"][0][1:3] == ["-m", "venv"]
+        assert step["commands"][1][1:4] == ["-m", "pip", "install"]
+        assert step["commands"][2][1] == "-c"
+        assert step["commands"][3][1:] == ["-m", "piia_engram.mcp_server", "--help"]
+
+
+@pytest.mark.parametrize("command", [
+    ["twine", "upload", "artifact.whl"],
+    ["twine.exe", "upload", "artifact.whl"],
+    ["python", "-m", "twine", "upload", "artifact.whl"],
+    ["uv", "publish", "artifact.whl"],
+    ["upload", "artifact.whl"],
+    ["publish", "artifact.whl"],
+])
+def test_upload_commands_are_refused(fake_dist: Path, tmp_path: Path, command):
+    plan = oim.plan_matrix(fake_dist, base=tmp_path / "base")
+    plan["steps"][0]["commands"].append(command)
+    with pytest.raises(AssertionError, match="non-local command"):
+        oim._assert_plan_is_local(plan)
+
+
+@pytest.mark.parametrize("options", [
+    ["--index-url", "https://example.invalid/simple"],
+    ["--index-url=https://example.invalid/simple"],
+    ["--extra-index-url", "https://example.invalid/simple"],
+    ["--extra-index-url=https://example.invalid/simple"],
+    ["-i", "https://example.invalid/simple"],
+    ["-ihttps://example.invalid/simple"],
+    ["--find-links", "https://example.invalid/wheels"],
+    ["--find-links=https://example.invalid/wheels"],
+])
+def test_network_source_options_are_refused(fake_dist: Path, tmp_path: Path, options):
+    plan = oim.plan_matrix(fake_dist, base=tmp_path / "base")
+    plan["steps"][0]["commands"][1][4:4] = options
+    with pytest.raises(AssertionError, match="non-local command"):
+        oim._assert_plan_is_local(plan)
+
+
+def test_install_without_no_index_is_refused(fake_dist: Path, tmp_path: Path):
+    plan = oim.plan_matrix(fake_dist, base=tmp_path / "base")
+    plan["steps"][0]["commands"][1].remove("--no-index")
+    with pytest.raises(AssertionError, match="install without --no-index"):
+        oim._assert_plan_is_local(plan)
+
+
+@pytest.mark.parametrize("change_metadata", [False, True])
+def test_outside_artifact_is_refused(fake_dist: Path, tmp_path: Path, change_metadata):
+    plan = oim.plan_matrix(fake_dist, base=tmp_path / "base")
+    outside = str(tmp_path / "outside.whl")
+    step = plan["steps"][0]
+    step["commands"][1][-1] = outside
+    if change_metadata:
+        step["artifact"] = outside
+    with pytest.raises(AssertionError):
+        oim._assert_plan_is_local(plan)
+
+
+def test_outside_venv_is_refused(fake_dist: Path, tmp_path: Path):
+    plan = oim.plan_matrix(fake_dist, base=tmp_path / "base")
+    plan["steps"][0]["venv"] = str(tmp_path / "outside-venv")
+    with pytest.raises(AssertionError):
+        oim._assert_plan_is_local(plan)
+
+
+def test_upload_executable_cannot_be_the_python_launcher(fake_dist: Path, tmp_path: Path):
+    with pytest.raises(AssertionError, match="not a Python executable"):
+        oim.plan_matrix(fake_dist, base=tmp_path / "base", python="twine")
+
+
+def test_extra_python_code_is_refused(fake_dist: Path, tmp_path: Path):
+    plan = oim.plan_matrix(fake_dist, base=tmp_path / "base")
+    plan["steps"][0]["commands"][2][-1] += "; import urllib.request"
+    with pytest.raises(AssertionError, match="non-local command"):
+        oim._assert_plan_is_local(plan)
 
 
 def test_wheel_only_dist_plans_one_step(tmp_path: Path):
