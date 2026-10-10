@@ -139,12 +139,10 @@ def set_enabled(enabled: bool) -> None:
 
 
 def set_statistics_enabled(enabled: bool) -> None:
-    """Setup consent for detailed local/remote statistics and weekly feedback.
+    """Explicit consent for detailed local/remote statistics and weekly feedback.
 
-    A new setup refusal writes only statistics_opted_out_at, which the daily
-    ping does not consume. Preserve an active historical refusal before changing
-    its statistics flags, so even a setup yes cannot lift an earlier ping opt-out.
-    Only the existing explicit ping-on command overrides that historical choice.
+    Preserve historical ping opt-outs before changing statistics flags. Only
+    the existing explicit ping-on command overrides that historical choice.
     """
     cfg = _load_config()
     for flag, marker in (("enabled", "opted_out_at"),

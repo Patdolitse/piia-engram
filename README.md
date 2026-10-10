@@ -250,7 +250,7 @@ The setup wizard will:
 3. Detect your AI tools, list the exact config files it will touch, and write the MCP connection after a one-keystroke confirm (backed up first; decline leaves them untouched)
 4. Walk you through seed knowledge (role, tech stack, language)
 5. Offer to import rules and memories from your other AI tools — `CLAUDE.md`, `.cursorrules`, memory files (default no; lists them first, then the review queue, approve with `engram review`)
-6. In advanced mode (`engram setup --advanced`), show your optional privacy preferences (anonymous statistics)
+6. Show a short daily usage ping notice; neither setup mode asks about telemetry or changes your choices
 7. **Preview your AI identity card** — immediate proof of value
 
 After setup writes the MCP connection (you confirm at the prompt first), restart your AI tool. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.
@@ -854,7 +854,7 @@ The setup wizard detects your AI tools without changing their config files by de
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
 
 **Does piia-engram send data to the cloud?**
-Your memories never leave your machine. Engram sends one anonymous usage ping a day (random install ID, version, OS, Python version, AI client name, date) so we know how many installs are active; it never contains memories, file paths, account details or command arguments, and the server does not store IP addresses. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (it is off in CI and in containers); `engram telemetry preview` shows the exact payload. Detailed statistics and feedback reports are separate opt-ins. See **[PRIVACY.md](PRIVACY.md)**.
+Your memories never leave your machine. Engram sends one anonymous usage ping a day by default (random install ID, version, OS, Python version, AI client name, date). No content, prompts or file paths are sent; IP addresses are not stored. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (it is off in CI and in containers); `engram telemetry preview` shows the exact payload. Setup shows an informational notice without asking about telemetry. Detailed statistics stay off unless explicitly enabled with `engram telemetry on`; remote sending (`engram telemetry remote on`) and weekly feedback (`engram telemetry feedback on`) require separate opt-ins. Setup preserves existing choices. See **[PRIVACY.md](PRIVACY.md)**.
 
 **How many MCP tools does piia-engram provide?**
 Two tiers, designed so most users only see 19 tools:
@@ -965,7 +965,7 @@ piia-engram retention plan   # Read-only: memory counts per pool and what the ne
 piia-engram export-agents-md # Export verified, non-sensitive knowledge as an AGENTS.md/CLAUDE.md block
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)
 piia-engram stats --log      # Append stats snapshot to local log
-engram telemetry        # Manage anonymous usage statistics
+engram telemetry        # Manage the daily usage ping and opt-in detailed statistics
 engram privacy          # Show what data piia-engram stores and where
 ```
 

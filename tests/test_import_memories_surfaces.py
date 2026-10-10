@@ -55,7 +55,7 @@ def _imported_rows(root):
 
 def _answers(monkeypatch, *values):
     it = iter(values)
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(it, ""))
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(it))
 
 
 def _telemetry_config(root):
@@ -69,7 +69,7 @@ def _telemetry_config(root):
 def test_setup_default_answer_imports_nothing_and_stores_no_switch(store, monkeypatch, capsys):
     from piia_engram.setup_wizard import _run_privacy_preferences
 
-    _answers(monkeypatch, "", "")  # import now: default (no); statistics: default
+    _answers(monkeypatch, "")  # import now: default (no)
     _run_privacy_preferences(str(store))
 
     out = capsys.readouterr().out
@@ -83,7 +83,7 @@ def test_setup_default_answer_imports_nothing_and_stores_no_switch(store, monkey
 def test_setup_yes_lists_then_imports_into_the_review_queue(store, monkeypatch, capsys, flow):
     from piia_engram import setup_wizard
 
-    _answers(monkeypatch, "y", "y", "n", "n")  # import now, confirm, statistics no
+    _answers(monkeypatch, "y", "y", "n")  # import now and per-source confirmations
     if flow == "preferences":
         setup_wizard._run_privacy_preferences(str(store))
     else:
@@ -262,7 +262,7 @@ def test_setup_seed_step_default_no_imports_nothing(store, tmp_path, monkeypatch
 def test_privacy_step_does_not_ask_again_inside_setup(store, monkeypatch, capsys):
     from piia_engram.setup_wizard import _run_privacy_defaults, _run_privacy_preferences
 
-    _answers(monkeypatch, "n", "n")
+    _answers(monkeypatch)
     _run_privacy_preferences(str(store), offer_import=False)
     _run_privacy_defaults(str(store), offer_import=False)
     out = capsys.readouterr().out

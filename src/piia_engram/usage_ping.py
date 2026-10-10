@@ -108,8 +108,8 @@ def _legacy_opted_out() -> bool:
             continue  # missing or corrupt: not an opt-out
         if not isinstance(cfg, dict):
             continue
-        # Setup may change the detailed-statistics flags, but cannot revoke an
-        # earlier explicit refusal. New setup refusals never create this marker.
+        # Detailed-statistics controls cannot revoke an
+        # earlier explicit refusal. Setup never changes either preference.
         if cfg.get("legacy_ping_opted_out_at"):
             return True
         if cfg.get("enabled") is False and cfg.get("opted_out_at"):
@@ -376,13 +376,20 @@ def maybe_send(client: Any = "cli") -> threading.Thread | None:
         return None
 
 
-NOTICE = (
-    "[engram] Engram sends one anonymous usage ping a day (random install ID, version, OS, "
-    "Python version, AI client name, date). See it: engram telemetry preview. "
-    "Turn it off: engram telemetry off\n"
-    "[engram] Engram 每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、"
-    "AI 客户端名称、日期）。查看：engram telemetry preview。关闭：engram telemetry off"
+PRIVACY_URL = "https://github.com/Patdolitse/piia-engram/blob/main/PRIVACY.md"
+NOTICE_EN = (
+    "[engram] Engram sends one anonymous usage ping a day by default (random install ID, version, OS, "
+    "Python version, AI client name, date). No content, prompts or file paths; IP addresses are not stored. "
+    "Preview: engram telemetry preview. Off: engram telemetry off or DO_NOT_TRACK=1. "
+    f"Privacy: {PRIVACY_URL}"
 )
+NOTICE_ZH = (
+    "[engram] Engram 默认每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、"
+    "AI 客户端名称、日期）。不发送内容、提示词或文件路径；不保存 IP 地址。"
+    "查看：engram telemetry preview。关闭：engram telemetry off 或 DO_NOT_TRACK=1。"
+    f"隐私：{PRIVACY_URL}"
+)
+NOTICE = f"{NOTICE_EN}\n{NOTICE_ZH}"
 
 
 def maybe_show_notice(stream: TextIO | None, *, mark: bool = True) -> bool:

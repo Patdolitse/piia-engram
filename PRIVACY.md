@@ -23,7 +23,7 @@ piia-engram is a **local-first** tool. Your identity, preferences, lessons, and 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Default implementation: your data stays in local files. Engram sends one anonymous usage ping a day (see [Daily usage ping](#daily-usage-ping-on-by-default)); turn it off with `engram telemetry off` or `DO_NOT_TRACK=1`. Detailed usage statistics are off until you consent and write a local log first. Both interactive setup paths ask one statistics question, default Yes: accepting enables local logging, remote telemetry and weekly feedback together; declining leaves the daily ping preference unchanged. Remote telemetry and weekly feedback reports are separate opt-ins from the daily ping, enabled together by setup Yes or separately through CLI controls (`engram telemetry remote on`, `engram telemetry feedback on`); they send count-only payloads only when an endpoint is configured.
+Default implementation: your data stays in local files. Engram sends one anonymous usage ping a day by default (see [Daily usage ping](#daily-usage-ping-on-by-default)); turn it off with `engram telemetry off` or `DO_NOT_TRACK=1`. Both interactive setup paths show the same notice without asking about telemetry or changing existing choices. Detailed statistics stay off unless explicitly enabled with `engram telemetry on`. Remote telemetry and weekly feedback reports are separate opt-ins (`engram telemetry remote on`, `engram telemetry feedback on`); they send count-only payloads only when an endpoint is configured.
 
 ## What piia-engram stores locally
 
@@ -87,11 +87,19 @@ Apart from that ping, the only exception is the optional `read_web_content` tool
 
 ### Daily usage ping (on by default)
 
-Engram sends one anonymous usage ping a day so the project knows how many installs are active. It contains a random install ID (created on your machine, stored in a `piia-engram` folder under your user config directory; `engram telemetry reset-id` makes a new one), the Engram version, OS family, Python major.minor version, the AI client name and the date. It never contains memories, file paths, account details, command arguments or error text, and the server does not store IP addresses; pings are kept for 400 days.
+Engram sends one anonymous usage ping a day by default so the project knows how many installs are active. It contains a random install ID (created on your machine, stored in a `piia-engram` folder under your user config directory; `engram telemetry reset-id` makes a new one), the Engram version, OS family, Python major.minor version, the AI client name and the date. No content, prompts or file paths are sent. It never contains account details, command arguments or error text; IP addresses are not stored (the server sees the source IP in transit); pings are kept for 400 days.
 
-- **Off when:** `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI and in containers; or if you explicitly turned the detailed statistics or their remote sending off before 4.23.0 (including a "no" in an earlier `engram setup`). From 4.23.0, setup answers control only detailed statistics and preserve the daily ping preference, including earlier opt-outs. `engram telemetry on` turns it back on (and also turns local statistics back on).
+- **Off when:** `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests; or if you explicitly turned the detailed statistics or their remote sending off before 4.23.0 (including a "no" in an earlier `engram setup`). From 4.23.0, setup does not ask about telemetry or change either preference, including earlier opt-outs. `engram telemetry on` turns it back on (and also turns local statistics back on).
 - **Transparent:** `engram telemetry status` shows whether it is on and why; `engram telemetry preview` prints the exact payload.
 - **Endpoint:** `https://telemetry.piia-engram.com/v1/ping`, at most once per UTC day, in the background; a failed send is skipped silently.
+
+### 每日匿名使用信号（中文）
+
+Engram 默认每天发送一次匿名使用信号：随机安装 ID、版本、系统、Python 主次版本、AI 客户端名称、日期。不发送内容、提示词或文件路径；不保存 IP 地址（请求传输时服务器会看到来源 IP）。信号最多每个 UTC 日一次，保留 400 天。
+
+查看：`engram telemetry preview`；关闭：`engram telemetry off` 或 `DO_NOT_TRACK=1`，也支持 `ENGRAM_TELEMETRY=0`、`NO_TELEMETRY=1`。CI、容器和测试环境自动不发，此前明确退出的选择继续生效。
+
+普通与高级 setup 只显示同一行说明，不询问遥测，也不改变已有选择。详细统计默认关闭，需显式运行 `engram telemetry on` 开启本地统计；远程发送（`engram telemetry remote on`）与每周反馈（`engram telemetry feedback on`）分别开启，并且必须配置端点。非交互 setup 保持不变。更多信息见[遥测说明](docs/telemetry-privacy.md)。
 
 ### Update check
 
@@ -101,7 +109,7 @@ The `engram` command checks PyPI for a newer version at most once a day, only in
 
 piia-engram offers **opt-in** anonymous usage statistics to help the project understand how tools are used. This is:
 
-- **Off by default until consent** — `engram setup` and `engram setup --advanced` ask the same single statistics question with default Yes; Yes (including accepting the default) enables local and remote statistics plus weekly feedback, and No disables them without changing the daily ping preference. Non-interactive setup does not change these choices. `engram telemetry on` enables local statistics separately.
+- **Off by default until explicit opt-in** — setup and advanced setup never ask about telemetry or enable detailed statistics. `engram telemetry on` enables local statistics and the daily ping. Non-interactive setup and existing explicit choices remain unchanged.
 - **Transparent** — preview the exact payload with `engram telemetry preview`
 - **Reversible** — disable anytime with `engram telemetry off`
 
@@ -144,7 +152,7 @@ Local telemetry, remote sending and weekly feedback can also be controlled separ
 
 ### Current status
 
-The daily usage ping is on by default (turn it off as described above). Detailed usage statistics stay off until consent through the shared setup question or the CLI. If only local telemetry is enabled, data is written to `~/.engram/telemetry.log` and does not leave your machine. Setup Yes enables local logging, remote telemetry and weekly feedback together; CLI controls can enable them separately. Remote sends require a configured endpoint. Remote telemetry and feedback reports can be disabled with `engram telemetry remote off` and `engram telemetry feedback off`.
+The daily usage ping is on by default (turn it off as described above). Detailed usage statistics stay off until explicitly enabled through the CLI. If only local telemetry is enabled, data is written to `~/.engram/telemetry.log` and does not leave your machine. Setup does not change these settings. Remote sends require a configured endpoint. Remote telemetry and feedback reports can be disabled with `engram telemetry remote off` and `engram telemetry feedback off`.
 
 ### Optional feedback reports
 
