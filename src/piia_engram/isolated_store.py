@@ -465,6 +465,9 @@ def check_environment(cfg: Config) -> None:
     for key, value in limits_env(cfg.limits).items():
         if present.get(key) != value:
             raise GuardRefused("guard_limits_mismatch", key)
+    if (cfg.mode == REPLAY_EXPERIENCE
+            and not _same_as_root(os.environ.get("ENGRAM_CACHE_DIR", ""), cfg.cache_dir)):
+        raise GuardRefused("guard_cache_dir_mismatch", "ENGRAM_CACHE_DIR is not the configured cache")
     from . import capacity as _capacity
 
     problem = _capacity.limits_env_problem()

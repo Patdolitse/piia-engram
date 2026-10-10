@@ -518,7 +518,7 @@ def _directory_lock(lock_path: Path, **kwargs: Any):
     """The directory write lock, or a no-op when this context already holds it."""
     if _lock_key(lock_path) in _HELD_DIRECTORY_LOCKS.get():
         return nullcontext()
-    return portalocker.Lock(lock_path, "a", **kwargs)
+    return portalocker.Lock(lock_path, "a", encoding="utf-8", **kwargs)
 
 
 
@@ -548,7 +548,7 @@ def hold_directory_lock(directory: Path, *, timeout: float = 5) -> Iterator[None
         yield
         return
     try:
-        lock = portalocker.Lock(lock_path, "a", timeout=timeout)
+        lock = portalocker.Lock(lock_path, "a", timeout=timeout, encoding="utf-8")
         lock.acquire()
     except portalocker.LockException as exc:
         raise RuntimeError(f"无法获取文件锁（超时 {timeout:g}s）：{directory.name}") from exc

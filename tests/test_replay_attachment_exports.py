@@ -31,7 +31,7 @@ def test_another_roots_initialization_ledger_is_refused(tmp_path, monkeypatch, s
     with pytest.raises(GuardRefused, match="guard_root_binding"):
         Engram(root=source.pr.root, read_only=read_only)
     assert _snap(source.pr.root) == before
-    refusals = [json.loads(line) for line in (other.pr.receipts_dir / "refusals.jsonl").read_text().splitlines()]
+    refusals = [json.loads(line) for line in (other.pr.receipts_dir / "refusals.jsonl").read_text(encoding="utf-8").splitlines()]
     assert refusals[-1]["code"] == "guard_root_binding"
     assert len(refusals) == 1
 
@@ -39,7 +39,7 @@ def test_another_roots_initialization_ledger_is_refused(tmp_path, monkeypatch, s
 @pytest.mark.parametrize("mode", ["production", MODE])
 def test_initialization_receipt_binds_the_actual_root(tmp_path, monkeypatch, mode):
     w = _world(tmp_path, monkeypatch, mode=mode)
-    marker = json.loads((w.pr.root / MARKER).read_text())
+    marker = json.loads((w.pr.root / MARKER).read_text(encoding="utf-8"))
     initial = w.pr.receipts()[0]
     assert marker["root_id"] == initial["root_id"]
     monkeypatch.delenv("PIIA_ISOLATED_STORE_CONFIG", raising=False)
@@ -53,7 +53,7 @@ def test_initialization_receipt_binds_the_actual_root(tmp_path, monkeypatch, mod
 def test_copying_an_entire_ledger_and_marker_does_not_bind_another_root(tmp_path, monkeypatch):
     source = _world(tmp_path / "source", monkeypatch)
     other = _world(tmp_path / "other", monkeypatch)
-    marker = json.loads((source.pr.root / MARKER).read_text())
+    marker = json.loads((source.pr.root / MARKER).read_text(encoding="utf-8"))
     marker["receipts_dir"] = str(other.pr.receipts_dir)
     (other.pr.root / MARKER).write_text(json.dumps(marker), encoding="utf-8")
     other.pr.receipts_path.write_bytes(source.pr.receipts_path.read_bytes())
@@ -65,7 +65,7 @@ def test_copying_an_entire_ledger_and_marker_does_not_bind_another_root(tmp_path
 @pytest.mark.parametrize("field", ["mode", "receipts_dir", "root_id"])
 def test_replay_metadata_requires_all_new_binding_fields(tmp_path, monkeypatch, field):
     w = _world(tmp_path, monkeypatch)
-    marker = json.loads((w.pr.root / MARKER).read_text())
+    marker = json.loads((w.pr.root / MARKER).read_text(encoding="utf-8"))
     marker.pop(field, None)
     (w.pr.root / MARKER).write_text(json.dumps(marker), encoding="utf-8")
     with pytest.raises(GuardRefused):
