@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+
+- Generic replay experience mode for isolated offline replays and evaluations: immutable root mode, explicit historical admission and clock parameters, retained evidence truncation and duplicate gates, bounded larger capacity, and mode-marked native backups refused by ordinary roots.
+
 ### Changed
 
 - Resume briefs and optional structured packs select next actions, blockers/failures, constraints and source status before background; cuts identify existing retrieval paths and token counts remain soft estimates.
