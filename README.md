@@ -42,6 +42,7 @@ Also listed in: [awesome-agents](https://github.com/kyrolabs/awesome-agents) · 
 - **No cloud account:** install with `pip`, keep the core store on your machine.
 - **Local files:** identity and knowledge live under `~/.engram/` as JSON/Markdown.
 - **User approval:** AI writes locally; high-risk items (credentials, shell commands, MCP config, permission rules) wait for your review, while low/medium writes are auto-absorbed but fully auditable and reversible. Set `ENGRAM_APPROVAL=strict` to gate every write. "Verified" means accepted by you or by that policy, not re-checked against your current code.
+- **Session continuity:** Resume output can also include earlier session records (checkpoints and snapshots) that are not reviewed and do not authorize actions. Approval and review claims apply to identity and long-term knowledge under the configured policy.
 - **Documented boundaries:** see [Trust model](docs/trust.md), [Privacy](PRIVACY.md), and [Security](SECURITY.md).
 
 Want proof? See the [live cross-tool continuity proof](docs/cross-tool-continuity-proof.md) — a memory written by Claude Code, read back by Codex through one local store — or the one-command [reproducible code demo](docs/cross-tool-continuity-demo.md).
@@ -54,7 +55,7 @@ You  → "Help me refactor this auth module"
 # WITHOUT piia-engram: AI starts from scratch
 AI   → "What language? What framework? What's your testing preference?"
 
-# WITH piia-engram: AI can load your approved context
+# WITH piia-engram: AI can load your approved identity and long-term knowledge
 AI   → "Based on your preference for pytest + 90% coverage, and your
         lesson about always separating auth middleware from business
         logic (from the March incident), here's my approach..."
@@ -76,7 +77,7 @@ And you never have to take that on faith — **Memory Lens** (`engram preview --
 pip install piia-engram && engram setup
 ```
 
-The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — lists the exact config files it will touch, and writes the MCP connection after a one-keystroke confirm (every write is backed up first; decline and nothing changes). It previews your identity card, then you restart your configured tool; the first conversation can load your approved context through startup or search tools. ([full walkthrough ↓](#quick-start))
+The wizard auto-detects your AI tools — Claude Code, Cursor, Codex, Claude Desktop — lists the exact config files it will touch, and writes the MCP connection after a one-keystroke confirm (every write is backed up first; decline and nothing changes). It previews your identity card, then you restart your configured tool; the first conversation can load your approved identity and long-term knowledge through startup or search tools. ([full walkthrough ↓](#quick-start))
 
 ---
 
@@ -153,7 +154,7 @@ Every time you open a new chat window, switch from Claude Code to Codex, update 
 
 This happens because AI memory today is locked inside each platform. It belongs to the tool, not to you. The tool updates, resets, or gets replaced — and your context disappears with it.
 
-**piia-engram gives you a personal identity layer that lives on your machine, independent of any AI tool.** You tell it once who you are, how you work, and what you've learned. MCP-compatible tools can read the same approved context. New chat, new tool, new version — your identity stays portable.
+**piia-engram gives you a personal identity layer that lives on your machine, independent of any AI tool.** You tell it once who you are, how you work, and what you've learned. MCP-compatible tools can read the same approved identity and long-term knowledge. New chat, new tool, new version — your identity stays portable.
 
 > **piia-engram is not an agent memory database.** Tools like Mem0, Zep, and Letta store task context and session history for AI agents. piia-engram stores *who you are as a person* — your identity, preferences, hard-won lessons, and key decisions. It's a different layer: not what happened in a task, but who is behind every task.
 
@@ -161,7 +162,7 @@ This happens because AI memory today is locked inside each platform. It belongs 
 
 | Without piia-engram | With piia-engram |
 |---|---|
-| New chat window = start from zero | Configured conversations can load your approved context |
+| New chat window = start from zero | Configured conversations can load your approved identity and long-term knowledge |
 | AI tool updates and your preferences vanish | Your identity lives on your machine, survives any update |
 | Switching tools loses accumulated context | Claude Code, Codex, and Cursor read the same memory |
 | Past mistakes get repeated | Lessons learned follow you across tools and sessions |

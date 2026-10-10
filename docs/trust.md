@@ -1,6 +1,8 @@
 # Trust model
 
-piia-engram is a local-first personal AI identity layer. It helps your AI coding tools share the same approved context about you: preferences, standards, lessons, decisions, playbooks, and project snapshots.
+piia-engram is a local-first personal AI identity layer. It helps your AI coding tools share local identity, governed long-term knowledge (preferences, standards, lessons, decisions and playbooks), and project/session context.
+
+Approval and review claims apply to identity and long-term knowledge under the configured policy. Resume output can also include earlier session records (checkpoints and snapshots) that are not reviewed and do not authorize actions.
 
 The trust model is simple:
 
@@ -149,7 +151,7 @@ Do not publish private diagnostic outputs without reviewing and sanitizing them 
 
 ## MCP security boundaries
 
-MCP gives AI tools a way to call local capabilities. That is powerful, so Engram treats trust as a product feature: local files, minimal default tools, user-reviewed memory, a default-on local audit log, and documented limits.
+MCP gives AI tools a way to call local capabilities. That is powerful, so Engram treats trust as a product feature: local files, minimal default tools, governed long-term knowledge, a default-on local audit log, and documented limits.
 
 Important boundaries:
 

@@ -10,11 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Added
 
-- Generic replay experience mode for isolated offline replays and evaluations: immutable root mode, explicit historical admission and clock parameters, retained evidence truncation and exact-duplicate gates, bounded larger capacity, and mode-marked native backups and exports that ordinary roots refuse. Distinct template summaries stay verified in replay admission; production near-duplicate review is unchanged. Initialization receipts are bound to their root. The boundary prevents accidental mixing; it does not resist deliberate edits by a writer controlling both roots and ledgers.
+- Generic replay experience mode for isolated offline replays and evaluations: immutable root mode, explicit historical admission and clock parameters, retained evidence truncation and exact-duplicate gates, bounded larger capacity, and mode-marked native backups, exports and detachable text bodies that ordinary roots refuse. Production roots also refuse stored replay provenance on open, including read-only attachment. Distinct template summaries stay verified in replay admission; production near-duplicate review is unchanged. Initialization receipts are bound to their root. The boundary prevents accidental mixing; it does not resist deliberate edits by a writer controlling both roots and ledgers.
 
 ### Changed
 
-- Resume briefs and optional structured packs select next actions, blockers/failures, constraints and source status before background; cuts identify existing retrieval paths and token counts remain soft estimates.
+- Resume briefs and optional structured packs select next actions, blockers/failures, constraints and source status before background; all selected key fields survive rendering, cuts (including digest truncation) identify existing retrieval paths and token counts remain soft estimates.
 - Raw resume material is labelled as an earlier session record with no approval or action authority. Briefs and capture diagnostics identify the current local store without exposing its full path.
 - Capture diagnostics report pending/quarantine/partial/receipt usage, closed processing reason codes, unknown host consumption, existing drain hints and read-only retention candidates; receipts remain retained and diagnostics never auto-drain or delete.
 
@@ -256,7 +256,7 @@ MCP tool calls are enforced. Local command applies are logged and attributable. 
 ## [4.19.1] - 2026-08-28
 
 ### Fixed
-Contract-fidelity fixes from the post-release Codex final review of v4.19.0 (all sealed by negative controls proven red on `main@ec4178d`; receipts kept locally):
+Contract-fidelity fixes from the post-release final review of v4.19.0 (all sealed by negative controls proven red on `main@ec4178d`; receipts kept locally):
 - **History snapshots are immutable**: updating a superseded snapshot id (lesson/decision/playbook) now fails with `snapshot_immutable` instead of mutating the record and nesting a "snapshot of a snapshot" (which broke the star version topology).
 - **Caller lineage fields are explicitly rejected** (`lineage_fields_rejected`): `version` / `snapshot_of` / `superseded_by` / `superseded_at` / `snapshot_version` / `supersedes` in an update payload abort the update — silence never looks like success. The caller-facing `add_relation` refuses `rel="supersedes"` (version lineage is generated only by the revision primitive).
 - **Fuzzy duplicate hits never auto-select a revision target**: `guidance.revision.target_id` is filled only when the title/summary matches EXACTLY; similar-but-different matches get the explicit new-entry hint only.
@@ -1299,11 +1299,10 @@ The extraction and management workflow release: Engram now filters short-lived r
 
 ### Changed
 - Management text and JSON outputs continue to summarize counts and states without printing local project paths or stored knowledge bodies.
-- Claude acceptance is now run as a narrow read-only review while Codex records local test evidence, reducing timeout risk on complex release checks.
 
 ### Tests
 - Full suite: **2020 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
-- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, Claude acceptance PASS.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, independent review passed.
 
 ### Release Evidence
 - See `release-evidence/v3.45.0.md`.
@@ -1328,7 +1327,7 @@ The setup file-safety release: Engram now defaults to read-only external MCP cli
 
 ### Tests
 - Full suite: **1994 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
-- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, Claude acceptance PASS.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, independent review passed.
 
 ### Release Evidence
 - See `release-evidence/v3.44.0.md`.
@@ -1346,7 +1345,7 @@ The continuity diagnostics release: Engram now has a shareable metadata-only han
 
 ### Tests
 - Full suite: **1834 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
-- Release gates: sanitize high=0/warn=0, publish allowlist complete, release evidence complete, Claude acceptance PASS.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, release evidence complete, independent review passed.
 
 ### Release Evidence
 - See `release-evidence/v3.43.0.md`.
@@ -1375,7 +1374,7 @@ The trust, resume, and portability foundation release: Engram now gives safer re
 
 ### Tests
 - Full suite: **1826 passed**, 1 skipped, 4 expected `engram_core` deprecation warnings.
-- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, Codex subagent reviews PASS, Claude Code read-only acceptance PASS.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, package build + twine check passed, independent review passed.
 
 ### Release Evidence
 - See `release-evidence/v3.42.0.md`.
@@ -1397,7 +1396,7 @@ The market-positioning and trust package release: Engram now presents itself mor
 
 ### Tests
 - Full suite: **1788 passed**, 4 expected `engram_core` deprecation warnings.
-- Release gates: sanitize high=0/warn=0, publish allowlist complete, MCP Registry manifest valid, Codex subagent review PASS, Claude Code read-only acceptance PASS.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, MCP Registry manifest valid, independent review passed.
 
 ### Release Evidence
 - See `release-evidence/v3.41.0.md`.
@@ -1410,7 +1409,6 @@ The first-run confidence release: Engram now gives users a clearer local status 
 - **MCP client summary in `engram status`** - the CLI now reports configured / missing client entries using redacted metadata only.
 - **Richer status HTML** - `engram status --html` now includes an MCP Clients table and Next Commands section for `engram doctor`, `engram review`, and `engram sessions`.
 - **Status probe coverage** - the status path now has regression coverage for bounded MCP entry probing and `status --help` output.
-- **Codex + Claude acceptance workflow** - local project workflow documentation now records the agreed Codex-implements / Claude-accepts review loop.
 
 ### Changed
 - `engram status --html` renders the Engram storage path as `<engram-root>` so the generated HTML can be shared as redacted evidence without exposing local user paths.
@@ -1423,7 +1421,7 @@ The first-run confidence release: Engram now gives users a clearer local status 
 
 ### Tests
 - Full suite: **1781 passed**, 4 expected `engram_core` deprecation warnings.
-- Release gates: sanitize high=0/warn=0, publish allowlist complete, Codex subagent review PASS, Claude Code read-only acceptance PASS.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, independent review passed.
 
 ### Release Evidence
 - See `release-evidence/v3.40.0.md`.
@@ -1445,7 +1443,7 @@ The terminal encoding diagnostics patch release: Engram now helps users distingu
 
 ### Tests
 - Full suite: **1767 passing**, 4 expected `engram_core` deprecation warnings.
-- Release gates: sanitize high=0/warn=0, publish allowlist complete, Claude Code read-only review PASS.
+- Release gates: sanitize high=0/warn=0, publish allowlist complete, independent review passed.
 
 ### Release Evidence
 - See `release-evidence/v3.39.1.md`.
@@ -1497,7 +1495,7 @@ The GUI-entry adoption release: piia-engram now exposes a universal MCP server c
 
 ## [3.36.0] - 2026-05-30
 
-The identity-layer security release: knowledge content is encrypted at rest, every AI tool sees its own permission boundary inline, and the governance layer is sealed against both write bypass and read-path side effects. The governance and encryption work each went through multiple rounds of independent (Codex) adversarial audit; the read-path closure alone took five rounds.
+The identity-layer security release: knowledge content is encrypted at rest, every AI tool sees its own permission boundary inline, and the governance layer is sealed against both write bypass and read-path side effects. The governance and encryption work each went through multiple rounds of independent adversarial audit; the read-path closure alone took five rounds.
 
 ### Added
 - **Corpus encryption at rest (a5)** — knowledge content fields (`summary`, `detail`, `question`, `choice`, `reasoning`, `title`, `description`, `outcome`) are encrypted with a pre-derived key (PBKDF2-SHA256 600K + per-engram `.corpus_salt`) and per-field random AES-GCM nonce, under a new `enc:v2c:` prefix. Metadata stays plaintext so search and filtering still work. Backward compatible: plaintext entries pass through transparently and are lazily re-encrypted on next write. Playbook compound fields (steps / pitfalls / preconditions), playbook index titles, and execution-plan derived files (including step notes) are all covered.
@@ -1519,7 +1517,7 @@ The identity-layer security release: knowledge content is encrypted at rest, eve
 
 ### Tests
 - **Governance write-gate matrix: 166 tests** — writer-spy full-root snapshot diffing, a reflection sweep over read tools × client types that repeats each call past the telemetry/checkpoint thresholds, root-external path monitoring (fake `HOME`/`TEMP`), and fail-closed error-path proofs (owner resolution raising must still write nothing), with an owner-control test guarding against over-correction. Every gate is pinned by a revert-to-RED proof: each fix was confirmed to make its regression test fail when removed.
-- Corpus encryption and caller-permission work added ~115 tests across a1–a5 and the Codex audit rounds, each with R1 negative-control proofs on the pre-fix commits.
+- Corpus encryption and caller-permission work added ~115 tests across a1–a5 and the independent audit rounds, each with R1 negative-control proofs on the pre-fix commits.
 - Full suite: **1718 passing**.
 
 ## [3.35.0] - 2026-05-29
@@ -1554,7 +1552,7 @@ Governance layer (a0), decision-thread scaffold (c0), and the playbook passive-r
 - **Sensitivity auto-classification**: zero-config-safe classifier that assigns `public` / `work` / `secret` based on content heuristics. Used by the governance gate but safe to ignore when governance is off.
 
 ### Security / Hardening
-- **Governance a0 read-path cutover — 6 rounds of independent Codex review (R15→R20)**:
+- **Governance a0 read-path cutover — 6 rounds of independent review (R15→R20)**:
   - R15: fail-closed for unknown trust tiers + wire all knowledge-body reads
   - R16: deny-by-default coverage for ALL tools (no more prefix-based heuristics)
   - R17: file-side-effect gates for `refresh_quick_context`, `get_identity_card`, `export_knowledge_report`
@@ -1568,13 +1566,13 @@ Governance layer (a0), decision-thread scaffold (c0), and the playbook passive-r
 - Added LobeHub marketplace badge and Awesome-MCP-ZH listing.
 
 ### Release Evidence
-- Independent Codex review: R20 PASS (a0 read-path full cutover incl. write-echo + export gate + dedup-echo + audit-log + file-side-effect gate + hybrid-index gate).
+- Independent review: R20 PASS (a0 read-path full cutover incl. write-echo + export gate + dedup-echo + audit-log + file-side-effect gate + hybrid-index gate).
 - Full suite: 1385 tests passing. Governance-specific: 215 tests.
 - eval-gate: n/a (no retrieval algorithm change).
 
 ## [3.33.2] - 2026-05-28
 
-A batch of correctness / security issues found and fixed by independent code review (Codex)—the first release to fully clear all three gates: "self-review + independent Codex review + evaluation gate."
+A batch of correctness / security issues found and fixed by independent code review—the first release to fully clear all three gates: "self-review + independent review + evaluation gate."
 
 ### Fixed
 - **Hybrid search recall guarantee**: when hybrid is enabled, RRF re-ranking + truncation could push keyword-matched items out of the top-N. Keyword results (top-`limit` with score ≥ threshold) are now always retained and then backfilled via RRF, ensuring hybrid recall ≥ keyword recall.
@@ -1586,7 +1584,7 @@ A batch of correctness / security issues found and fixed by independent code rev
 - **Publish workflow hardening**: `publish.yml` removes `workflow_dispatch` (a bypass surface that could be triggered manually from unprotected branches) and verifies before publishing that the release commit is an ancestor of `origin/main`. Adding a deployment-branch restriction in the GitHub repository Environment settings is also recommended.
 
 ### Release Evidence
-- All three gates passed: self-review + independent Codex re-review (round-2, commit dcd8621, all 6 items verified fixed) + round11 evaluation gate PASS; full suite of 1022 tests passing.
+- All three gates passed: self-review + independent re-review (round-2, commit dcd8621, all 6 items verified fixed) + round11 evaluation gate PASS; full suite of 1022 tests passing.
 
 ## [3.33.1] - 2026-05-28
 

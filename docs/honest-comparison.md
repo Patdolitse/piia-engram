@@ -85,7 +85,7 @@ working memory inside one tool.
 | Governance | No documented risk-tiered approval / staging / audit model for writes, as of 2026-06-08; tools carry read-only/destructive hints for the agent, and "audit logs" appear only as a Teams-plan line item without documented implementation ⁵ | Risk-gated staging→verified + audit log |
 | Encryption at rest | No documented at-rest encryption, as of 2026-06-08; local storage is described as "plain text on your disk" ⁶ | Field-level AES-256-GCM |
 | Shape | Note-taking knowledge base | Identity store tuned for AI cold-start |
-| Best when | You want a durable personal wiki/notes graph | You want AI tools to start from the same approved you |
+| Best when | You want a durable personal wiki/notes graph | You want AI tools to start from the same governed identity and long-term knowledge |
 
 **Where Basic Memory wins:** it's a genuinely nice human-first notes system with graph linking. If
 your goal is a personal wiki, it's a better fit than us.

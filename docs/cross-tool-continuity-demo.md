@@ -140,7 +140,7 @@ Show:
 
 Caption:
 
-> A simulated Codex client starts from the same approved identity and recent context.
+> A simulated Codex client starts from the same approved identity, plus earlier session records that are not reviewed.
 
 ### Screenshot 3: Cursor/Windsurf searches
 
