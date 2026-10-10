@@ -10,6 +10,72 @@ SCENARIOS = ("ordinary", "long_background", "failure", "conflict", "missing_next
              "stale_anchor", "mixed_language", "same_name", "pending_verified", "history")
 
 
+@pytest.mark.parametrize("budget", [512, 2000])
+def test_selected_key_lists_survive_markdown_and_agent_output(tmp_path, budget):
+    eng = Engram(root=tmp_path / "store")
+    project = tmp_path / "sample"
+    project.mkdir()
+    state = {"current_focus": "Validate the output.",
+             "next_actions": [f"Check sample component {i}." for i in range(8)],
+             "blocked_on": [f"Blocked by sample check {i}." for i in range(8)],
+             "last_completed": [f"Completed sample check {i}." for i in range(8)],
+             "constraints": ["Preserve API compatibility.", "Keep writes isolated."]}
+    eng.save_project_snapshot(str(project), {"current_state": state})
+    resume = eng.build_project_resume_pack(str(project), token_budget=budget)
+    agent = eng.build_agent_context_pack(str(project), token_budget=budget)
+    brief = eng.get_resume_brief(str(project), token_budget=budget)
+    for key in ("next_actions", "blocked_on", "last_completed"):
+        assert resume["handoff"][key] == state[key]
+        for value in resume["handoff"][key]:
+            assert value in brief["markdown"]
+    for value in state["constraints"]:
+        assert value in brief["markdown"]
+        assert value in agent["constraints"]
+    for key in ("next_actions", "blocked_on"):
+        assert agent["focus"][key] == resume["handoff"][key]
+
+
+@pytest.mark.parametrize("field,label", [("next_actions", "Next"),
+    ("last_completed", "Completed"), ("blocked_on", "Risk")])
+def test_digest_key_truncation_is_visible_in_all_resume_outputs(tmp_path, field, label):
+    eng = Engram(root=tmp_path / "store")
+    project = tmp_path / "sample"
+    project.mkdir()
+    original = "Blocked: " + "validate sample output " * 13 + "before release."
+    eng.save_agent_context("test", f"{label}: {original}\n", project_folder=str(project))
+    resume = eng.build_project_resume_pack(str(project), token_budget=512)
+    selected = resume["handoff"][field][0]
+    assert selected != original and selected.endswith("…")
+    assert any(item["kind"] == field for item in resume["omitted"])
+    assert "get_session_digest" in resume["pack_meta"]["retrieval_hint"]
+    brief = eng.get_resume_brief(str(project), token_budget=512)
+    assert field in brief["omitted"]["sections"]
+    agent = eng.build_agent_context_pack(str(project), token_budget=512)
+    assert agent["pack_meta"]["counts"]["omitted"] > 0
+    if field != "last_completed":
+        assert agent["focus"][field] == resume["handoff"][field]
+
+
+def test_public_copy_scopes_review_to_durable_memory():
+    from pathlib import Path
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    for filename in ("CHANGELOG.md", "CHANGELOG.zh-CN.md"):
+        text = (root / filename).read_text(encoding="utf-8")
+        assert not re.search(r"Codex-implements|Claude-accepts|Claude acceptance|Codex subagent|Claude 验收|"
+                             r"Claude Code 只读|Codex (?:实现|记录|独立|审计)|独立（Codex）", text)
+    for filename in ("docs/trust.md", "docs/user-guide.md", "README.md"):
+        text = (root / filename).read_text(encoding="utf-8")
+        assert "same approved context" not in text
+        assert "earlier session records" in text
+        assert "not reviewed" in text
+    for filename in ("docs/user-guide.zh-CN.md", "README.zh-CN.md"):
+        text = (root / filename).read_text(encoding="utf-8")
+        assert "已认可的上下文" not in text and "已确认上下文" not in text
+        assert "先前会话记录" in text and "未经审核" in text
+
+
 @pytest.mark.parametrize("mode", ["default", "strict"])
 @pytest.mark.parametrize("budget", [128, 256, 512, 1500, None])
 @pytest.mark.parametrize("scenario", SCENARIOS)

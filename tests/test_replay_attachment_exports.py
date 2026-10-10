@@ -224,3 +224,98 @@ def test_structured_export_keeps_scalar_reference_lists():
     assert marked["ids"] == payload["ids"]
     assert marked["references"] == payload["references"]
     assert marked["entries"][0]["id"] in marked["ids"]
+
+
+@pytest.mark.parametrize("mode", ["production", MODE])
+def test_detached_resume_text_retains_replay_provenance(tmp_path, monkeypatch, mode):
+    w = _world(tmp_path / "source", monkeypatch, mode=mode)
+    eng = w.pr._engram(read_only=False)
+    project = tmp_path / "sample"
+    project.mkdir()
+    eng.save_project_snapshot(str(project), {"current_state": {
+        "current_focus": "Validate the sample.",
+        "next_actions": ["Check the output shape."]}})
+    brief = eng.get_resume_brief(str(project), include_resume_pack=True,
+                                 include_agent_context_pack=True)
+    assert brief["byte_size"] == len(brief["markdown"].encode("utf-8"))
+    assert brief["estimated_tokens"] == max(1, len(brief["markdown"]) // 4)
+    normal = Engram(root=tmp_path / "normal")
+    for text in (brief["markdown"], brief["handoff_meta"]["current_focus"],
+                 brief["resume_pack"]["handoff"]["next_actions"][0],
+                 brief["agent_context_pack"]["focus"]["next_actions"][0]):
+        assert carries_replay_marker(text) == (mode == MODE)
+        imported = normal.add_lesson({"summary": "Copied sample", "detail": text})
+        assert (imported.get("error") == "replay_experience_import_refused") == (mode == MODE)
+    if mode == MODE:
+        assert normal.get_lessons(_update_access=False) == []
+
+
+def test_detached_export_bodies_are_marked_but_references_are_unchanged():
+    from piia_engram.isolated_store import mark_replay_export
+
+    payload = {"markdown": "Sample resume", "html": "<p>Sample report</p>",
+               "content": "Sample record", "description": "Sample description",
+               "entries": [{"id": "sample", "summary": "Sample observation",
+                            "detail": "Sample evidence", "title": "Sample title"}],
+               "next_actions": ["Validate the sample."],
+               "constraints": ["Preserve the input format."],
+               "source_session": {"tool": "test", "session_ref": "sample-session"},
+               "ids": ["sample"], "references": ("sample",)}
+    marked = mark_replay_export(payload)
+    for key in ("markdown", "html", "content", "description"):
+        assert carries_replay_marker(marked[key])
+    for key in ("summary", "detail", "title"):
+        assert carries_replay_marker(marked["entries"][0][key])
+    assert carries_replay_marker(marked["next_actions"][0])
+    assert carries_replay_marker(marked["constraints"][0])
+    assert marked["source_session"] == payload["source_session"]
+    assert marked["ids"] == payload["ids"]
+    assert marked["references"] == payload["references"]
+    assert marked["entries"][0]["id"] == "sample"
+    assert mark_replay_export(marked) == marked
+    assert payload["content"] == "Sample record"
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("stored_file", ["knowledge/lessons.json", "knowledge/decisions.json",
+    "knowledge/overflow_archive/lessons.jsonl", "knowledge/overflow_archive/decisions.jsonl"])
+def test_modern_production_attachment_refuses_stored_replay_provenance(
+        tmp_path, monkeypatch, read_only, stored_file):
+    from test_replay_experience import _admit
+
+    replay = _world(tmp_path / "source", monkeypatch)
+    assert _admit(replay)["result"] == "admitted"
+    rows = json.loads((replay.pr.root / "knowledge" / "lessons.json").read_text(encoding="utf-8"))
+    production = _world(tmp_path / "target", monkeypatch, mode="production")
+    path = production.pr.root / stored_file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(rows) if path.suffix == ".json" else json.dumps(rows[0]) + "\n"
+    path.write_text(text, encoding="utf-8")
+    before = _snap(production.pr.root)
+    with pytest.raises(GuardRefused, match="guard_mode_immutable"):
+        Engram(root=production.pr.root, read_only=read_only)
+    assert _snap(production.pr.root) == before
+
+
+@pytest.mark.parametrize("mode", ["production", MODE])
+def test_detached_session_record_text_retains_replay_provenance(tmp_path, monkeypatch, mode):
+    w = _world(tmp_path / "source", monkeypatch, mode=mode)
+    eng = w.pr._engram(read_only=False)
+    project = tmp_path / "sample"
+    project.mkdir()
+    saved = eng.save_agent_context("test", "Next: Validate the sample.\n",
+                                    project_folder=str(project))
+    eng.append_daily_log(str(project), "Sample validation record.")
+    recent = eng.get_recent_context(project_folder=str(project))[0]
+    digest = eng.get_session_digest("test", saved["session_id"])
+    daily = eng.get_daily_log(str(project))
+    assert recent["session_id"] == saved["session_id"]
+    assert digest["source"]["session_ref"] == saved["session_id"]
+    assert daily["file"] and not carries_replay_marker(daily["file"])
+    normal = Engram(root=tmp_path / "normal")
+    for text in (recent["content"], digest["next_actions"][0], daily["content"]):
+        assert carries_replay_marker(text) == (mode == MODE)
+        result = normal.add_lesson({"summary": "Copied sample record", "detail": text})
+        assert (result.get("error") == "replay_experience_import_refused") == (mode == MODE)
+    if mode == MODE:
+        assert normal.get_lessons(_update_access=False) == []
