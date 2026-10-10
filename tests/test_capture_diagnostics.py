@@ -8,6 +8,19 @@ import pytest
 from piia_engram.hooks import spool
 
 
+def offset_only_datetime(monkeypatch):
+    from datetime import datetime
+
+    class OffsetOnlyDatetime(datetime):
+        @classmethod
+        def fromisoformat(cls, value):
+            if value.endswith("Z"):
+                raise ValueError("UTC suffix requires an explicit offset")
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr(spool, "datetime", OffsetOnlyDatetime)
+
+
 def snapshot(root):
     return {str(p.relative_to(root)): (p.read_bytes(), p.stat().st_mtime_ns)
             for p in root.rglob("*") if p.is_file()}
@@ -60,15 +73,7 @@ def test_metadata_covers_all_spool_files_without_disclosing_body(tmp_path):
 def test_old_backlog_shows_existing_drain_hint_without_processing(tmp_path, monkeypatch):
     from datetime import datetime, timezone
 
-    class OffsetOnlyDatetime:
-        @staticmethod
-        def fromisoformat(value):
-            # Exercise the supported Python 3.10 parser on newer interpreters too.
-            if value.endswith("Z"):
-                raise ValueError("UTC suffix requires an explicit offset")
-            return datetime.fromisoformat(value)
-
-    monkeypatch.setattr(spool, "datetime", OffsetOnlyDatetime)
+    offset_only_datetime(monkeypatch)
     directory = spool.spool_dir(tmp_path)
     directory.mkdir(parents=True)
     (directory / "event.jsonl").write_text('{"created_at":"2001-01-01T00:00:00Z","payload":{"summary":"BODY_MARKER"}}', encoding="utf-8")
@@ -88,6 +93,11 @@ def test_old_backlog_shows_existing_drain_hint_without_processing(tmp_path, monk
 def test_recent_failures_use_closed_codes_in_existing_event_metadata(tmp_path, monkeypatch, error, code):
     from piia_engram.hooks import _processor
     spool.enqueue("cursor_writeback", "cursor", {"summary": "BODY_MARKER"}, root=tmp_path)
+    path = next(spool.spool_dir(tmp_path).glob("*.jsonl"))
+    event = json.loads(path.read_text(encoding="utf-8"))
+    event["created_at"] = "2020-01-01T00:00:00Z"
+    path.write_text(json.dumps(event), encoding="utf-8")
+    offset_only_datetime(monkeypatch)
     def fail(*args, **kwargs):
         raise error
     monkeypatch.setattr(_processor, "prepare", fail)
@@ -95,10 +105,19 @@ def test_recent_failures_use_closed_codes_in_existing_event_metadata(tmp_path, m
     result = spool.backlog(tmp_path)
     assert code in json.dumps(result["recent_results"])
     assert "BODY_MARKER" not in json.dumps(result)
+    if isinstance(error, FileNotFoundError):
+        assert result["pending"] == 0 and result["quarantined"] == 1
+        reason = path.parent / "quarantine" / path.with_suffix(".reason.json").name
+        assert json.loads(reason.read_text(encoding="utf-8"))["reason"] == "transcript-missing-age-limit"
 
 
-def test_success_receipt_is_not_approval_or_host_confirmation(tmp_path):
+def test_success_receipt_is_not_approval_or_host_confirmation(tmp_path, monkeypatch):
     spool.enqueue("cursor_writeback", "cursor", {"summary": "Validate the sample format before processing because it avoids mismatched inputs."}, root=tmp_path)
+    path = next(spool.spool_dir(tmp_path).glob("*.jsonl"))
+    event = json.loads(path.read_text(encoding="utf-8"))
+    event["created_at"] = event["created_at"].replace("+00:00", "Z")
+    path.write_text(json.dumps(event), encoding="utf-8")
+    offset_only_datetime(monkeypatch)
     assert spool.drain(tmp_path)["processed"] == 1
     result = spool.backlog(tmp_path)
     assert result["receipts"] == 1

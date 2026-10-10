@@ -67,6 +67,12 @@ def _files(directory: Path) -> list[Path]:
                   key=order)
 
 
+def _parse_created_at(stamp: str) -> datetime:
+    if stamp.endswith("Z"):
+        stamp = stamp[:-1] + "+00:00"
+    return datetime.fromisoformat(stamp)
+
+
 def _created_seconds(path: Path) -> float:
     """Read just the envelope header; age survives prepared-file replacement."""
     try:
@@ -74,10 +80,7 @@ def _created_seconds(path: Path) -> float:
             header = handle.read(4096).decode("utf-8", errors="replace")
         match = re.search(r'"created_at"\s*:\s*"([^"\\]+)"', header)
         if match:
-            stamp = match.group(1)
-            if stamp.endswith("Z"):
-                stamp = stamp[:-1] + "+00:00"
-            created = datetime.fromisoformat(stamp)
+            created = _parse_created_at(match.group(1))
             if created.tzinfo is not None:
                 return created.timestamp()
     except (OSError, ValueError, OverflowError):
@@ -256,7 +259,7 @@ def _shared_storage_failure(exc: Exception) -> bool:
 def _retry_missing_transcript(path: Path, event: dict) -> bool:
     event["transcript_missing_attempts"] = event.get("transcript_missing_attempts", 0) + 1
     _publish(path, _json_bytes(event))
-    age = time.time() - datetime.fromisoformat(event["created_at"]).timestamp()
+    age = time.time() - _parse_created_at(event["created_at"]).timestamp()
     reason = ""
     if age >= MAX_MISSING_TRANSCRIPT_AGE_SECONDS:
         reason = "transcript-missing-age-limit"
@@ -279,7 +282,7 @@ def _read_event(path: Path) -> dict:
         event_id = event["event_id"]
         if not isinstance(event_id, str) or uuid.UUID(event_id).hex != event_id:
             raise ValueError("event-id")
-        created = datetime.fromisoformat(event["created_at"])
+        created = _parse_created_at(event["created_at"])
         if created.tzinfo is None or not isinstance(event.get("payload"), dict):
             raise ValueError("payload")
         from ._processor import validate_payload
