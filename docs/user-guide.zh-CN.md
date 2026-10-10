@@ -7,6 +7,8 @@
 > [快速上手](quickstart-first-value.zh-CN.md)；想了解数据边界，看
 > [信任模型](trust.md)。
 
+接续预算契约、来源标签、存储身份与仅元数据捕获诊断，见[接续预算与捕获诊断](resume-capture.zh-CN.md)。
+
 Engram 是一个**本地优先的 AI 工具个人记忆与身份层**。它让 Claude Code、Codex、
 Cursor、Windsurf、Claude Desktop 等兼容 MCP 的工具共享同一份你已认可的上下文
 ——偏好、标准、经验、决策、操作手册、项目快照——这样你不必每次对话、每次换工具

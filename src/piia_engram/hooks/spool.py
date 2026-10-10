@@ -19,6 +19,12 @@ MAX_PENDING_BYTES = 16 * 1024 * 1024
 MAX_EVENT_BYTES = 128 * 1024
 MAX_MISSING_TRANSCRIPT_ATTEMPTS = 3
 MAX_MISSING_TRANSCRIPT_AGE_SECONDS = 7 * 86400
+CLEANUP_CANDIDATE_AGE_SECONDS = 7 * 86400
+BACKLOG_HINT_AGE_SECONDS = 86400
+RESULT_CODES = frozenset({"processed", "duplicate", "invalid-event", "invalid-prepared-event",
+    "pending-cap", "transcript-missing", "transcript-missing-age-limit",
+    "transcript-missing-retry-limit", "storage-unavailable", "processing-failed",
+    "receipt-failed", "transport-unavailable", "unknown"})
 KINDS = {"claude_stop": "claude_code", "claude_compact": "claude_code",
          "cursor_save": "cursor", "cursor_writeback": "cursor"}
 _DRAINING = ContextVar("hook_spool_draining", default=False)
@@ -135,22 +141,92 @@ def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None) 
 
 def backlog(root: Path | None = None) -> dict:
     """Metadata only, including absent stores. Never mkdir, lock, or instantiate Engram."""
+    from ..connection_report import store_identity
+    now = time.time()
+    candidate = lambda: {"count": 0, "bytes": 0}
     result = {"pending": 0, "pending_bytes": 0, "oldest_age_seconds": None,
               "quarantined": 0, "partial": 0, "cap_events": MAX_PENDING_EVENTS,
-              "cap_bytes": MAX_PENDING_BYTES, "read_only": True}
+              "quarantined_bytes": 0, "partial_bytes": 0, "receipts": 0, "receipt_bytes": 0,
+              "cap_bytes": MAX_PENDING_BYTES, "cap_scope": "pending_only", "read_only": True,
+              "store": store_identity(store_root(root)), "host_consumption": "unknown",
+              "states": {"queued": "Queued locally; durable knowledge not confirmed.",
+                         "processed": "Durable processing receipt; not approved; may contain only a session record.",
+                         "hook_output": "Output success does not confirm host consumption."},
+              "cleanup_candidates": {"quarantine": candidate(), "partial": candidate(),
+                                     "receipts": candidate(), "age_seconds": CLEANUP_CANDIDATE_AGE_SECONDS,
+                                     "read_only": True, "automatic_deletion": False},
+              "receipt_retention": "keep_by_default_for_dedup", "recent_results": [], "drain_hint": ""}
     try:
         directory = spool_dir(root)
         files = _files(directory)
         result["pending"] = len(files)
         result["pending_bytes"] = sum(p.stat().st_size for p in files)
         if files:
-            result["oldest_age_seconds"] = max(0, round(time.time() - min(
+            result["oldest_age_seconds"] = max(0, round(now - min(
                 _created_seconds(p) for p in files), 3))
-        result["quarantined"] = len(list((directory / "quarantine").glob("*.jsonl")))
-        result["partial"] = len(list(directory.glob("*.partial")))
-    except OSError as exc:
-        result["error"] = type(exc).__name__
+        quarantine = directory / "quarantine"
+        receipts = directory / "receipts"
+
+        def regular(folder, pattern):
+            if folder.is_symlink():
+                return []
+            return [p for p in folder.glob(pattern) if not p.is_symlink() and p.is_file()]
+
+        quarantined = regular(quarantine, "*.jsonl")
+        quarantine_files = regular(quarantine, "*")
+        receipt_files = regular(receipts, "*.json")
+        partials = [p for folder in (directory, quarantine, receipts) for p in regular(folder, "*.partial")]
+        result.update(quarantined=len(quarantined),
+                      quarantined_bytes=sum(p.stat().st_size for p in quarantine_files if not p.name.endswith(".partial")),
+                      partial=len(partials), partial_bytes=sum(p.stat().st_size for p in partials),
+                      receipts=len(receipt_files), receipt_bytes=sum(p.stat().st_size for p in receipt_files))
+        for category, paths in (("quarantine", quarantine_files), ("partial", partials)):
+            old = [p for p in paths if now - p.stat().st_mtime >= CLEANUP_CANDIDATE_AGE_SECONDS
+                   and (category != "quarantine" or not p.name.endswith(".partial"))]
+            result["cleanup_candidates"][category] = {"count": len(old), "bytes": sum(p.stat().st_size for p in old)}
+        # Read only bounded envelope/receipt metadata. Never return identifiers,
+        # file names, payloads, transcript locations, or exception messages.
+        candidates = [(p.stat().st_mtime, p, "processing_result") for p in files]
+        candidates += [(p.stat().st_mtime, p, "reason") for p in regular(quarantine, "*.reason.json")]
+        candidates += [(p.stat().st_mtime, p, "receipt") for p in receipt_files]
+        for stamp, path, field in sorted(candidates, key=lambda item: item[0], reverse=True)[:20]:
+            try:
+                with path.open("rb") as handle:
+                    header = handle.read(4096).decode("utf-8", errors="replace")
+                if field == "processing_result":
+                    header = header.split('"payload"', 1)[0]
+                    match = re.search(r'"processing_result"\s*:\s*"([^"\\]+)"', header)
+                    if not match:
+                        continue
+                    code = match.group(1)
+                elif field == "receipt":
+                    metadata = json.loads(header)
+                    code = metadata.get("reason", "processed") if isinstance(metadata, dict) else "unknown"
+                else:
+                    metadata = json.loads(header)
+                    code = metadata.get("reason", "unknown") if isinstance(metadata, dict) else "unknown"
+                code = code if isinstance(code, str) and code in RESULT_CODES else "unknown"
+            except (OSError, ValueError):
+                code = "unknown"
+            result["recent_results"].append({"code": code, "age_seconds": max(0, round(now - stamp, 3))})
+        if result["pending"] and (result["pending"] >= 100 or
+                (result["oldest_age_seconds"] or 0) >= BACKLOG_HINT_AGE_SECONDS):
+            result["drain_hint"] = "Run locally against this store: engram hooks drain --dry-run --json; then engram hooks drain --json"
+    except OSError:
+        result["error"] = "metadata-unavailable"
     return result
+
+
+def _record_result(path: Path, event: dict | None, code: str) -> None:
+    """Reuse the pending envelope for a bounded, body-free processing outcome."""
+    if event is not None:
+        updated = {"processing_result": code if code in RESULT_CODES else "unknown", **event}
+        updated["processing_result"] = code if code in RESULT_CODES else "unknown"
+        event.clear()
+        event.update(updated)
+        data = _json_bytes(updated)
+        if len(data) <= MAX_EVENT_BYTES:
+            _publish(path, data)
 
 
 class PoisonEvent(ValueError):
@@ -260,6 +336,7 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                         phase = "receipt"
                         receipt.parent.mkdir(exist_ok=True)
                         _publish(receipt, _json_bytes({"event_id": event["event_id"],
+                                                      "reason": "processed",
                                                       "processed_at": datetime.now(timezone.utc).isoformat()}))
                         report["processed"] += 1
                     path.unlink()  # only after durable receipt
@@ -272,6 +349,15 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                     failure = transport_failure(exc)
                     if failure:
                         report.update(failure)
+                    code = ("transport-unavailable" if failure else
+                            "storage-unavailable" if _shared_storage_failure(exc) else
+                            "transcript-missing" if phase == "prepare" and isinstance(exc, FileNotFoundError) else
+                            "receipt-failed" if phase == "receipt" else "processing-failed")
+                    try:
+                        _record_result(path, event, code)
+                    except Exception:
+                        # Reporting cannot replace the original failure or discard work.
+                        pass
                     log_failure("hook_spool", "drain deferred (" + type(exc).__name__ + ")", root=root)
                     if _shared_storage_failure(exc):
                         break

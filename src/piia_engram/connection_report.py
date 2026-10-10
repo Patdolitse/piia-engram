@@ -31,6 +31,7 @@ be read is skipped.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -109,6 +110,18 @@ def _short_path(path: Path, home: Path) -> str:
         return "~/" + rel.as_posix()
     except (ValueError, OSError):
         return Path(path).name
+
+
+def store_identity(root: Path) -> dict[str, str]:
+    """Stable local identity, with the same path shortening as doctor configs.
+
+    Hash the normalized root, never store contents; do not expose its full path.
+    Two stores with the same leaf name still have distinct identities.
+    """
+    path = Path(root).expanduser().resolve()
+    normalized = os.path.normcase(str(path))
+    return {"display": _short_path(path, Path.home()),
+            "id": "store-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]}
 
 
 def _servers(config: dict, server_key: str) -> dict:

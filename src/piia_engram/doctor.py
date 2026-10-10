@@ -956,7 +956,21 @@ def _print_connection_report(root, days: int | None = None) -> None:
     age = queue["oldest_age_seconds"]
     W._safe_print(f"  Hook spool: {queue['pending']} pending ({queue['pending_bytes']} bytes), "
                   f"oldest age {age if age is not None else '-'} s, "
-                  f"{queue['quarantined']} quarantined, {queue['partial']} partial")
+                  f"{queue['quarantined']} quarantined ({queue['quarantined_bytes']} bytes), "
+                  f"{queue['partial']} partial ({queue['partial_bytes']} bytes), "
+                  f"{queue['receipts']} receipts ({queue['receipt_bytes']} bytes)")
+    W._safe_print(f"    Store: {queue['store']['display']} [{queue['store']['id']}]")
+    for name, meaning in queue["states"].items():
+        W._safe_print(f"    {name}: {meaning}")
+    W._safe_print(f"    Host consumption: {queue['host_consumption']}")
+    codes = sorted({item['code'] for item in queue['recent_results']})
+    W._safe_print("    Recent result codes: " + (", ".join(codes) or "none"))
+    cleanup = queue['cleanup_candidates']
+    W._safe_print(f"    Cleanup candidates (read-only, 7 days): quarantine {cleanup['quarantine']['count']} "
+                  f"({cleanup['quarantine']['bytes']} bytes), partial {cleanup['partial']['count']} "
+                  f"({cleanup['partial']['bytes']} bytes); receipts kept for dedup; no automatic deletion")
+    if queue['drain_hint']:
+        W._safe_print("    " + queue['drain_hint'])
 
     days = _connections.DEFAULT_DAYS if days is None else days
     print()
