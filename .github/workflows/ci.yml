@@ -30,7 +30,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Worker tests
@@ -55,7 +55,7 @@ jobs:
           exit $rc
       - name: Upload JUnit artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: canonical-count-junit
           path: |
@@ -266,7 +266,7 @@ jobs:
         run: python scripts/check_publish_workflow_order.py
 
       - name: Upload supply-chain dry-run artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: supply-chain-dryrun-artifacts
           path: |
