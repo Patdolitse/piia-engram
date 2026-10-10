@@ -210,21 +210,24 @@ def test_exports_and_entry_roundtrips_keep_mode_marker(tmp_path, monkeypatch, ex
     assert normal.import_all(str(tmp_path / "out2.json"))["error"] == "replay_experience_import_refused"
 
 
-def test_replay_near_duplicate_gate_still_applies(tmp_path, monkeypatch):
+def test_replay_exact_duplicate_gate_still_applies(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
     assert _admit(w)["result"] == "admitted"
     assert _admit(w)["result"] == "duplicate"
     assert len(w.pr._rows(w.pr._engram(read_only=True))) == 1
 
 
-def test_replay_near_duplicate_candidate_keeps_existing_gate(tmp_path, monkeypatch):
+def test_replay_near_duplicate_candidate_is_admitted(tmp_path, monkeypatch):
     w = _world(tmp_path, monkeypatch)
     assert _admit(w)["result"] == "admitted"
     similar = _card("1", "Q1", EARLY)
     similar["summary"] += " revised"
     result = w.pr.admit(similar, "R1", ADMIT, admitted_before=ADMITTED, now=CLOCK)
-    assert result["result"] != "admitted"
-    assert len(_recall(w)["items"]) == 1
+    assert result["result"] == "admitted"
+    rows = w.pr._rows(w.pr._engram(read_only=True))
+    assert len(rows) == 2 and all(row["tier"] == "verified" for row in rows)
+    assert all("duplicate_candidate" not in row for row in rows)
+    assert len(_recall(w)["items"]) == 2
 
 
 def test_normal_direct_entry_ingest_refuses_marker(tmp_path):
