@@ -921,6 +921,9 @@ class IsolatedStore:
                 write_options = {"_replay_admission": True} if self.mode == REPLAY_EXPERIENCE else {}
                 if event_key is not None:
                     write_options["_isolated_event_key"] = event_key
+                    intent = self._pending_event_intent(self.receipts(), event_key)
+                    if intent is None:
+                        intent = self._append(self._event_intent_record(eng, entry, base))
                 try:
                     result = _with_retry(lambda: eng.add_lesson(dict(entry), **write_options))
                 except IoRetryExhausted as exc:
@@ -938,9 +941,60 @@ class IsolatedStore:
             if any(row.get(k) != entry[k] for k in EVIDENCE_KEYS):
                 return self._append({**base, "result": "evidence_fields_missing", "item_id": item_id})
             receipt = {**base, "result": "admitted", "item_id": item_id, "content_sha256": content_hash(row)}
+            if event_key is not None:
+                if (item_id != intent["item_id"] or row.get("event_key") != event_key
+                        or content_hash(row) != intent["content_sha256"]):
+                    return self._append({**base, "result": "event_key_conflict", "item_id": item_id})
+                receipt = self._complete_event_intent(intent)
             if result.get("related_ids"):
                 receipt["related_ids"] = list(result["related_ids"])
             return self._append(receipt)
+
+    @staticmethod
+    def _pending_event_intent(receipts: list[dict], key: str) -> dict | None:
+        return next((r for r in reversed(receipts) if r.get("op") == "admit_intent"
+                     and r.get("result") == "pending" and r.get("event_key") == key), None)
+
+    def _event_intent_record(self, eng, entry: dict, base: dict) -> dict:
+        return {**base, "op": "admit_intent", "result": "pending",
+                "item_id": _sha256_bytes(entry["event_key"].encode("utf-8")),
+                "content_sha256": content_hash(eng._repair_incoming_text(dict(entry))),
+                "root_id": _root_id(self.root)}
+
+    @staticmethod
+    def _complete_event_intent(intent: dict) -> dict:
+        # Copy only operation fields; completion gets a fresh audit timestamp
+        # and hash-chain link, retaining the original logical admission.
+        fields = ("round_id", "admission_sha256", "event_key", "item_id", "content_sha256",
+                  "root_id", "subject_id", "evidence_as_of", "source_family", "admitted_before", "clock")
+        return {**{k: intent[k] for k in fields if k in intent}, "op": "admit", "result": "admitted",
+                "intent_receipt_seq": intent["seq"], "intent_receipt_sha256": _sha256_json(intent)}
+
+    def _event_intent_status(self, eng, intent: dict) -> str:
+        """Validate a pending write without trusting an orphan row alone."""
+        from . import tombstones as _tombstones
+
+        key, item_id = intent["event_key"], intent["item_id"]
+        if (intent.get("root_id") != _root_id(self.root)
+                or item_id != _sha256_bytes(key.encode("utf-8"))):
+            return "event_key_conflict"
+        _, vetoed = self._replay(self.receipts(), None)
+        if (item_id in vetoed or any(stone.get("id") == item_id or stone.get("event_key") == key
+                                    for stone in _tombstones.load(self.root))):
+            return "owner_vetoed"
+        rows = [r for r in self._rows(eng) if r.get("id") == item_id or r.get("event_key") == key]
+        archived = [r for r in eng._archive_current_rows("lesson").values()
+                    if not eng._is_snapshot_record(r) and (r.get("id") == item_id or r.get("event_key") == key)]
+        if not rows:
+            return "duplicate_retired" if archived else "not_written"
+        row = rows[0]
+        if (len(rows) != 1 or any(r.get("id") != item_id for r in archived)
+                or row.get("id") != item_id or row.get("event_key") != key
+                or content_hash(row) != intent.get("content_sha256") or row.get("tier") != "verified"):
+            return "event_key_conflict"
+        if (row.get("status") or "active") != "active":
+            return "duplicate_retired"
+        return "repairable"
 
     def _event_retry(self, eng, entry: dict, base: dict) -> dict | None:
         """Identity remains reserved after retirement, archive, veto or a lost row."""
@@ -951,14 +1005,36 @@ class IsolatedStore:
         originals = [r for r in receipts if r.get("op") == "admit"
                      and r.get("result") == "admitted" and r.get("event_key") == key]
         if not originals:
-            return None  # core still checks orphan rows and tombstones under its lock
+            intent = self._pending_event_intent(receipts, key)
+            if intent is None:
+                # Pre-intent keyed ledgers can have the same committed-row gap.
+                # A full, validated caller retry supplies the missing admission
+                # metadata; bind an intent only after matching the existing row.
+                candidate = self._event_intent_record(eng, entry, base)
+                status = self._event_intent_status(eng, candidate)
+                if status == "not_written":
+                    return None
+                if status != "repairable":
+                    return {**base, "item_id": candidate["item_id"], "result": status}
+                intent = self._append(candidate)
+            reply = {**base, "item_id": intent["item_id"]}
+            if content_hash(eng._repair_incoming_text(dict(entry))) != intent.get("content_sha256"):
+                return {**reply, "result": "event_key_conflict"}
+            status = self._event_intent_status(eng, intent)
+            if status == "repairable":
+                return self._complete_event_intent(intent)
+            if status == "not_written":
+                return None
+            return {**reply, "result": status}
         original = originals[0]
         item_id = original["item_id"]
         reply = {**base, "item_id": item_id, "original_receipt_seq": original["seq"],
                  "original_receipt_sha256": _sha256_json(original)}
         if len(originals) != 1:
             return {**reply, "result": "event_key_conflict"}
-        latest, vetoed = self._replay(receipts, None)
+        experience = self.mode == REPLAY_EXPERIENCE
+        latest, vetoed = self._replay(receipts, None, experience=experience)
+        physical, _ = self._replay(receipts, None)
         if item_id in vetoed or _tombstones.by_id(self.root, item_id) is not None:
             return {**reply, "result": "owner_vetoed"}
         if content_hash(eng._repair_incoming_text(dict(entry))) != original["content_sha256"]:
@@ -974,8 +1050,9 @@ class IsolatedStore:
         if (row is None or row.get("event_key") != key
                 or content_hash(row) != original["content_sha256"]):
             return {**reply, "result": "event_key_conflict"}
-        if (not latest.get(item_id, {}).get("active") or item_id not in rows
-                or (row.get("status") or "active") != "active"):
+        if (not latest.get(item_id, {}).get("active")
+                or (self._library_disagrees(item_id, row, rows, physical) if experience
+                    else item_id not in rows or (row.get("status") or "active") != "active")):
             return {**reply, "result": "duplicate_retired"}
         return {**reply, "result": "already_admitted", "content_sha256": original["content_sha256"]}
 
@@ -1221,12 +1298,27 @@ class IsolatedStore:
                     return r.get("effective_at", r["ts"])
             return r["ts"]
 
-        # Old ledgers replay in their original sequence. Explicit logical
-        # lifecycle events may be submitted out of temporal order.
-        logical_lifecycle = experience and any(r.get("effective_at") and r.get("op") in ("retire", "restore")
-                                              and r.get("result") in ("retired", "restored") for r in receipts)
-        ordered = sorted(receipts, key=(lambda r: (parse_utc_z(event_time(r), "event_time"), r.get("seq", 0)))
-                         if logical_lifecycle else lambda r: r.get("seq", 0))
+        # Reorder only explicit logical events and their item's logical admission
+        # within those events' sequence slots. Unlogical events keep their slots,
+        # including wall-clock lifecycle events for the same or unrelated items.
+        ordered = sorted(receipts, key=lambda r: r.get("seq", 0))
+        if experience:
+            logical_ids = {r.get("item_id") for r in receipts if r.get("effective_at")
+                           and r.get("op") in ("retire", "restore")
+                           and r.get("result") in ("retired", "restored")}
+            slots: dict[str, list[int]] = {}
+            for index, r in enumerate(ordered):
+                logical_admit = (r.get("op") == "admit" and r.get("result") == "admitted"
+                                 and r.get("admitted_before"))
+                logical_op = (r.get("op") in ("retire", "restore") and r.get("effective_at")
+                              and r.get("result") in ("retired", "restored"))
+                if r.get("item_id") in logical_ids and (logical_admit or logical_op):
+                    slots.setdefault(r["item_id"], []).append(index)
+            for indices in slots.values():
+                logical = sorted((ordered[i] for i in indices),
+                                 key=lambda r: (parse_utc_z(event_time(r), "event_time"), r.get("seq", 0)))
+                for index, r in zip(indices, logical):
+                    ordered[index] = r
         for r in ordered:
             op, result, item_id = r.get("op"), r.get("result"), r.get("item_id")
             if op in ("veto_retire", "veto_reject") and result in ("retired", "tombstoned"):
@@ -1427,17 +1519,21 @@ class IsolatedStore:
                     or not all(isinstance(item_id, str) for item_id in ids)
                     or not all(isinstance(digest, str) for digest in hashes)):
                 return {"result": "recall_receipt_invalid", "unchanged": False, "changes": []}
-            latest, vetoed = self._replay(receipts, None)
+            experience = self.mode == REPLAY_EXPERIENCE
+            latest, vetoed = self._replay(receipts, None, experience=experience)
+            physical, _ = self._replay(receipts, None)
             eng = self._engram(read_only=True)
             rows = {r.get("id"): r for r in self._rows(eng)}
             changes = []
             for item_id, digest in zip(ids, hashes):
                 row = rows.get(item_id) or self._archived_raw(eng, item_id)
                 reasons = []
+                physical_retired = row is not None and (
+                    self._library_disagrees(item_id, row, rows, physical) if experience
+                    else (row.get("status") or "active") != "active" or item_id not in rows)
                 if item_id in vetoed or _tombstones.by_id(self.root, item_id) is not None:
                     reasons.append("vetoed")
-                elif (not latest.get(item_id, {}).get("active")
-                      or row is not None and ((row.get("status") or "active") != "active" or item_id not in rows)):
+                elif not latest.get(item_id, {}).get("active") or physical_retired:
                     reasons.append("retired")
                 if row is None:
                     reasons.append("missing")
@@ -1483,8 +1579,9 @@ class IsolatedStore:
                     problems.append(f"duplicate_event_key_receipt:{r['item_id']}")
                 receipt_keys[key] = r["item_id"]
         row_keys: dict[str, str] = {}
+        row_ids: set[str] = set()
 
-        def check_event(row: dict) -> None:
+        def check_event(row: dict, *, active: bool = False) -> None:
             item_id = row.get("id")
             key = row.get("event_key")
             receipt = event_receipts.get(item_id, {})
@@ -1496,13 +1593,16 @@ class IsolatedStore:
                 except GuardRefused:
                     problems.append(f"event_key_invalid:{item_id}")
                     return
-                if key in row_keys and row_keys[key] != item_id:
+                if key in row_keys and (active or row_keys[key] != item_id):
                     problems.append(f"duplicate_event_key:{item_id}")
                 row_keys[key] = item_id
 
         for row in self._rows(eng):
-            check_event(row)
+            check_event(row, active=True)
             item_id = row.get("id")
+            if item_id in row_ids:
+                problems.append(f"duplicate_item_id:{item_id}")
+            row_ids.add(item_id)
             if item_id not in admitted:
                 problems.append(f"row_without_receipt:{item_id}")
             elif content_hash(row) != admitted[item_id]:
@@ -1544,8 +1644,30 @@ class IsolatedStore:
                 if entry.get("action") in ("write", "archive", "delete", "import") and \
                         entry.get("pid") not in receipt_pids and entry.get("action") != "owner_cli":
                     problems.append(f"write_by_unknown_pid:{entry.get('pid')}")
-        return {"problems": sorted(set(problems)), "receipts": len(receipts),
-                "rows": len(self._rows(eng)), "state_sha256": self.state_hash()}
+        repairs = []
+        intents = {r["event_key"]: r for r in receipts if r.get("op") == "admit_intent"
+                   and r.get("result") == "pending"}
+        for row in self._rows(eng):
+            key = row.get("event_key")
+            if isinstance(key, str) and key not in receipt_keys and key not in intents:
+                try:
+                    validate_event_key(key)
+                except GuardRefused:
+                    continue
+                intents[key] = {"item_id": row.get("id"), "event_key": key,
+                                "content_sha256": content_hash(row), "root_id": _root_id(self.root)}
+        for key, intent in intents.items():
+            if key not in receipt_keys:
+                status = self._event_intent_status(eng, intent)
+                problems.append(f"admission_incomplete:{intent['item_id']}")
+                if status in ("repairable", "not_written"):
+                    repairs.append({"item_id": intent["item_id"], "op": "admit",
+                                    "result": "retry_same_key_and_content"})
+        report = {"problems": sorted(set(problems)), "receipts": len(receipts),
+                  "rows": len(self._rows(eng)), "state_sha256": self.state_hash()}
+        if repairs:
+            report["repairs"] = repairs
+        return report
 
 
 # ---------------------------------------------------------------------------

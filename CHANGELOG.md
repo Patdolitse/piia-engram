@@ -14,6 +14,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - Recall receipts seal the input ledger snapshot, ordered item IDs and content hashes, effective cuts, query, limit and omission counts. Body-free verification identifies later retirement, veto, content changes and missing items.
 - Optional logical effective times for replay experience retirement and restoration, retaining real receipt timestamps and old ledger semantics. Owner vetoes still hide cards at every time.
 
+### Fixed
+
+- Keyed isolated admissions recover missing completion receipts on a validated retry after an interrupted write. Reconciliation identifies incomplete admissions and duplicate active rows, while allowing append-only archive copies.
+- Replay experience logical lifecycle operations preserve legacy sequence ordering; event retries and recall receipt verification use the same logical lifecycle state as recall while separately checking stored content and integrity.
+
 ## [4.24.0] - 2026-10-11
 
 ### Added

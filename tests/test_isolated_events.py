@@ -181,3 +181,158 @@ def test_archived_event_key_stays_reserved_and_can_restore_original_item(tmp_pat
     assert w.pr.restore(archived["id"], "round", RESTORE)["result"] == "restored"
     assert _admit(w, archived["event_key"])["result"] == "already_admitted"
     assert w.pr.reconcile()["problems"] == []
+
+
+@pytest.mark.parametrize("mode", ["production", "replay_experience"])
+@pytest.mark.parametrize("failure", [OSError, SystemExit])
+def test_keyed_retry_repairs_committed_row_after_completion_failure(tmp_path, monkeypatch, mode, failure):
+    from piia_engram.isolated_store import IsolatedStore
+
+    w = (_make_world(tmp_path, monkeypatch) if mode == "production" else _world(tmp_path, monkeypatch))
+    append = w.pr._append
+
+    def stop_at_completion(record):
+        if record.get("op") == "admit" and record.get("result") == "admitted":
+            raise failure("synthetic completion failure")
+        return append(record)
+
+    monkeypatch.setattr(w.pr, "_append", stop_at_completion)
+    with pytest.raises(failure):
+        _admit(w, "source:1:lesson:v1")
+    rows = w.pr._rows(w.pr._engram(read_only=True))
+    assert len(rows) == 1
+    w.pr = IsolatedStore.open(w.cfg)
+    assert w.pr.reconcile()["repairs"] == [{"item_id": rows[0]["id"], "op": "admit",
+                                             "result": "retry_same_key_and_content"}]
+    repaired = _admit(w, "source:1:lesson:v1")
+    assert repaired["result"] == "admitted"
+    assert repaired["item_id"] == rows[0]["id"]
+    assert repaired["intent_receipt_seq"] < repaired["seq"]
+    assert len(w.pr._rows(w.pr._engram(read_only=True))) == 1
+    assert _admit(w, "source:1:lesson:v1")["result"] == "already_admitted"
+    assert w.pr.reconcile()["problems"] == []
+    recalled = (_recall(w.pr) if mode == "production" else
+                w.pr.recall("dp-replay", "round", evidence_before=CLOCK,
+                            admitted_before=CLOCK, now=CLOCK))
+    assert [row["id"] for row in recalled["items"]] == [rows[0]["id"]]
+
+
+@pytest.mark.parametrize("keyed", [True, False])
+def test_reconcile_detects_duplicate_occurrences_of_same_active_id(tmp_path, monkeypatch, keyed):
+    w = _make_world(tmp_path, monkeypatch)
+    first = _admit(w, "source:1:lesson:v1" if keyed else None)
+    path = w.pr.root / "knowledge" / "lessons.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    rows.append(dict(rows[0]))
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    problems = w.pr.reconcile()["problems"]
+    assert f"duplicate_item_id:{first['item_id']}" in problems
+    if keyed:
+        assert f"duplicate_event_key:{first['item_id']}" in problems
+
+
+@pytest.mark.parametrize("change,code", [("content", "event_key_conflict"), ("key", "event_key_conflict"),
+                                       ("duplicate", "event_key_conflict"), ("root", "event_key_conflict"),
+                                       ("veto", "owner_vetoed"), ("retire", "duplicate_retired")])
+def test_pending_admission_repair_refuses_drift_and_lifecycle_changes(tmp_path, monkeypatch, change, code):
+    w = _make_world(tmp_path, monkeypatch)
+    append = w.pr._append
+
+    def stop_at_completion(record):
+        if record.get("op") == "admit" and record.get("result") == "admitted":
+            raise OSError("synthetic completion failure")
+        return append(record)
+
+    monkeypatch.setattr(w.pr, "_append", stop_at_completion)
+    with pytest.raises(OSError):
+        _admit(w, "source:1:lesson:v1")
+    monkeypatch.setattr(w.pr, "_append", append)
+    path = w.pr.root / "knowledge" / "lessons.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    item_id = rows[0]["id"]
+    if change == "veto":
+        w.pr.owner_reject(item_id, "Owner")
+    elif change == "retire":
+        w.pr.retire(item_id, "round", RETIRE)
+    elif change == "root":
+        intent = next(r for r in w.pr.receipts() if r.get("op") == "admit_intent")
+        with w.pr.serial():
+            w.pr._append({**{k: v for k, v in intent.items() if k not in (
+                "seq", "prev_sha256", "ts", "root_state_sha256")}, "root_id": "different-root"})
+    else:
+        if change == "content":
+            rows[0]["detail"] += " changed"
+        elif change == "key":
+            rows[0]["event_key"] = "source:2:lesson:v1"
+        else:
+            rows.append(dict(rows[0]))
+        path.write_text(json.dumps(rows), encoding="utf-8")
+    before = w.pr.state_hash()
+    assert _admit(w, "source:1:lesson:v1")["result"] == code
+    assert w.pr.state_hash() == before
+    assert not any(r.get("result") == "admitted" for r in w.pr.receipts())
+    assert "repairs" not in w.pr.reconcile()
+
+
+def test_retry_after_intent_before_write_preserves_original_logical_admission(tmp_path, monkeypatch):
+    from piia_engram.core import Engram
+
+    w = _world(tmp_path, monkeypatch)
+    add = Engram.add_lesson
+
+    def stop_before_write(*args, **kwargs):
+        raise SystemExit("synthetic interruption before write")
+
+    monkeypatch.setattr(Engram, "add_lesson", stop_before_write)
+    with pytest.raises(SystemExit):
+        _admit(w, "source:1:lesson:v1")
+    assert w.pr._rows(w.pr._engram(read_only=True)) == []
+    card = _card("sample", "Q2", EARLY)
+    assert w.pr.admit(dict(card, detail="different"), "round", ADMIT,
+                       event_key="source:1:lesson:v1", admitted_before=CLOCK, now=CLOCK)["result"] == "event_key_conflict"
+    monkeypatch.setattr(Engram, "add_lesson", add)
+    receipt = w.pr.admit(card, "later-round", ADMIT, event_key="source:1:lesson:v1",
+                         admitted_before=CLOCK, now=CLOCK)
+    assert receipt["result"] == "admitted"
+    assert receipt["admitted_before"] == "2020-01-02T00:00:00.000000Z"
+    assert len([r for r in w.pr.receipts() if r.get("op") == "admit_intent"]) == 1
+    assert w.pr.reconcile()["problems"] == []
+
+
+def test_unkeyed_admission_retains_receipt_shape_without_intent(tmp_path, monkeypatch):
+    w = _make_world(tmp_path, monkeypatch)
+    receipt = _admit(w, None)
+    assert receipt["result"] == "admitted"
+    assert all(r.get("op") != "admit_intent" for r in w.pr.receipts())
+    assert not {"event_key", "root_id", "intent_receipt_seq", "intent_receipt_sha256"} & receipt.keys()
+
+
+def test_reconcile_allows_repeated_append_only_archive_copies(tmp_path, monkeypatch):
+    w = _make_world(tmp_path, monkeypatch, limits={"r_max": 1})
+    first = _admit(w, "source:1:lesson:v1")
+    second = _admit(w, "source:2:lesson:v1")
+    w.pr.retire(first["item_id"], "round", RETIRE)
+    w.pr.retire(second["item_id"], "round", RETIRE)
+    archive = w.pr.root / "knowledge" / "overflow_archive"
+    path = next(p for p in archive.iterdir() if p.suffix == ".jsonl")
+    text = path.read_text(encoding="utf-8")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(text)
+    assert w.pr.reconcile()["problems"] == []
+
+
+@pytest.mark.parametrize("mode", ["production", "replay_experience"])
+def test_retry_repairs_keyed_orphan_from_ledger_without_intent(tmp_path, monkeypatch, mode):
+    w = (_make_world(tmp_path, monkeypatch) if mode == "production" else _world(tmp_path, monkeypatch))
+    first = _admit(w, "source:1:lesson:v1")
+    # A pre-intent ledger can contain only init when the row commit survived.
+    init = w.pr.receipts()[0]
+    w.pr.receipts_path.write_text(json.dumps(init) + "\n", encoding="utf-8")
+    assert w.pr.reconcile()["repairs"] == [{"item_id": first["item_id"], "op": "admit",
+                                             "result": "retry_same_key_and_content"}]
+    before = w.pr.state_hash()
+    repaired = _admit(w, "source:1:lesson:v1")
+    assert repaired["result"] == "admitted"
+    assert repaired["item_id"] == first["item_id"]
+    assert w.pr.state_hash() == before
+    assert w.pr.reconcile()["problems"] == []
