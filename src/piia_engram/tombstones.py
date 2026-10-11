@@ -278,6 +278,8 @@ def _append_locked(root, kind: str, row: dict, item_id: str, *, via: str, prior_
     }
     if prior_rejection_id:
         record["prior_rejection_id"] = prior_rejection_id
+    if row.get("event_key") is not None:
+        record["event_key"] = row["event_key"]
     path = _path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:

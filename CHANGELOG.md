@@ -6,6 +6,14 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Optional event keys for automated offline and online evaluation callers in both isolated store modes: idempotent retries, stable conflict refusals, independent identical-template events, and key-based lifecycle and reconciliation checks. Ordinary stores and MCP cannot enable the internal admission path; unkeyed admission keeps existing behavior.
+- Recall receipts seal the input ledger snapshot, ordered item IDs and content hashes, effective cuts, query, limit and omission counts. Body-free verification identifies later retirement, veto, content changes and missing items.
+- Optional logical effective times for replay experience retirement and restoration, retaining real receipt timestamps and old ledger semantics. Owner vetoes still hide cards at every time.
+
 ## [4.24.0] - 2026-10-11
 
 ### Added
