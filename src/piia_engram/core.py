@@ -2333,6 +2333,7 @@ class Engram(
         allow_similar_new: bool = False,
         *,
         _replay_admission: bool = False,
+        _isolated_event_key: str | None = None,
         **extra: Any,
     ) -> dict:
         """Add a lesson learned.
@@ -2342,6 +2343,13 @@ class Engram(
         Isolated replay admission may keep similar new summaries in the related
         tier; this internal option is unavailable to production roots or MCP.
         """
+        if _isolated_event_key is not None:
+            from .isolated_store import GuardRefused, MARKER, root_mode, validate_event_key
+
+            if _review_boundary.mcp_origin() or not (self.root / MARKER).is_file():
+                raise GuardRefused("isolated_event_parameters_not_supported")
+            root_mode(self.root, self._store_mode)
+            validate_event_key(_isolated_event_key)
         if _replay_admission:
             from .isolated_store import GuardRefused, REPLAY_EXPERIENCE
 
@@ -2375,6 +2383,12 @@ class Engram(
             if value is not None:
                 new_lesson[key] = value
 
+        if _isolated_event_key is not None:
+            new_lesson["event_key"] = _isolated_event_key
+            # Ordinary IDs derive from summary + second-resolution timestamp;
+            # distinct events with identical text need independent row IDs too.
+            new_lesson["id"] = hashlib.sha256(_isolated_event_key.encode("utf-8")).hexdigest()
+
         new_lesson = self._normalize_project_scope_for_entry(new_lesson)
 
         if not allow_internal_provenance:
@@ -2402,11 +2416,13 @@ class Engram(
         lesson_ctx = _capacity.CapacityContext(source_tool=new_lesson.get("source_tool", ""))
 
         def _mutate_lessons(lessons: list[dict]) -> list[dict]:
-            guard = self._insert_guard("lesson", new_lesson, lessons)
+            guard = (self._isolated_event_guard(new_lesson, lessons)
+                     if _isolated_event_key is not None else self._insert_guard("lesson", new_lesson, lessons))
             if guard is not None:
                 result_box["result"] = guard
                 return lessons
-            archived_twin = self._batch_archived_twin("lesson", new_lesson)
+            archived_twin = (self._batch_archived_twin("lesson", new_lesson)
+                             if _isolated_event_key is None else None)
             if archived_twin is not None:
                 result_box["result"] = {
                     "status": "duplicate",
@@ -2422,7 +2438,7 @@ class Engram(
             same_scope_lessons = [
                 self._ensure_fields(existing, "lesson")
                 for existing in lessons
-                if self._entries_share_project_scope(new_lesson, existing)
+                if _isolated_event_key is None and self._entries_share_project_scope(new_lesson, existing)
             ]
             best_sim = 0.0
             best_match = None
@@ -2533,7 +2549,7 @@ class Engram(
                     lesson_ctx.supersede_target = supersede_target
             self._redirect_when_verified_full(new_lesson, lessons)
             # A queued capture already in the archive is not placed there again.
-            if _capacity.pool_of(new_lesson) != _capacity.POOL_V:
+            if _isolated_event_key is None and _capacity.pool_of(new_lesson) != _capacity.POOL_V:
                 archived_copy = self._archived_identity_twin("lesson", new_lesson)
                 if archived_copy is not None:
                     result_box["result"] = self._archived_duplicate_result("lesson", archived_copy)
@@ -2545,7 +2561,7 @@ class Engram(
         outcome = self._update_entries(path, "lesson", _mutate_lessons, capacity_ctx=lesson_ctx)
         result = result_box["result"]
         if result.get("status") in ("duplicate", "rejected_before", "duplicate_retired",
-                                    "replay_experience_import_refused"):
+                                    "replay_experience_import_refused", "event_key_conflict"):
             return result
         _gate_note = result_box.get("gate_note", _gate_note)
 
@@ -2570,6 +2586,27 @@ class Engram(
                 if _d:
                     self.increment_domain_usage(_d)
         return self._with_capacity_result(new_lesson, outcome)
+
+    def _isolated_event_guard(self, entry: dict, rows: list[dict]) -> dict | None:
+        """Key-based twin rules, called only by mode-gated isolated admission."""
+        from .isolated_store import PRODUCTION, REPLAY_EXPERIENCE, carries_replay_marker, content_hash
+
+        if self._store_mode == PRODUCTION and carries_replay_marker(entry):
+            from .isolated_store import refuse_replay_import
+
+            return refuse_replay_import(self, entry)
+        if self._store_mode == REPLAY_EXPERIENCE:
+            entry["store_mode"] = REPLAY_EXPERIENCE
+        key = entry["event_key"]
+        if any(stone.get("event_key") == key for stone in _tombstones.load(self.root)):
+            return {"status": "rejected_before"}
+        for row in rows + list(self._archive_current_rows("lesson").values()):
+            if self._is_snapshot_record(row) or row.get("event_key") != key:
+                continue
+            status = ("duplicate_retired" if (row.get("status") or "active") != "active"
+                      else "duplicate" if content_hash(row) == content_hash(entry) else "event_key_conflict")
+            return {"status": status, "existing_id": row.get("id")}
+        return None
 
     def _audit_capacity_moves(self, entry_type: str, outcome: CapacityOutcome, source_tool: str = "") -> None:
         """Audit each archived row (id and reason only) and add it to the open batch's list."""

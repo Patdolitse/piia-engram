@@ -9,6 +9,8 @@
 
 接续预算契约、来源标签、存储身份与仅元数据捕获诊断，见[接续预算与捕获诊断](resume-capture.zh-CN.md)。
 
+自动化离线与在线评估调用方可初始化独立隔离存储，在两种模式的 `IsolatedStore.admit` 中提供 `event_key`：同键同内容返回 `already_admitted`，同键不同内容返回 `event_key_conflict`，不同键允许相同摘要。更正记录应先退役，再用新键准入；不传键时保留既有去重规则。把召回返回的 `receipt` 与决策一起保存，其中包含账本快照、按顺序排列的 ID 与内容哈希、实际时间截止、查询、数量上限和省略计数。`verify_recall_receipt(receipt)` 不返回正文，只报告退役、否决、内容变化或缺失。在 `replay_experience` 中，退役/恢复可传带时区的 `effective_at` 与 `now`，受准入时刻、调用方时钟和真实时钟约束。Owner 否决覆盖所有时间；封存收据仍记录此前实际使用的内容引用。这些准入选项不向 MCP 或普通存储开放，用于防止意外混用与重复，不提供抵抗蓄意篡改的认证。
+
 Engram 是一个**本地优先的 AI 工具个人记忆与身份层**。它让 Claude Code、Codex、
 Cursor、Windsurf、Claude Desktop 等兼容 MCP 的工具共享本地身份、受治理的长期知识
 （偏好、标准、经验、决策和操作手册）及项目与会话上下文，让你不必每次换工具都重新解释自己。

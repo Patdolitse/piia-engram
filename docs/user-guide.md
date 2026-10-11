@@ -11,6 +11,8 @@
 For resume budget contracts, source labels, store identities and metadata-only capture
 diagnostics, see [Resume budgets and capture diagnostics](resume-capture.md).
 
+Automated offline and online evaluation callers can initialize a separate isolated store and supply `event_key` to `IsolatedStore.admit` in either mode: the same key and content return `already_admitted`, different content returns `event_key_conflict`, and distinct keys allow identical summaries. Correct a record by retiring it and admitting a new key. Without keys, existing duplicate rules apply. Store recall's returned `receipt` with the decision; it records the ledger snapshot, ordered IDs and content hashes, effective time cuts, query, limit and omission counts. `verify_recall_receipt(receipt)` reports retired, vetoed, changed or missing items without bodies. In `replay_experience`, retire/restore accept timezone-aware `effective_at` plus `now`, bounded by admission, caller time and real time. Owner vetoes hide cards at all times; sealed receipts remain the record of earlier use. These admission options are unavailable through MCP or ordinary stores, and prevent accidental mixing and duplication rather than deliberate tampering.
+
 Engram is a **local-first personal memory and identity layer for AI tools**. It
 lets Claude Code, Codex, Cursor, Windsurf, Claude Desktop, and other
 MCP-compatible tools share your local identity, governed long-term knowledge

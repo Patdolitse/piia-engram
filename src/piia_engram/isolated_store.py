@@ -113,6 +113,14 @@ class ReceiptsUnreadable(Exception):
 
 
 FAMILY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
+EVENT_KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
+
+
+def validate_event_key(value: Any) -> str:
+    """Opaque, case-sensitive caller identity; never normalize or truncate it."""
+    if not isinstance(value, str) or EVENT_KEY_RE.fullmatch(value) is None:
+        raise GuardRefused("event_key_invalid")
+    return value
 
 
 def _family_key(value: Any) -> str:
@@ -842,7 +850,8 @@ class IsolatedStore:
     # -- the valve: admit, retire, restore --------------------------------------
 
     def admit(self, card: dict, round_id: str, admission: dict, *,
-              admitted_before: str | None = None, now: str | None = None) -> dict:
+              admitted_before: str | None = None, now: str | None = None,
+              event_key: str | None = None) -> dict:
         """Write one admitted card as a verified lesson. Returns the receipt."""
         from .storage import NOT_ADDED_STATUSES, hold_directory_lock
 
@@ -857,6 +866,12 @@ class IsolatedStore:
         base["admission_sha256"] = _sha256_json(admission)
         try:
             self._check_mode()
+            if event_key is not None:
+                from . import review_boundary as _review_boundary
+
+                if _review_boundary.mcp_origin():
+                    raise GuardRefused("isolated_event_parameters_not_supported")
+                base["event_key"] = validate_event_key(event_key)
             if self.mode == PRODUCTION and carries_replay_marker(card):
                 with self.serial():
                     return self._append({**base, "result": "replay_experience_import_refused"})
@@ -880,6 +895,8 @@ class IsolatedStore:
                     return self._append({**base, "result": "evidence_after_clock"})
             entry["store_mode"] = self.mode
         base.update({k: entry[k] for k in ("subject_id", "evidence_as_of", "source_family")})
+        if event_key is not None:
+            entry["event_key"] = event_key
         with self.serial():
             self._recheck_before_write()
             eng = self._engram(read_only=False)
@@ -893,17 +910,23 @@ class IsolatedStore:
             if not guard_ok:
                 return self._append({**base, "result": "risk_refused", "detail": "secret_or_path_shape"})
             with hold_directory_lock(eng._knowledge_dir, timeout=60):
+                if event_key is not None:
+                    prior = self._event_retry(eng, entry, base)
+                    if prior is not None:
+                        return self._append(prior)
                 if self._verified_budget_full(eng):
                     return self._append({**base, "result": "capacity_full"})
                 # Template similarity is only a relation in replay admission;
                 # exact, retired and archived twin guards still run in core.
                 write_options = {"_replay_admission": True} if self.mode == REPLAY_EXPERIENCE else {}
+                if event_key is not None:
+                    write_options["_isolated_event_key"] = event_key
                 try:
                     result = _with_retry(lambda: eng.add_lesson(dict(entry), **write_options))
                 except IoRetryExhausted as exc:
                     return self._append({**base, "result": "io_retry_exhausted", "detail": str(exc)})
             status = str(result.get("status") or "")
-            if result.get("error") or status in NOT_ADDED_STATUSES:
+            if result.get("error") or status in NOT_ADDED_STATUSES or status == "event_key_conflict":
                 code = status or ("queue_full" if "queue" in str(result.get("error", "")) else "write_error")
                 return self._append({**base, "result": code, "item_id": result.get("existing_id") or ""})
             item_id = result.get("id")
@@ -918,6 +941,43 @@ class IsolatedStore:
             if result.get("related_ids"):
                 receipt["related_ids"] = list(result["related_ids"])
             return self._append(receipt)
+
+    def _event_retry(self, eng, entry: dict, base: dict) -> dict | None:
+        """Identity remains reserved after retirement, archive, veto or a lost row."""
+        from . import tombstones as _tombstones
+
+        key = entry["event_key"]
+        receipts = self.receipts()
+        originals = [r for r in receipts if r.get("op") == "admit"
+                     and r.get("result") == "admitted" and r.get("event_key") == key]
+        if not originals:
+            return None  # core still checks orphan rows and tombstones under its lock
+        original = originals[0]
+        item_id = original["item_id"]
+        reply = {**base, "item_id": item_id, "original_receipt_seq": original["seq"],
+                 "original_receipt_sha256": _sha256_json(original)}
+        if len(originals) != 1:
+            return {**reply, "result": "event_key_conflict"}
+        latest, vetoed = self._replay(receipts, None)
+        if item_id in vetoed or _tombstones.by_id(self.root, item_id) is not None:
+            return {**reply, "result": "owner_vetoed"}
+        if content_hash(eng._repair_incoming_text(dict(entry))) != original["content_sha256"]:
+            return {**reply, "result": "event_key_conflict"}
+        rows = {r.get("id"): r for r in self._rows(eng)}
+        row = rows.get(item_id) or self._archived_raw(eng, item_id)
+        key_rows = [r for r in self._rows(eng) if r.get("event_key") == key]
+        key_ids = {r.get("id") for r in key_rows}
+        key_ids.update(r.get("id") for r in eng._archive_current_rows("lesson").values()
+                       if r.get("event_key") == key and not eng._is_snapshot_record(r))
+        if key_ids != {item_id} or len(key_rows) > 1:
+            return {**reply, "result": "event_key_conflict"}
+        if (row is None or row.get("event_key") != key
+                or content_hash(row) != original["content_sha256"]):
+            return {**reply, "result": "event_key_conflict"}
+        if (not latest.get(item_id, {}).get("active") or item_id not in rows
+                or (row.get("status") or "active") != "active"):
+            return {**reply, "result": "duplicate_retired"}
+        return {**reply, "result": "already_admitted", "content_sha256": original["content_sha256"]}
 
     def _verified_budget_full(self, eng) -> bool:
         """At the hard cap the library would quietly park a new verified row in staging;
@@ -956,7 +1016,30 @@ class IsolatedStore:
             "source_tool": "admission_gate",
         }
 
-    def retire(self, item_id: str, round_id: str, admission: dict, *, _op: str = "retire") -> dict:
+    def _lifecycle_time(self, item_id: str, effective_at: str | None, now: str | None) -> dict:
+        """Optional replay clock; absent parameters preserve old receipts exactly."""
+        if effective_at is None and now is None:
+            return {}
+        if self.mode != REPLAY_EXPERIENCE:
+            raise GuardRefused("replay_parameters_not_supported")
+        effective = _parse_clock(effective_at, "effective_at")
+        if effective > datetime.now(timezone.utc) + timedelta(seconds=ADMISSION_FUTURE_SKEW_SECONDS):
+            raise GuardRefused("effective_at_future")
+        clock = _parse_clock(now, "now")
+        if effective > clock:
+            raise GuardRefused("effective_at_after_clock")
+        original = next((r for r in self.receipts() if r.get("op") == "admit"
+                         and r.get("result") == "admitted" and r.get("item_id") == item_id), None)
+        if original is None:
+            raise GuardRefused("not_found")
+        admission = parse_utc_z(original.get("admitted_before", original["ts"]), "admitted_before")
+        if effective < admission:
+            raise GuardRefused("effective_at_before_admission")
+        return {"effective_at": effective.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "clock": clock.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+
+    def retire(self, item_id: str, round_id: str, admission: dict, *, _op: str = "retire",
+               effective_at: str | None = None, now: str | None = None) -> dict:
         base = {"op": _op, "round_id": str(round_id), "item_id": item_id}
         problem = self._receipts_problem()
         if problem:
@@ -969,6 +1052,10 @@ class IsolatedStore:
         base["admission_sha256"] = _sha256_json(admission)
         with self.serial():
             self._recheck_before_write()
+            try:
+                base.update(self._lifecycle_time(item_id, effective_at, now))
+            except GuardRefused as exc:
+                return self._append({**base, "result": exc.code})
             eng = self._engram(read_only=False)
             if not any(r.get("id") == item_id for r in self._rows(eng)):
                 if _op == "veto_retire" and self._archived_raw(eng, item_id) is not None:
@@ -986,7 +1073,8 @@ class IsolatedStore:
                               "item_id": archived_id})
             return self._append({**base, "result": "retired"})
 
-    def restore(self, item_id: str, round_id: str, admission: dict) -> dict:
+    def restore(self, item_id: str, round_id: str, admission: dict, *,
+                effective_at: str | None = None, now: str | None = None) -> dict:
         base = {"op": "restore", "round_id": str(round_id), "item_id": item_id}
         problem = self._receipts_problem()
         if problem:
@@ -999,6 +1087,10 @@ class IsolatedStore:
 
         with self.serial():
             self._recheck_before_write()
+            try:
+                base.update(self._lifecycle_time(item_id, effective_at, now))
+            except GuardRefused as exc:
+                return self._append({**base, "result": exc.code})
             if _tombstones.by_id(self.root, item_id) is not None:
                 return self._append({**base, "result": "rejected_before"})
             if any(r.get("item_id") == item_id and r.get("op") in ("veto_retire", "veto_reject")
@@ -1120,13 +1212,26 @@ class IsolatedStore:
         """(state by id, vetoed ids) from receipts up to ``until`` (all when None)."""
         state: dict[str, dict] = {}
         vetoed: set[str] = set()
-        for r in sorted(receipts, key=lambda x: x.get("seq", 0)):
+
+        def event_time(r: dict) -> str:
+            if experience:
+                if r.get("op") == "admit" and r.get("result") == "admitted":
+                    return r.get("admitted_before", r["ts"])
+                if r.get("op") in ("retire", "restore") and r.get("result") in ("retired", "restored"):
+                    return r.get("effective_at", r["ts"])
+            return r["ts"]
+
+        # Old ledgers replay in their original sequence. Explicit logical
+        # lifecycle events may be submitted out of temporal order.
+        logical_lifecycle = experience and any(r.get("effective_at") and r.get("op") in ("retire", "restore")
+                                              and r.get("result") in ("retired", "restored") for r in receipts)
+        ordered = sorted(receipts, key=(lambda r: (parse_utc_z(event_time(r), "event_time"), r.get("seq", 0)))
+                         if logical_lifecycle else lambda r: r.get("seq", 0))
+        for r in ordered:
             op, result, item_id = r.get("op"), r.get("result"), r.get("item_id")
             if op in ("veto_retire", "veto_reject") and result in ("retired", "tombstoned"):
                 vetoed.add(item_id)  # the Owner's veto hides a card at every time
-            event_time = (r.get("admitted_before", r["ts"])
-                          if experience and op == "admit" and result == "admitted" else r["ts"])
-            if until is not None and parse_utc_z(event_time, "event_time") >= until:
+            if until is not None and parse_utc_z(event_time(r), "event_time") >= until:
                 continue
             if op == "admit" and result == "admitted":
                 state[item_id] = {"active": True, "receipt": r}
@@ -1203,19 +1308,32 @@ class IsolatedStore:
         terms = [t for t in str(query or "").casefold().split() if t]
         empty_query = query is not None and not terms  # design s8: an empty query returns nothing
         excluded: dict[str, int] = {}
+        omitted: dict[str, int] = {}
+        effective_limit = max(0, int(limit))
 
         def _skip(reason: str) -> None:
             excluded[reason] = excluded.get(reason, 0) + 1
+            _omit(reason)
+
+        def _omit(reason: str, count: int = 1) -> None:
+            omitted[reason] = omitted.get(reason, 0) + count
 
         with self.serial():
             receipts = self.receipts()
+            previous = receipts[-1] if receipts else None
+            snapshot = {"ledger_seq": previous["seq"] if previous else 0,
+                        "ledger_sha256": _sha256_json(previous) if previous else "",
+                        "library_sha256": self.state_hash(), "root_id": _root_id(self.root)}
             at_time, vetoed = self._replay(receipts, adm_before, experience=experience)
             latest, _ = self._replay(receipts, None)
+            for item_id in latest.keys() - at_time.keys():
+                _omit("admission_after")
             eng = self._engram(read_only=True)
             rows = {r.get("id"): r for r in self._rows(eng)}
             picked = []
             for item_id, st in at_time.items():
                 if not st["active"]:
+                    _omit("owner_veto" if item_id in vetoed else "retired")
                     continue
                 if item_id in vetoed:
                     _skip("owner_veto")
@@ -1228,6 +1346,7 @@ class IsolatedStore:
                     _skip("family_excluded")
                     continue
                 if wanted_subjects is not None and admit_r.get("subject_id") not in wanted_subjects:
+                    _omit("subject_excluded")
                     continue
                 row = rows.get(item_id) or self._archived_raw(eng, item_id)
                 if row is None:
@@ -1240,22 +1359,26 @@ class IsolatedStore:
                     _skip("hash_mismatch")
                     continue
                 if empty_query:
+                    _omit("empty_query")
                     continue
                 if terms:
                     text = f"{row.get('summary', '')} {row.get('detail', '')}".casefold()
                     if not all(t in text for t in terms):
+                        _omit("query_no_match")
                         continue
                 picked.append((row.get("evidence_as_of", ""), item_id, row))
             picked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            if len(picked) > effective_limit:
+                _omit("limit", len(picked) - effective_limit)
             items = [
                 {"id": item_id, "subject_id": row.get("subject_id"), "summary": row.get("summary"),
                  "detail": row.get("detail"), "evidence_as_of": row.get("evidence_as_of"),
                  "source_family": row.get("source_family"),
                  **({"store_mode": self.mode} if experience else {}),
                  "admitted_round": row.get("admitted_round")}
-                for _ev, item_id, row in picked[:max(0, int(limit))]
+                for _ev, item_id, row in picked[:effective_limit]
             ]
-            self._append({
+            receipt = self._append({
                 "op": "recall", "round_id": str(round_id), "result": "recalled",
                 "decision_point_id": decision_point_id, "decision_point_kind": dp.get("kind"),
                 "decision_point_mode": dp["mode"], "query_sha256": _sha256_bytes(str(query or "").encode("utf-8")),
@@ -1264,12 +1387,66 @@ class IsolatedStore:
                 "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 **({"clock": clock.strftime("%Y-%m-%dT%H:%M:%S.%fZ")} if experience else {}),
                 "returned_ids": [i["id"] for i in items], "excluded": excluded,
+                "snapshot_id": _sha256_json(snapshot), "snapshot": snapshot,
+                "returned_content_sha256": [content_hash(row) for _ev, _id, row in picked[:effective_limit]],
+                "as_of_utc": dp["as_of_utc"], "root_mode": self.mode,
+                "limit": effective_limit, "query": str(query) if query is not None else None,
+                "excluded_families": sorted(exclude),
+                "subject_ids": sorted(wanted_subjects) if wanted_subjects is not None else None,
+                "omitted": omitted,
             })
-        return {"items": items, "excluded": excluded, "mode": dp["mode"],
+        return {"items": items, "excluded": excluded, "mode": dp["mode"], "receipt": receipt,
                 **({"store_mode": self.mode} if experience else {}),
                 "excluded_families": sorted(exclude),
                 "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+
+    def verify_recall_receipt(self, receipt: dict) -> dict:
+        """Verify the sealed ledger copy and current item disposition, without bodies.
+
+        This is an accidental-drift check, not authentication against a writer
+        who can edit the root and ledger. It never repeats the original query.
+        """
+        from . import tombstones as _tombstones
+
+        self._check_mode()
+        with self.serial():
+            problem = self._receipts_problem()
+            if problem:
+                return {"result": "receipts_unreadable", "unchanged": False, "changes": []}
+            receipts = self.receipts()
+            sealed = next((r for r in receipts if isinstance(receipt, dict)
+                           and r.get("seq") == receipt.get("seq")), None)
+            if (sealed is None or sealed != receipt or sealed.get("op") != "recall"
+                    or sealed.get("result") != "recalled" or "snapshot" not in sealed
+                    or sealed["snapshot"].get("root_id") != _root_id(self.root)
+                    or sealed.get("snapshot_id") != _sha256_json(sealed["snapshot"])):
+                return {"result": "recall_receipt_invalid", "unchanged": False, "changes": []}
+            ids, hashes = sealed.get("returned_ids"), sealed.get("returned_content_sha256")
+            if (not isinstance(ids, list) or not isinstance(hashes, list) or len(ids) != len(hashes)
+                    or not all(isinstance(item_id, str) for item_id in ids)
+                    or not all(isinstance(digest, str) for digest in hashes)):
+                return {"result": "recall_receipt_invalid", "unchanged": False, "changes": []}
+            latest, vetoed = self._replay(receipts, None)
+            eng = self._engram(read_only=True)
+            rows = {r.get("id"): r for r in self._rows(eng)}
+            changes = []
+            for item_id, digest in zip(ids, hashes):
+                row = rows.get(item_id) or self._archived_raw(eng, item_id)
+                reasons = []
+                if item_id in vetoed or _tombstones.by_id(self.root, item_id) is not None:
+                    reasons.append("vetoed")
+                elif (not latest.get(item_id, {}).get("active")
+                      or row is not None and ((row.get("status") or "active") != "active" or item_id not in rows)):
+                    reasons.append("retired")
+                if row is None:
+                    reasons.append("missing")
+                elif content_hash(row) != digest:
+                    reasons.append("content_changed")
+                if reasons:
+                    changes.append({"id": item_id, "reasons": reasons})
+            return {"result": "verified", "snapshot_id": sealed["snapshot_id"],
+                    "unchanged": not changes, "changes": changes}
 
     # -- per-round reconciliation (design s6) --------------------------------------------
 
@@ -1291,7 +1468,40 @@ class IsolatedStore:
         moved = {r["item_id"] for r in receipts if r.get("result") in ("retired", "archived")}
         vetoed = {r["item_id"] for r in receipts if r.get("op") == "veto_reject" and r.get("result") == "tombstoned"}
         eng = self._engram(read_only=True)
+        successful_admissions = [r for r in receipts if r.get("op") == "admit" and r.get("result") == "admitted"]
+        event_receipts = {r["item_id"]: r for r in successful_admissions}
+        receipt_keys: dict[str, str] = {}
+        for r in successful_admissions:
+            key = r.get("event_key")
+            if key is not None:
+                try:
+                    validate_event_key(key)
+                except GuardRefused:
+                    problems.append(f"event_key_invalid_receipt:{r['item_id']}")
+                    continue
+                if key in receipt_keys:
+                    problems.append(f"duplicate_event_key_receipt:{r['item_id']}")
+                receipt_keys[key] = r["item_id"]
+        row_keys: dict[str, str] = {}
+
+        def check_event(row: dict) -> None:
+            item_id = row.get("id")
+            key = row.get("event_key")
+            receipt = event_receipts.get(item_id, {})
+            if key != receipt.get("event_key"):
+                problems.append(f"event_key_mismatch:{item_id}")
+            if key is not None:
+                try:
+                    validate_event_key(key)
+                except GuardRefused:
+                    problems.append(f"event_key_invalid:{item_id}")
+                    return
+                if key in row_keys and row_keys[key] != item_id:
+                    problems.append(f"duplicate_event_key:{item_id}")
+                row_keys[key] = item_id
+
         for row in self._rows(eng):
+            check_event(row)
             item_id = row.get("id")
             if item_id not in admitted:
                 problems.append(f"row_without_receipt:{item_id}")
@@ -1302,6 +1512,10 @@ class IsolatedStore:
         for row in eng._read_overflow_archive("lesson"):
             if eng._is_snapshot_record(row):
                 continue
+            check_event(row)
+            if (event_receipts.get(row.get("id"), {}).get("event_key") is not None
+                    and content_hash(row) != admitted[row["id"]]):
+                problems.append(f"content_changed:{row.get('id')}")
             if row.get("id") not in moved:
                 problems.append(f"archived_without_receipt:{row.get('id')}")
         from . import tombstones as _tombstones
