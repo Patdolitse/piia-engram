@@ -909,13 +909,17 @@ class IsolatedStore:
             guard_ok, _reason = output_guard_item({k: entry[k] for k in ("summary", "detail") + EVIDENCE_KEYS})
             if not guard_ok:
                 return self._append({**base, "result": "risk_refused", "detail": "secret_or_path_shape"})
+            intent = None
             with hold_directory_lock(eng._knowledge_dir, timeout=60):
                 if event_key is not None:
+                    intent = self._pending_event_intent(self.receipts(), event_key)
                     prior = self._event_retry(eng, entry, base)
                     if prior is not None:
+                        # Recovery preflight must not cancel an interrupted
+                        # operation on content or identity drift.
                         return self._append(prior)
                 if self._verified_budget_full(eng):
-                    return self._append({**base, "result": "capacity_full"})
+                    return self._append_admission_refusal({**base, "result": "capacity_full"}, intent)
                 # Template similarity is only a relation in replay admission;
                 # exact, retired and archived twin guards still run in core.
                 write_options = {"_replay_admission": True} if self.mode == REPLAY_EXPERIENCE else {}
@@ -927,33 +931,110 @@ class IsolatedStore:
                 try:
                     result = _with_retry(lambda: eng.add_lesson(dict(entry), **write_options))
                 except IoRetryExhausted as exc:
-                    return self._append({**base, "result": "io_retry_exhausted", "detail": str(exc)})
+                    return self._append_admission_refusal(
+                        {**base, "result": "io_retry_exhausted", "detail": str(exc)}, intent)
+                except GuardRefused as exc:
+                    if intent is None:
+                        raise  # preserve the unkeyed exception path
+                    return self._append_admission_refusal({**base, "result": exc.code}, intent)
             status = str(result.get("status") or "")
             if result.get("error") or status in NOT_ADDED_STATUSES or status == "event_key_conflict":
                 code = status or ("queue_full" if "queue" in str(result.get("error", "")) else "write_error")
-                return self._append({**base, "result": code, "item_id": result.get("existing_id") or ""})
+                return self._append_admission_refusal(
+                    {**base, "result": code, "item_id": result.get("existing_id") or ""}, intent)
             item_id = result.get("id")
             for archived_id in result.get("overflow_archived_ids") or []:
                 self._append({**base, "op": "archived", "result": "archived", "item_id": archived_id})
             _kind, row = eng._find_item_by_id(item_id)
             if row is None or row.get("tier") != "verified":
-                return self._append({**base, "result": "not_verified_after_write", "item_id": item_id})
+                return self._append_admission_refusal(
+                    {**base, "result": "not_verified_after_write", "item_id": item_id}, intent)
             if any(row.get(k) != entry[k] for k in EVIDENCE_KEYS):
-                return self._append({**base, "result": "evidence_fields_missing", "item_id": item_id})
+                return self._append_admission_refusal(
+                    {**base, "result": "evidence_fields_missing", "item_id": item_id}, intent)
             receipt = {**base, "result": "admitted", "item_id": item_id, "content_sha256": content_hash(row)}
             if event_key is not None:
                 if (item_id != intent["item_id"] or row.get("event_key") != event_key
                         or content_hash(row) != intent["content_sha256"]):
-                    return self._append({**base, "result": "event_key_conflict", "item_id": item_id})
+                    return self._append_admission_refusal(
+                        {**base, "result": "event_key_conflict", "item_id": item_id}, intent)
                 receipt = self._complete_event_intent(intent)
             if result.get("related_ids"):
                 receipt["related_ids"] = list(result["related_ids"])
             return self._append(receipt)
 
     @staticmethod
-    def _pending_event_intent(receipts: list[dict], key: str) -> dict | None:
-        return next((r for r in reversed(receipts) if r.get("op") == "admit_intent"
-                     and r.get("result") == "pending" and r.get("event_key") == key), None)
+    def _pending_event_intents(receipts: list[dict]) -> list[dict]:
+        closed = {(r["intent_receipt_seq"], r["intent_receipt_sha256"])
+                  for r in receipts
+                  if ((r.get("op") == "admit" and r.get("result") == "admitted")
+                      or (r.get("op") == "admit_intent_close" and r.get("result") in ("refused", "abandoned")))
+                  and isinstance(r.get("intent_receipt_seq"), int)
+                  and isinstance(r.get("intent_receipt_sha256"), str)
+                  and r["intent_receipt_seq"] < r["seq"]}
+        return [r for r in receipts if r.get("op") == "admit_intent" and r.get("result") == "pending"
+                and (r["seq"], _sha256_json(r)) not in closed]
+
+    @classmethod
+    def _pending_event_intent(cls, receipts: list[dict], key: str) -> dict | None:
+        return next((r for r in reversed(cls._pending_event_intents(receipts))
+                     if r.get("event_key") == key), None)
+
+    def _close_event_intent(self, intent: dict, refusal: dict | None = None) -> dict:
+        record = {"op": "admit_intent_close", "result": "refused" if refusal is not None else "abandoned",
+                  "event_key": intent["event_key"], "item_id": intent["item_id"],
+                  "intent_receipt_seq": intent["seq"], "intent_receipt_sha256": _sha256_json(intent)}
+        if refusal is not None:
+            record.update(refusal_result=refusal["result"], refusal_receipt_seq=refusal["seq"],
+                          refusal_receipt_sha256=_sha256_json(refusal))
+        return self._append(record)
+
+    def _append_admission_refusal(self, record: dict, intent: dict | None) -> dict:
+        receipt = self._append(record)
+        if intent is not None:
+            self._close_event_intent(intent, receipt)
+        return receipt  # existing admit refusal shape remains unchanged
+
+    def _event_intent_has_row(self, eng, intent: dict) -> bool:
+        key, item_id = intent["event_key"], intent["item_id"]
+        return any(row.get("id") == item_id or row.get("event_key") == key
+                   for row in self._rows(eng) + list(eng._archive_current_rows("lesson").values())
+                   if not eng._is_snapshot_record(row))
+
+    def abandon_intent(self, event_key: str, *, intent_receipt_seq: int,
+                       intent_receipt_sha256: str) -> dict:
+        """Close only a caller-selected pending intent with no active or archived row.
+
+        This library operation is deliberately unavailable to MCP callers.
+        It never removes rows, receipts, tombstones or successful key reservations.
+        """
+        from . import review_boundary as _review_boundary
+        from .storage import hold_directory_lock
+
+        if _review_boundary.mcp_origin():
+            raise GuardRefused("isolated_event_parameters_not_supported")
+        key = validate_event_key(event_key)
+        problem = self._receipts_problem()
+        if problem:
+            return self._refuse_unreadable("abandon_intent", problem)
+        with self.serial():
+            self._recheck_before_write()
+            eng = self._engram(read_only=True)
+            base = {"op": "abandon_intent", "event_key": key}
+            with hold_directory_lock(eng._knowledge_dir, timeout=60):
+                intent = self._pending_event_intent(self.receipts(), key)
+                if intent is None:
+                    return self._append({**base, "result": "intent_not_pending"})
+                base["item_id"] = intent["item_id"]
+                if (intent_receipt_seq != intent["seq"]
+                        or intent_receipt_sha256 != _sha256_json(intent)):
+                    return self._append({**base, "result": "intent_reference_conflict"})
+                if self._event_intent_has_row(eng, intent):
+                    return self._append({**base, "result": "intent_has_row"})
+                status = self._event_intent_status(eng, intent)
+                if status != "not_written":
+                    return self._append({**base, "result": status})
+                return self._close_event_intent(intent)
 
     def _event_intent_record(self, eng, entry: dict, base: dict) -> dict:
         return {**base, "op": "admit_intent", "result": "pending",
@@ -1645,28 +1726,43 @@ class IsolatedStore:
                         entry.get("pid") not in receipt_pids and entry.get("action") != "owner_cli":
                     problems.append(f"write_by_unknown_pid:{entry.get('pid')}")
         repairs = []
-        intents = {r["event_key"]: r for r in receipts if r.get("op") == "admit_intent"
-                   and r.get("result") == "pending"}
+        abandons = []
+        intents = self._pending_event_intents(receipts)
+        known_intent_keys = {r["event_key"] for r in receipts if r.get("op") == "admit_intent"
+                             and r.get("result") == "pending"}
         for row in self._rows(eng):
             key = row.get("event_key")
-            if isinstance(key, str) and key not in receipt_keys and key not in intents:
+            if isinstance(key, str) and key not in receipt_keys and key not in known_intent_keys:
                 try:
                     validate_event_key(key)
                 except GuardRefused:
                     continue
-                intents[key] = {"item_id": row.get("id"), "event_key": key,
-                                "content_sha256": content_hash(row), "root_id": _root_id(self.root)}
-        for key, intent in intents.items():
-            if key not in receipt_keys:
-                status = self._event_intent_status(eng, intent)
+                intents.append({"item_id": row.get("id"), "event_key": key,
+                                "content_sha256": content_hash(row), "root_id": _root_id(self.root)})
+                known_intent_keys.add(key)
+        intent_counts = {}
+        for intent in intents:
+            key = intent["event_key"]
+            intent_counts[key] = intent_counts.get(key, 0) + 1
+        for intent in intents:
+            status = self._event_intent_status(eng, intent)
+            if not self._event_intent_has_row(eng, intent):
+                problems.append(f"admission_intent_dangling:{intent['item_id']}")
+                if status == "not_written" and "seq" in intent and intent_counts[intent["event_key"]] == 1:
+                    abandons.append({"item_id": intent["item_id"], "op": "abandon_intent",
+                                     "result": "abandon_if_no_row", "intent_receipt_seq": intent["seq"],
+                                     "intent_receipt_sha256": _sha256_json(intent)})
+            else:
                 problems.append(f"admission_incomplete:{intent['item_id']}")
-                if status in ("repairable", "not_written"):
+                if status == "repairable" and intent_counts[intent["event_key"]] == 1:
                     repairs.append({"item_id": intent["item_id"], "op": "admit",
                                     "result": "retry_same_key_and_content"})
         report = {"problems": sorted(set(problems)), "receipts": len(receipts),
                   "rows": len(self._rows(eng)), "state_sha256": self.state_hash()}
         if repairs:
             report["repairs"] = repairs
+        if abandons:
+            report["abandons"] = abandons
         return report
 
 
