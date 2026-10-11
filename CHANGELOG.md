@@ -16,6 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- Refused keyed isolated admissions close their pending intents without changing admission receipt shapes. Reconciliation distinguishes dangling intents from committed rows awaiting completion; callers can explicitly abandon an intent with no row through a library-only operation.
 - Keyed isolated admissions recover missing completion receipts on a validated retry after an interrupted write. Reconciliation identifies incomplete admissions and duplicate active rows, while allowing append-only archive copies.
 - Replay experience logical lifecycle operations preserve legacy sequence ordering; event retries and recall receipt verification use the same logical lifecycle state as recall while separately checking stored content and integrity.
 
