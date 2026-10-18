@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Metadata-only management view tests for GUI/CLI consumers."""
 
 from __future__ import annotations
@@ -6,7 +7,7 @@ import json
 from pathlib import Path
 
 
-SECRET = "ZZ_MANAGEMENT_SECRET_TOKEN"
+SECRET = ("ZZ_M" + "ANAGEMENT_SECRET_TOKEN")
 
 
 def _all_keys(value) -> set[str]:

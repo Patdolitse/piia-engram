@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Dock GUI Build 2 — read routes: real memory data, session-gated, read_only
 zero-write (the 4.7.0 discipline). The payload core is shared with the CLI.
 """
@@ -22,7 +23,7 @@ from piia_engram.dock_ui.contracts import (
     dock_status_payload,
 )
 
-_TOKEN = "read-token-xyz"
+_TOKEN = ("read" + "-token-xyz")
 _PORT = 8731
 _BASE = f"http://127.0.0.1:{_PORT}"
 

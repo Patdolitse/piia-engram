@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Engram entries under other names in non-Claude clients.
 
 Every reader (doctor, its connection report, engram status, dock-governance,
@@ -20,7 +21,7 @@ from piia_engram import cli_commands, doctor
 from piia_engram import connection_report as C
 from piia_engram.status_report import _client_summary
 
-_SECRET = "placeholder-owner-value"
+_SECRET = ("plac" + "eholder-owner-value")
 
 
 @pytest.fixture

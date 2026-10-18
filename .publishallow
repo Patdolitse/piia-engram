@@ -204,3 +204,9 @@ assets/**
 examples/**
 demos/**
 worker/**
+
+# Supply-chain configuration
+.codexignore
+requirements.lock
+.github/dependabot.yml
+.github/workflows/plugin-scanner.yml

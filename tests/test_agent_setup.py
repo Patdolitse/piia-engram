@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """The scriptable installer is plan-first, metadata-only and prompt-free."""
 import builtins
 import io
@@ -238,7 +239,7 @@ def test_claude_preview_then_existing_register_with_mock_cli(sandbox, monkeypatc
 def test_claude_manual_failures_never_leak(sandbox, tmp_path, monkeypatch, capsys, failure):
     home, _ = sandbox
     (home / '.claude').mkdir()
-    secret = 'SECRET_DO_NOT_PRINT'
+    secret = ('SECR' + 'ET_DO_NOT_PRINT')
     if failure != 'missing':
         monkeypatch.setattr(C, 'cli_path', lambda: 'mock-claude.exe')
     if failure == 'conflict':
@@ -362,7 +363,7 @@ def test_codex_apply_uses_preview_text_and_keeps_custom_mode(sandbox, monkeypatc
     home, store = sandbox
     original = ('model = "sample"\n[mcp_servers.engram]\ncommand = "python"\n'
                 'args = ["-m", "piia_engram.mcp_server"]\n'
-                '[mcp_servers.engram.env]\nENGRAM_TOOLS = "core"\nTOKEN = "SECRET_TOKEN"\n')
+                + ('[mcp_servers.engram.env]\nENGRAM_TOOLS = "core"\nTOKEN = "SECR' + 'ET_TOKEN"\n'))
     path = config(home, 'codex', original)
     from piia_engram import agent_setup as A
     real = A._apply

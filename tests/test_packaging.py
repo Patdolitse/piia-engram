@@ -233,7 +233,7 @@ def test_publish_workflow_release_trigger_and_trusted_publishing():
     assert "release_sanitize_check.py --internal --strict" in content
     assert "python -m build" in content
     assert "check_release_artifact_private_terms.py dist --strict" in content
-    assert "pypa/gh-action-pypi-publish@release/v1" in content
+    assert "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33" in content
     assert "skip-existing: true" in content
     assert "secrets.PYPI_API_TOKEN" not in content
     assert "password:" not in content

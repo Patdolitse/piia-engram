@@ -393,7 +393,7 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
                 content = ""
         if tool_id == "cursor":
             has_marker = bool(content.strip()) and (
-                "engram" in content.lower() or W._SNIPPET_FRESHNESS_TOKEN in content
+                "engram" in content.lower() or W._SNIPPET_FRESHNESS_MARKER in content
             )
         else:
             has_marker = W._INSTRUCTION_MARKER in content or (
@@ -404,7 +404,7 @@ def _build_config_integrity_report(cwd: Path | None = None) -> dict:
             "path": str(path),
             "exists": exists,
             "has_marker": has_marker,
-            "has_resume_brief": W._SNIPPET_FRESHNESS_TOKEN in content,
+            "has_resume_brief": W._SNIPPET_FRESHNESS_MARKER in content,
             "snippet_state": W._instruction_snippet_state(tool_id, content, strict=snippet_strict),
             "line_count": len(content.splitlines()) if content else 0,
             "sha256_12": _file_sha256_12(path) if exists else "",
@@ -1348,10 +1348,10 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
                 why = "an older default snippet"
             elif strict:
                 why = "default text that auto-saves; strict approval wants read + propose"
-                if W._SNIPPET_FRESHNESS_TOKEN not in content:
-                    why = f"missing '{W._SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
-            elif W._SNIPPET_FRESHNESS_TOKEN not in content:
-                why = f"missing '{W._SNIPPET_FRESHNESS_TOKEN}' directive (pre-v3.31)"
+                if W._SNIPPET_FRESHNESS_MARKER not in content:
+                    why = f"missing '{W._SNIPPET_FRESHNESS_MARKER}' directive (pre-v3.31)"
+            elif W._SNIPPET_FRESHNESS_MARKER not in content:
+                why = f"missing '{W._SNIPPET_FRESHNESS_MARKER}' directive (pre-v3.31)"
             else:
                 why = "an older default snippet"
             W._safe_print(f"    [stale] {tool_id}: {why}")
@@ -1362,9 +1362,9 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
                 "         Engram's default text may be newer than your block (for example the rules "
                 "on what to keep); merge it by hand if you want it. Your block is never overwritten."
             )
-            if W._SNIPPET_FRESHNESS_TOKEN not in content:
+            if W._SNIPPET_FRESHNESS_MARKER not in content:
                 W._safe_print(
-                    f"         It does not mention '{W._SNIPPET_FRESHNESS_TOKEN}'; "
+                    f"         It does not mention '{W._SNIPPET_FRESHNESS_MARKER}'; "
                     "AI may not resume across tools."
                 )
             snippet_found = True

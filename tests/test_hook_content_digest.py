@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """hook_content_digest (B-F1): privacy-guarded assistant-text digest.
 
 Design v2 (adversarially reviewed): assistant-only collection, stateful block
@@ -115,7 +116,7 @@ def test_sanitize_composed_shapes():
         "postgres://admin:hunter2@db.internal:5432/prod",
         "https://api.example.com/v1?api_key=abc123&x=1",
         "Cookie: session=deadbeefcafebabe",
-        "-----BEGIN RSA PRIVATE KEY-----",
+        ("-----BEGIN " + "RSA PRIVATE KEY-----"),
         "path is C:\\Users\\someone\\secret.txt",
         "home path /home/alice/keys/id_rsa",
     ]

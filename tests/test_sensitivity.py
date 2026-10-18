@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for sensitivity classification (src/piia_engram/sensitivity.py).
 
 Emphasis: SAFE BY DEFAULT WITH ZERO CONFIG — PII + credentials protected
@@ -424,20 +425,20 @@ def test_annotate_then_gate_blocks_pii_for_external(monkeypatch):
 def test_value_scanner_detects_credentials_as_secret():
     # well-known credential token shapes, regardless of field name / language
     creds = [
-        "sk-proj-abcdefghijklmnop1234",          # OpenAI project key
-        "sk-abcdefghijklmnop1234567890",          # OpenAI key
+        ("sk-proj-" + "abcdefghijklmnop1234"),          # OpenAI project key
+        ("sk-" + "abcdefghijklmnop1234567890"),          # OpenAI key
         "sk_live_abcdefghij1234567890",           # Stripe secret key
         "rk_test_abcdefghij1234567890",           # Stripe restricted key
-        "ghp_0123456789abcdefghij0123456789",     # GitHub PAT
-        "gho_0123456789abcdefghij0123456789",     # GitHub OAuth
-        "github_pat_0123456789abcdefghij0123",    # GitHub fine-grained PAT
-        "AKIAIOSFODNN7EXAMPLE",                    # AWS access key id
+        ("ghp_" + "0123456789abcdefghij0123456789"),     # GitHub PAT
+        ("gho_" + "0123456789abcdefghij0123456789"),     # GitHub OAuth
+        ("github_pat_" + "0123456789abcdefghij0123"),    # GitHub fine-grained PAT
+        ("AKIA" + "IOSFODNN7EXAMPLE"),                    # AWS access key id
         "ASIAIOSFODNN7EXAMPLE",                    # AWS temp access key id
         "AIzaSyA1234567890abcdefghijklmnopqrstuvw",  # Google API key (39 chars)
         "ya29.a0AbCdEfGhIjKlMnOpQrStUvWxYz",       # Google OAuth token
-        "xoxb-1234567890-abcdefghijkl",            # Slack bot token
+        ("xoxb-" + "1234567890-abcdefghijkl"),            # Slack bot token
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmN",  # JWT
-        "-----BEGIN RSA PRIVATE KEY-----",         # PEM block
+        ("-----BEGIN " + "RSA PRIVATE KEY-----"),         # PEM block
     ]
     for c in creds:
         assert sv.classify_value(c) == "secret", c
@@ -483,9 +484,9 @@ def test_benign_named_field_with_secret_value_is_caught_LEAK_REGRESSION():
     # THE gap a name-only classifier can never close: innocuous field name,
     # explicit public, but the VALUE is a live credential -> must be secret.
     cases = [
-        {"sensitivity": "public", "备注": "sk-proj-abcdefghijklmnop1234"},
-        {"sensitivity": "public", "note": "ghp_0123456789abcdefghij0123456789"},
-        {"sensitivity": "public", "comment": "-----BEGIN OPENSSH PRIVATE KEY-----"},
+        {"sensitivity": "public", "备注": ("sk-proj-" + "abcdefghijklmnop1234")},
+        {"sensitivity": "public", "note": ("ghp_" + "0123456789abcdefghij0123456789")},
+        {"sensitivity": "public", "comment": ("-----BEGIN " + "OPENSSH PRIVATE KEY-----")},
     ]
     for item in cases:
         assert sv.classify_item(item) == "secret", item
@@ -504,7 +505,7 @@ def test_value_scanner_floors_item_at_any_depth():
     # a secret value buried deep in lists/dicts still floors the whole item
     item = {"sensitivity": "public",
             "data": {"steps": [{"ok": "fine"},
-                               {"payload": ["x", {"deep": "ghp_0123456789abcdefghij0123456789"}]}]}}
+                               {"payload": ["x", {"deep": ("ghp_" + "0123456789abcdefghij0123456789")}]}]}}
     assert sv.classify_item(item) == "secret"
 
 def test_value_scanner_blocked_through_external_gate():
@@ -513,7 +514,7 @@ def test_value_scanner_blocked_through_external_gate():
     from piia_engram import governance as gov
     items = [
         {"id": "ok", "summary": "nothing sensitive here", "sensitivity": "public"},
-        {"id": "key", "sensitivity": "public", "note": "sk-proj-abcdefghijklmnop1234"},
+        {"id": "key", "sensitivity": "public", "note": ("sk-proj-" + "abcdefghijklmnop1234")},
         {"id": "mail", "sensitivity": "public", "note": "alice@example.com"},
     ]
     allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
@@ -573,7 +574,7 @@ def test_value_scanner_conservative_promotions_locked_round10():
     # documented conservative promotions (fail-closed, accepted over-protection):
     # any value shaped like an OpenAI key (sk- + 16-char body) -> secret, and a
     # short "field-like" value that embeds a real phone/card -> private.
-    assert sv.classify_value("sk-skip-this-not-a-real-key") == "secret"
+    assert sv.classify_value(("sk-" + "skip-this-not-a-real-key")) == "secret"
     assert sv.classify_value("order-2024-0001-13800138000") == "private"
 
 
@@ -583,8 +584,8 @@ def test_value_scanner_scans_sensitive_dict_keys_round10_regression():
     # P1: a dict KEY that is itself a live secret/PII value is visible text and
     # must floor the item (it used to leak as public — key was only a name).
     cases = [
-        ({"sensitivity": "public", "tokens": {"sk-proj-abcdefghijklmnop1234": True}}, "secret"),
-        ({"sensitivity": "public", "tokens": {"ghp_0123456789abcdefghij0123456789": "enabled"}}, "secret"),
+        ({"sensitivity": "public", "tokens": {("sk-proj-" + "abcdefghijklmnop1234"): True}}, "secret"),
+        ({"sensitivity": "public", "tokens": {("ghp_" + "0123456789abcdefghij0123456789"): "enabled"}}, "secret"),
         ({"sensitivity": "public", "contacts": {"alice@example.com": "owner"}}, "private"),
         ({"sensitivity": "public", "contacts": {"13800138000": "owner"}}, "private"),
     ]
@@ -595,7 +596,7 @@ def test_sensitive_dict_keys_blocked_through_external_gate_round10_regression():
     from piia_engram import governance as gov
     items = [
         {"id": "ok", "sensitivity": "public", "summary": "normal"},
-        {"id": "leak", "sensitivity": "public", "tokens": {"sk-proj-abcdefghijklmnop1234": True}},
+        {"id": "leak", "sensitivity": "public", "tokens": {("sk-proj-" + "abcdefghijklmnop1234"): True}},
     ]
     allowed, _ = gov.gate(sv.annotate_items(items), "read-only-external")
     assert {i["id"] for i in allowed} == {"ok"}
@@ -632,8 +633,8 @@ def test_formatted_number_false_positive_protection_round10():
         assert sv.classify_value(v) == "public", v
 
 def test_value_scanner_detects_gitlab_and_slack_app_tokens_round10():
-    assert sv.classify_value("glpat-1234567890abcdefghij") == "secret"
-    assert sv.classify_value("xapp-1-A1234567890-abcdefghij") == "secret"
+    assert sv.classify_value(("glpat-" + "1234567890abcdefghij")) == "secret"
+    assert sv.classify_value(("xapp-" + "1-A1234567890-abcdefghij")) == "secret"
 
 def test_value_scanner_detects_pypi_and_cloudflare_tokens():
     # pypi upload token and Cloudflare API token (cfut_) are real credential

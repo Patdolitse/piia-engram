@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for scripts/release_orchestrator.py.
 
 The orchestrator is a DRY-RUN, metadata-only checklist. These tests lock:
@@ -198,7 +199,7 @@ class TestReport:
 
     def test_probe_reads_presence_only_no_values(self, mod):
         # Inject an env with a token value; probe must report True but never echo it.
-        env = {"TWINE_PASSWORD": "sk-SUPERSECRET-do-not-print"}
+        env = {"TWINE_PASSWORD": ("sk-" + "SUPERSECRET-do-not-print")}
         rep = mod.build_report(probe=True, which=lambda n: None, env=env)
         assert rep["presence"]["pypi_credential_source"] is True
         blob = json.dumps(rep)

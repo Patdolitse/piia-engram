@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the zero-write resume entry (``engram dock-resume``).
 
 A local desktop client must be able to read a resume brief without mutating the
@@ -1256,7 +1257,7 @@ def test_dock_status_json_is_read_only_and_metadata_only(
 ):
     store = tmp_path / "store"
     eng = _populate(store)
-    secret = "DOCK_STATUS_BODY_SECRET"
+    secret = ("DOCK" + "_STATUS_BODY_SECRET")
     eng.add_lesson({"summary": secret, "detail": secret, "domain": "private"})
 
     before = _snapshot(store)

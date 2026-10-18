@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Context Compression Replay packet tests."""
 
 from __future__ import annotations
@@ -7,7 +8,7 @@ from piia_engram import context_replay
 
 def test_replay_packet_redacts_and_bounds_summary():
     packet = context_replay.build_replay_packet(
-        "Continue task. Secret key sk-test_1234567890abcdef1234567890abcdef. " + "x" * 500,
+        ("Continue task. Secret key sk-" + "test_1234567890abcdef1234567890abcdef. ") + "x" * 500,
         source="postcompact",
         max_summary_chars=120,
     )

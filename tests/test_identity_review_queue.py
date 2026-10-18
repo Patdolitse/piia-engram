@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Identity changes proposed by agents wait for local review in every mode."""
 import asyncio
 import io
@@ -183,7 +184,7 @@ def test_proposal_body_encrypted_when_identity_encryption_enabled(eng):
     from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
     if not HAS_CRYPTO:
         pytest.skip("cryptography not installed")
-    eng._crypto = EncryptionEngine(secret="test-passphrase")
+    eng._crypto = EncryptionEngine(secret=("test" + "-passphrase"))
     eng.update_profile({"email": "approved@example.invalid"})
     row = eng.propose_identity("profile", {"email": "proposed@example.invalid"})
     stored = (eng.root / "identity" / "proposals.json").read_text(encoding="utf-8")

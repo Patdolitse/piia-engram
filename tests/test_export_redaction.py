@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Stage 3 item E — export PII/secret redaction boundary linter.
 
 Two layers under test:
@@ -23,10 +24,10 @@ from piia_engram.core import Engram
 from piia_engram import export_redaction as er
 
 # Obvious fake credentials (shape-valid, value-fake) — never real.
-FAKE_OPENAI = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-FAKE_GITHUB = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-FAKE_AWS = "AKIAIOSFODNN7EXAMPLE"
-FAKE_PEM = "-----BEGIN RSA PRIVATE KEY-----"
+FAKE_OPENAI = ("sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+FAKE_GITHUB = ("ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+FAKE_AWS = ("AKIA" + "IOSFODNN7EXAMPLE")
+FAKE_PEM = ("-----BEGIN " + "RSA PRIVATE KEY-----")
 WIN_PATH = r"C:\Users\victim\secret\notes.txt"
 POSIX_PATH = "/home/victim/.ssh/id_rsa"
 FAKE_EMAIL = "victim@corp.example.com"

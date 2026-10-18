@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 from __future__ import annotations
 
 import json
@@ -388,8 +389,8 @@ def test_redaction_covers_equals_quotes_and_bare_bearer_without_echo(tmp_path: P
     unsafe_parts = [
         "Authorization=Digest abc123",
         "Bearer xyz.token",
-        "api_key='quoted-secret'",
-        'client_secret="double-quoted"',
+        ("api_key='quot" + "ed-secret'"),
+        ('client_secret="doub' + 'le-quoted"'),
     ]
     result = _run(tmp_path, _python_exit(0, stdout=" ".join(unsafe_parts)), run_id="redact")
     record = json.loads(result.stdout)

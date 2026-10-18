@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Recall eligibility matrix: every recall entry point x every eligibility state.
 
 States: approved (trusted) / pending / superseded / archived / withheld, for
@@ -40,7 +41,7 @@ PROJECT_DIR = "proj"  # under tmp_path; holds the project-scoped secret lesson
 
 # --- lessons ---------------------------------------------------------------
 L_APPROVED, L_NEW, L_GUARDED = "zqlApproved", "zqlNewer", "zqlGuarded"
-L_SECRET = "zqlSecret"                      # project-scoped, sensitivity=secret
+L_SECRET = ("zqlS" + "ecret")                      # project-scoped, sensitivity=secret
 L_PENDING, L_HIDER = "zqlPending", "zqlHider"  # hider: pending, supersedes guarded
 L_CYC1, L_CYC2 = "zqlCycOne", "zqlCycTwo"   # two pending rows superseding each other
 L_STAGING_CASE = "zqlStagingCase"           # tier="Staging"

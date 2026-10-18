@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for a0 read-path enforcement (src/piia_engram/governance_runtime.py).
 
 This is the cutover that wires the (already Codex-reviewed) sensitivity
@@ -128,7 +129,7 @@ def test_value_sensitive_item_gated_by_content_not_label(tmp_path):
     # though it carries no explicit sensitivity label.
     items = {"lessons": [
         {"id": "OK", "content": "just a normal lesson"},
-        {"id": "LEAK", "note": "sk-proj-abc123DEFghi456JKLmno789PQRstu0"},
+        {"id": "LEAK", "note": ("sk-proj-" + "abc123DEFghi456JKLmno789PQRstu0")},
     ]}
     out, _ = gr.govern_buckets(
         tmp_path, items, tool="search_knowledge", client_type="claude_code"

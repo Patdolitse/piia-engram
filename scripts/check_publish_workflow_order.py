@@ -41,10 +41,11 @@ SUPPLY_CHAIN_ORDER_MARKERS = (
     # gh-action-pypi-publish uploads every file in dist/ and fails on
     # non-distribution files, so the SBOM must be removed before publish.
     ("SBOM removal before publish", "rm dist/piia-engram-sbom.cdx.json"),
-    ("PyPI publish", "pypa/gh-action-pypi-publish@release/v1"),
+    ("PyPI publish", "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"),
 )
 ATTEST_ACTION_RE = re.compile(r"uses:\s*actions/(attest(?:-build-provenance|-sbom)?)@([^\s#]+)")
 STEP_RE = re.compile(r"(?ms)^      - name: (?P<name>[^\n]+)\n(?P<body>.*?)(?=^      - name: |\Z)")
+ATTEST_SHA = "1e69f48acb82d1966a394da916b4c1698aa569d6"  # v4.2.2
 EXPECTED_ATTEST_SUBJECTS = {"dist/*.whl", "dist/*.tar.gz"}
 
 
@@ -71,7 +72,7 @@ def _attest_steps(text: str) -> dict[str, str]:
     return {
         match.group("name").strip(): match.group("body")
         for match in STEP_RE.finditer(text)
-        if "uses: actions/attest@v4" in match.group("body")
+        if f"uses: actions/attest@{ATTEST_SHA}" in match.group("body")
     }
 
 
@@ -100,7 +101,7 @@ def _check_attest_subjects(text: str) -> list[str]:
     for step_name in ("Attest build provenance", "Attest SBOM"):
         body = attest_steps.get(step_name)
         if body is None:
-            problems.append(f"missing {step_name} step using actions/attest@v4")
+            problems.append(f"missing {step_name} step using pinned actions/attest")
             continue
         subjects = _subject_path_values(body)
         if set(subjects) != EXPECTED_ATTEST_SUBJECTS:
@@ -120,9 +121,9 @@ def _check_supply_chain_contract(text: str) -> list[str]:
 
     attest_actions = ATTEST_ACTION_RE.findall(text)
     if not attest_actions:
-        problems.append("missing actions/attest@v4 usage")
+        problems.append("missing pinned actions/attest usage")
     for action, version in attest_actions:
-        if action != "attest" or version != "v4":
+        if action != "attest" or version != ATTEST_SHA:
             problems.append(f"unsupported attest action reference: actions/{action}@{version}")
 
     for permission in REQUIRED_SUPPLY_CHAIN_PERMISSIONS:

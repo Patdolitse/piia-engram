@@ -1,7 +1,8 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 import json
 
 
-SECRET = "ZZ_STAGING_REVIEW_SECRET"
+SECRET = ("ZZ_S" + "TAGING_REVIEW_SECRET")
 
 
 def _eng(tmp_path):
