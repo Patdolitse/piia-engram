@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+- Supply-chain hygiene: pinned actions, a CI dependency lock, dependency update configuration, and a repository scanner workflow.
+
 ### Added
 
 - Optional event keys for automated offline and online evaluation callers in both isolated store modes: idempotent retries, stable conflict refusals, independent identical-template events, and key-based lifecycle and reconciliation checks. Ordinary stores and MCP cannot enable the internal admission path; unkeyed admission keeps existing behavior.

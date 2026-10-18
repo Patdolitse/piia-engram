@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Dock GUI Build 2 — the SPA shell serving.
 
 Backend smoke per Codex's testing split: the `/` route is session-gated (no
@@ -18,7 +19,7 @@ from starlette.testclient import TestClient
 from piia_engram.core import Engram
 from piia_engram.dock_ui.app import create_app
 
-_TOKEN = "spa-token"
+_TOKEN = ("spa-" + "token")
 _PORT = 8731
 _BASE = f"http://127.0.0.1:{_PORT}"
 

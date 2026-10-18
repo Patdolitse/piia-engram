@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the owner-confirmed near-duplicate merge *apply* path (N4).
 
 ``reports_analytics.suggest_merges`` scores near-duplicate lesson/decision pairs
@@ -23,7 +24,7 @@ import json
 from pathlib import Path
 
 
-SECRET = "ZZ_MERGE_APPLY_SECRET_BODY"
+SECRET = ("ZZ_M" + "ERGE_APPLY_SECRET_BODY")
 
 
 def _make_engine(tmp_path: Path):

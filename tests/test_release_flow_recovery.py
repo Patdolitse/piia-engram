@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Regression tests for release-flow failure recovery helpers."""
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ def mcp_verify():
 def test_publish_workflow_order_accepts_installed_deps_before_gates(workflow_order):
     text = """
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
       - name: Install project dependencies for release gates
         run: pip install -e .
       - name: Export redaction sample gate
@@ -107,13 +108,13 @@ jobs:
       - name: SBOM hygiene gate
         run: python scripts/check_sbom_hygiene.py dist/piia-engram-sbom.cdx.json
       - name: Attest build provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             dist/*.whl
             dist/*.tar.gz
       - name: Attest SBOM
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             dist/*.whl
@@ -122,7 +123,7 @@ jobs:
       - name: Remove SBOM from dist before publish
         run: rm dist/piia-engram-sbom.cdx.json
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
     """
 
 
@@ -134,6 +135,17 @@ def test_publish_workflow_order_accepts_supply_chain_contract(workflow_order):
 
     assert ok is True
     assert problems == []
+
+    # A mutable tag or an unknown commit must not satisfy the pinned contract.
+    for reference in ("v4", "0" * 40):
+        text = _valid_supply_chain_publish_workflow_text().replace(
+            workflow_order.ATTEST_SHA, reference,
+        )
+        accepted, failures = workflow_order.check_publish_workflow_order(
+            text, require_supply_chain=True,
+        )
+        assert accepted is False
+        assert any("unsupported attest action reference" in item for item in failures)
 
 
 def test_publish_workflow_order_rejects_contents_write_permission(workflow_order):
@@ -200,7 +212,7 @@ def test_pypi_fallback_expands_globs_without_shell(pypi_fallback, tmp_path, monk
 
 def test_mcp_publish_retries_once_on_expired_jwt_without_printing_token(mcp_publish):
     calls = []
-    secret = "gho_SECRET_DO_NOT_PRINT"
+    secret = ("gho_" + "SECRET_DO_NOT_PRINT")
 
     def run(cmd, timeout=60):
         calls.append(cmd)

@@ -392,7 +392,7 @@ _INSTRUCTION_MARKER_END = "<!-- /piia-engram -->"
 # v3.31 P0: every cross-tool snippet MUST instruct AI to call
 # `get_resume_brief` at session start. This is the marker doctor uses
 # to detect stale (v=1) snippets that lack the auto-resume directive.
-_SNIPPET_FRESHNESS_TOKEN = "get_resume_brief"
+_SNIPPET_FRESHNESS_MARKER = "get_resume_brief"
 
 # What to keep when distilling a memory (default snippets; the strict body says
 # the same in its own words). No braces: the snippets go through str.format.

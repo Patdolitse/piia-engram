@@ -21,16 +21,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c requirements.lock
       - name: Set up Node 22
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
       - name: Worker tests
@@ -55,7 +55,7 @@ jobs:
           exit $rc
       - name: Upload JUnit artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: canonical-count-junit
           path: |
@@ -72,10 +72,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -84,7 +84,7 @@ jobs:
         run: python scripts/check_publish_workflow_order.py
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c requirements.lock
 
       - name: CI-like pytest entrypoint gate
         run: python scripts/check_ci_pytest_entrypoint.py --discover-script-imports
@@ -138,10 +138,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
@@ -150,7 +150,7 @@ jobs:
         run: python scripts/check_publish_workflow_order.py
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c requirements.lock
 
       - name: CI-like pytest entrypoint gate
         run: python scripts/check_ci_pytest_entrypoint.py --discover-script-imports
@@ -208,16 +208,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install dependencies (with secure + ui + reader extras)
-        run: pip install -e ".[dev,secure,ui,reader]"
+        run: pip install -e ".[dev,secure,ui,reader]" -c requirements.lock
 
       - name: Run tests (crypto + Dock GUI + reader suites now execute, not skip)
         run: pytest tests/ -q
@@ -228,15 +228,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build==1.5.0 twine==6.2.0
+        run: pip install build==1.5.0 twine==6.2.0 -c requirements.lock
 
       - name: Build package
         run: python -m build
@@ -247,8 +247,8 @@ jobs:
       - name: Generate CycloneDX SBOM
         run: |
           python -m venv .sbom-target-venv
-          .sbom-target-venv/bin/python -m pip install dist/*.whl
-          pip install cyclonedx-bom==7.3.0
+          .sbom-target-venv/bin/python -m pip install dist/*.whl -c requirements.lock
+          pip install cyclonedx-bom==7.3.0 -c requirements.lock
           cyclonedx-py environment .sbom-target-venv/bin/python --pyproject pyproject.toml --mc-type library --output-reproducible --output-format JSON --output-file dist/piia-engram-sbom.cdx.json
           # --output-reproducible omits serialNumber, but actions/attest requires
           # it; inject a content-derived (still reproducible) one.
@@ -259,14 +259,14 @@ jobs:
 
       - name: Dependency vulnerability scan
         run: |
-          pip install pip-audit
+          pip install pip-audit -c requirements.lock
           pip-audit --strict --desc on 2>&1 || true
 
       - name: Publish workflow order gate
         run: python scripts/check_publish_workflow_order.py
 
       - name: Upload supply-chain dry-run artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: supply-chain-dryrun-artifacts
           path: |
@@ -286,12 +286,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 

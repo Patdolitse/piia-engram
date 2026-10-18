@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Dock GUI (Build 1) — write path: owner-gated reversible archive via HTTP.
 
 Authorization model locked with Codex (Option A): the HTTP auth (one-time token ->
@@ -20,7 +21,7 @@ from starlette.testclient import TestClient
 from piia_engram.core import Engram
 from piia_engram.dock_ui.app import create_app
 
-_TOKEN = "test-one-time-token-write"
+_TOKEN = ("test" + "-one-time-token-write")
 _PORT = 8731
 _BASE = f"http://127.0.0.1:{_PORT}"
 

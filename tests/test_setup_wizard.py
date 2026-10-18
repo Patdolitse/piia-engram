@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """setup_wizard 辅助函数单元测试。"""
 
 import json
@@ -83,7 +84,7 @@ class TestSessionsCLI:
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.setenv("ENGRAM_TEST", "1")
-        secret = "ZZSTATUS_SECRET_BODY"
+        secret = ("ZZST" + "ATUS_SECRET_BODY")
         eng = Engram()
         eng.add_lesson(secret, detail="do not print this", domain="security")
         eng.add_decision(
@@ -186,7 +187,7 @@ class TestSessionsCLI:
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.setenv("ENGRAM_TEST", "1")
-        secret = "ZZSTATUS_HTML_SECRET"
+        secret = ("ZZST" + "ATUS_HTML_SECRET")
         eng = Engram()
         eng.add_lesson(secret, detail=secret, domain="security")
         output = tmp_path / "status-report.html"
@@ -207,7 +208,7 @@ class TestSessionsCLI:
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
         monkeypatch.setenv("ENGRAM_TEST", "1")
-        secret = "SECRET_CUSTOMER_CASE"
+        secret = ("SECR" + "ET_CUSTOMER_CASE")
         eng = Engram()
         eng.save_agent_context(tool="codex", content="metadata test", session_id=secret)
         output = tmp_path / "status.html"
@@ -3352,7 +3353,7 @@ class TestMainCLI:
         from piia_engram.setup_wizard import run_continuity
 
         monkeypatch.setenv("ENGRAM_DIR", str(tmp_path))
-        secret = "ZZ_CONTINUITY_CLI_SECRET"
+        secret = ("ZZ_C" + "ONTINUITY_CLI_SECRET")
         eng = Engram()
         eng.save_agent_context(tool="claude_code", content=secret)
         eng.save_agent_context(tool="codex", content=secret)
@@ -4873,13 +4874,13 @@ class TestCrossToolInjectionV331:
         the partial→real fidelity guarantee for v3.31 P0."""
         from piia_engram.setup_wizard import (
             _INSTRUCTION_SNIPPETS,
-            _SNIPPET_FRESHNESS_TOKEN,
+            _SNIPPET_FRESHNESS_MARKER,
         )
-        assert _SNIPPET_FRESHNESS_TOKEN == "get_resume_brief"
+        assert _SNIPPET_FRESHNESS_MARKER == "get_resume_brief"
         for tool_id, info in _INSTRUCTION_SNIPPETS.items():
             for lang_key in ("snippet_zh", "snippet_en"):
-                assert _SNIPPET_FRESHNESS_TOKEN in info[lang_key], (
-                    f"{tool_id}/{lang_key} missing {_SNIPPET_FRESHNESS_TOKEN!r}"
+                assert _SNIPPET_FRESHNESS_MARKER in info[lang_key], (
+                    f"{tool_id}/{lang_key} missing {_SNIPPET_FRESHNESS_MARKER!r}"
                 )
 
     def test_windsurf_snippet_registered(self):

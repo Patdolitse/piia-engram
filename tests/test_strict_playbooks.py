@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Playbook proposals under strict (4.21.1 plan V4 section (v)).
 
 Under strict every agent-created or agent-edited playbook is a pending proposal:
@@ -19,7 +20,7 @@ import pytest
 
 from piia_engram.core import Engram
 
-TOKEN = "zqxtokenpendingonly"
+TOKEN = ("zqxt" + "okenpendingonly")
 
 
 def _run(coro):

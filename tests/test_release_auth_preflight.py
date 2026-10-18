@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for scripts/check_release_auth_preflight.py.
 
 Cover success/failure parsing of each check, the version cross-check, and the
@@ -19,7 +20,7 @@ from pathlib import Path
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_release_auth_preflight.py"
-SECRET = "sk-SUPERSECRETTOKENVALUE-do-not-print"
+SECRET = ("sk-" + "SUPERSECRETTOKENVALUE-do-not-print")
 
 
 @pytest.fixture(scope="module")

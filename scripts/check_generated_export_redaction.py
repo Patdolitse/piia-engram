@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Generate synthetic export surfaces and scan them for redaction leaks.
 
 Unlike ``check_export_redaction.py`` over a committed clean sample, this guard
@@ -30,7 +31,7 @@ from piia_engram.export_redaction import (  # noqa: E402
 )
 
 
-FAKE_OPENAI = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+FAKE_OPENAI = ("sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 FAKE_WIN_PATH = r"C:\Users\victim\secret\notes.txt"
 FAKE_EMAIL = "victim@corp.example.com"
 

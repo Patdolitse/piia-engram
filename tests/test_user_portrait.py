@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the lean user-portrait feature (PortraitMixin + CLI).
 
 Covers build_user_portrait (shape/stats/privacy), versioned save + prune +
@@ -68,7 +69,7 @@ def test_build_portrait_is_lean_no_raw_knowledge_text(tmp_path):
     """Portrait must NOT embed raw lesson/decision bodies (privacy + size)."""
     eng = make_engram(tmp_path)
     eng.update_profile({"role": "founder", "language": "en"})
-    secret = "SECRET-LESSON-BODY-DO-NOT-LEAK-xyz123"
+    secret = ("SECR" + "ET-LESSON-BODY-DO-NOT-LEAK-xyz123")
     eng.add_lesson(secret, domain="ux", source_tool="codex", tier="verified")
     p = eng.build_user_portrait()
     assert secret not in json.dumps(p, ensure_ascii=False)

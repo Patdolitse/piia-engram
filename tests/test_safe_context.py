@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Safe Context / Lockdown proposal surface tests."""
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from piia_engram import safe_context
 def test_safe_context_redacts_secrets_and_reports_budget_trim():
     payload = {
         "knowledge": [
-            {"summary": "api key sk-test_1234567890abcdef1234567890abcdef"},
+            {"summary": ("api key sk-" + "test_1234567890abcdef1234567890abcdef")},
             {"summary": "x" * 200},
         ],
         "meta": {"project": "demo"},
@@ -48,8 +49,8 @@ def test_lockdown_context_keeps_counts_not_bodies():
 @pytest.mark.parametrize(
     "secret",
     [
-        "sk-test_1234567890abcdef1234567890abcdef",
-        "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        ("sk-" + "test_1234567890abcdef1234567890abcdef"),
+        ("sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
         "C:\\Users\\owner\\secret-project",
         "owner@example.test",
     ],

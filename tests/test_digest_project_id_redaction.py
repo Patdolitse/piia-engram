@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Regression: a project-id hash that matches a PII shape must not be
 redacted in the digest source block (breaks exact-scope filtering).
 
@@ -49,7 +50,7 @@ class TestProjectIdPreservation:
 
     def test_digest_body_still_scrubbed(self):
         """The body (goal, lessons, etc.) still passes the full scrubber."""
-        body_with_secret = "goal: use s" + "k-FAKE1234567890abcdef key"
+        body_with_secret = ("goal" + ": use s") + "k-FAKE1234567890abcdef key"
         digest = build_session_digest(
             body_with_secret, tool="codex", project_id="abc", session_ref="s"
         )

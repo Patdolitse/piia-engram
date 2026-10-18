@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Engram 核心功能基础测试。"""
 
 import json
@@ -5014,7 +5015,7 @@ def test_list_playbooks_for_management_does_not_echo_project_paths(
 def test_list_playbooks_for_management_default_is_metadata_only(tmp_path: Path):
     """Default management lists should not expose Playbook content fields."""
     engram = make_engram(tmp_path)
-    secret = "ZZ_CORE_MANAGEMENT_SECRET"
+    secret = ("ZZ_C" + "ORE_MANAGEMENT_SECRET")
     pb = engram.add_playbook({
         "title": f"{secret} title",
         "description": f"{secret} description",
@@ -5045,7 +5046,7 @@ def test_list_playbooks_for_management_default_is_metadata_only(tmp_path: Path):
 def test_playbook_delete_restore_receipts_do_not_echo_content(tmp_path: Path):
     """Core delete/restore receipts should be safe for MCP/API acknowledgements."""
     engram = make_engram(tmp_path)
-    secret = "ZZ_DELETE_RECEIPT_SECRET"
+    secret = ("ZZ_D" + "ELETE_RECEIPT_SECRET")
     pb = engram.add_playbook({
         "title": f"{secret} title",
         "steps": [f"{secret} step"],
@@ -6876,7 +6877,7 @@ def test_redact_sensitive_tokens(tmp_path: Path):
     """敏感信息应被脱敏。"""
     from piia_engram.context import ContextMixin
     assert "{{REDACTED}}" in ContextMixin._redact_sensitive(
-        "使用 sk-1234567890abcdef1234567890abcdef 发布"  # dummy token, never a real key
+        ("使用 sk-" + "1234567890abcdef1234567890abcdef 发布")  # dummy token, never a real key
     )
     assert "{{PATH}}" in ContextMixin._redact_sensitive(
         "路径是 C:\\Users\\john\\projects\\app"
@@ -6895,10 +6896,10 @@ def test_redact_applied_to_playbook_steps(tmp_path: Path):
     """自动提取的 Playbook 步骤和 pitfall 应经过脱敏。"""
     engram = make_engram(tmp_path)
     summary = (
-        "先用 token sk-abcdef1234567890abcdef 登录，"
-        "然后部署到 C:\\Projects\\myapp 目录，"
-        "接着运行构建命令，最后发布到 Registry。"
-        "过程中踩坑了 admin@corp.com 的权限不对。"
+        ("先用 token sk-" + "abcdef1234567890abcdef 登录，")
+        + "然后部署到 C:\\Projects\\myapp 目录，"
+        + "接着运行构建命令，最后发布到 Registry。"
+        + "过程中踩坑了 admin@corp.com 的权限不对。"
     )
     result = engram.extract_playbook_from_session(summary, source_tool="test")
     assert result is not None

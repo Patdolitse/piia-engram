@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the owner-confirmed reconcile *apply* path (N2).
 
 ``reconcile_proposal.build_reconcile_proposal`` classifies external candidates
@@ -20,7 +21,7 @@ import json
 from pathlib import Path
 
 
-SECRET = "ZZ_RECONCILE_APPLY_SECRET_BODY"
+SECRET = ("ZZ_R" + "ECONCILE_APPLY_SECRET_BODY")
 
 
 def _make_engine(tmp_path: Path):

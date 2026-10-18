@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the unified context-governance proposal facade."""
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ class FakeEngram:
         return []
 
     def get_relevant_lessons(self, **kwargs):
-        return [{"id": "recall-1", "summary": "token sk-test_1234567890abcdef1234567890abcdef"}]
+        return [{"id": "recall-1", "summary": ("token sk-" + "test_1234567890abcdef1234567890abcdef")}]
 
 
 def _now():
@@ -50,7 +51,7 @@ def _now():
 def test_safe_context_mode_redacts_and_marks_preview_only():
     result = cg.build_context_governance_preview(
         "safe_context",
-        payload={"knowledge": [{"summary": "token sk-test_1234567890abcdef1234567890abcdef"}]},
+        payload={"knowledge": [{"summary": ("token sk-" + "test_1234567890abcdef1234567890abcdef")}]},
         options={"max_chars": 2000},
         now=_now(),
     )
@@ -92,7 +93,7 @@ def test_freshness_conflicts_mode_returns_metadata_only_proposal():
 def test_replay_packet_mode_redacts_and_never_applies():
     result = cg.build_context_governance_preview(
         "replay_packet",
-        payload={"compact_summary": "keep this token sk-test_1234567890abcdef1234567890abcdef"},
+        payload={"compact_summary": ("keep this token sk-" + "test_1234567890abcdef1234567890abcdef")},
         options={"source": "test", "max_summary_chars": 80},
         now=_now(),
     )

@@ -181,7 +181,7 @@ def _ci_test_job_run_commands():
             # Exact-exclude only the dependency install step. Any OTHER non-guard
             # run step added to ci.yml's test job should TRIP this test so it gets
             # reconciled deliberately, rather than being silently swallowed.
-            if cmd == 'pip install -e ".[dev]"':
+            if cmd == 'pip install -e ".[dev]" -c requirements.lock':
                 continue
             commands.append(cmd)
     return commands

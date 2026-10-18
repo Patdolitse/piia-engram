@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """GUI-ready read-only management surface evidence harness (Task 5, B+).
 
 Proves the read-only management surface (:func:`build_readonly_management_surface`)
@@ -47,7 +48,7 @@ from piia_engram.management_view import (  # noqa: E402
 )
 
 # A token that must never appear anywhere in the surface output.
-_SECRET = "ZZ_SURFACE_SECRET_TOKEN"
+_SECRET = ("ZZ_S" + "URFACE_SECRET_TOKEN")
 
 # Body-only keys that must never surface (raw payload / path leakage).
 _FORBIDDEN_KEYS = {

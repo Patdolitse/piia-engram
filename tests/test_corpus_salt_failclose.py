@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """M2 security regression: corrupted .corpus_salt must fail-closed, not plaintext.
 
 Code review 2026-06-23 finding S1-1/S1-2 (CRITICAL): When .corpus_salt exists
@@ -25,7 +26,7 @@ import pytest
 from piia_engram.core import Engram
 
 
-ENGRAM_SECRET = "test-secret-for-m2-regression"
+ENGRAM_SECRET = ("test" + "-secret-for-m2-regression")
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

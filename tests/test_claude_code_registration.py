@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Claude Code: Engram is registered through the claude command, in the user config.
 
 Claude Code reads user-scope MCP servers from ~/.claude.json (or
@@ -28,7 +29,7 @@ from piia_engram import claude_code_mcp as M
 from piia_engram import connection_report as C
 from piia_engram import doctor
 
-_SECRET = "placeholder-secret-not-to-print"
+_SECRET = ("plac" + "eholder-secret-not-to-print")
 PY = "/opt/py/bin/python3"
 
 

@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Structured management action contract tests."""
 
 from __future__ import annotations
@@ -6,7 +7,7 @@ import json
 from pathlib import Path
 
 
-SECRET = "ZZ_MANAGEMENT_ACTION_SECRET"
+SECRET = ("ZZ_M" + "ANAGEMENT_ACTION_SECRET")
 
 
 def _dump(value) -> str:

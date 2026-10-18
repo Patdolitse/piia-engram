@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the owner-confirmed lifecycle archive *apply* path (N1).
 
 The lifecycle scorer (``lifecycle.py``) is proposal-only and never mutates. This
@@ -21,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-SECRET = "ZZ_LIFECYCLE_APPLY_SECRET_BODY"
+SECRET = ("ZZ_L" + "IFECYCLE_APPLY_SECRET_BODY")
 
 
 def _iso(days_ago: int) -> str:

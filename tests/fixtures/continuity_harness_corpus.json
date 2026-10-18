@@ -22,7 +22,7 @@
       {"summary": "New durable lesson learned this session about export safety",
        "detail": "Keep exports verified-only."},
       {"summary": "Run pytest from the project virtualenv, not system python"},
-      {"summary": "API key for prod", "detail": "sk-proj-ABCD1234EFGH5678IJKL9012MNOP3456"}
+      {"summary": "Synthetic API key example", "detail": "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}
     ],
     "claude": "## New durable lesson learned this session about export safety\nKeep exports verified-only.\n## Run pytest from the project virtualenv, not system python\n",
     "cursor": "- New durable lesson learned this session about export safety\n- Run pytest from the project virtualenv, not system python\n"

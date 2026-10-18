@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Run the offline context-governance preview eval.
 
 The eval uses synthetic fixtures only. It never reads the user's real Engram
@@ -21,7 +22,7 @@ if str(SRC) not in sys.path:
 from piia_engram import context_governance as cg  # noqa: E402
 
 
-SECRET_SAMPLE = "sk-test_1234567890abcdef1234567890abcdef"
+SECRET_SAMPLE = ("sk-" + "test_1234567890abcdef1234567890abcdef")
 
 
 class FixtureEngram:

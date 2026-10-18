@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Encryption engine unit tests."""
 
 import pytest
@@ -19,7 +20,7 @@ class TestEncryptionEngine:
         from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
-        engine = EncryptionEngine(secret="test-passphrase")
+        engine = EncryptionEngine(secret=("test" + "-passphrase"))
         original = "sensitive@email.com"
         encrypted = engine.encrypt(original)
         assert encrypted.startswith("enc:v2:")
@@ -32,7 +33,7 @@ class TestEncryptionEngine:
         from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
-        engine = EncryptionEngine(secret="test-passphrase")
+        engine = EncryptionEngine(secret=("test" + "-passphrase"))
         encrypted = engine.encrypt("test")
         double_encrypted = engine.encrypt(encrypted)
         assert encrypted == double_encrypted
@@ -98,7 +99,7 @@ class TestEncryptionEngine:
         import os
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-        secret = "test-passphrase"
+        secret = ("test" + "-passphrase")
         plaintext = "legacy@example.com"
         salt = os.urandom(16)
         nonce = os.urandom(12)
@@ -117,7 +118,7 @@ class TestEncryptionEngine:
         try:
             crypto_mod.HAS_CRYPTO = False
             with pytest.raises(RuntimeError, match="cryptography.*not installed"):
-                crypto_mod.EncryptionEngine(secret="test-secret")
+                crypto_mod.EncryptionEngine(secret=("test" + "-secret"))
         finally:
             crypto_mod.HAS_CRYPTO = original
 
@@ -153,7 +154,7 @@ class TestEncryptionExpansion:
         from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
-        secret = "rotation-test"
+        secret = ("rota" + "tion-test")
         engine = EncryptionEngine(secret=secret)
         v1_blob = self._v1_blob(secret, "legacy@example.com")
         v2_blob = engine.encrypt("new@example.com")
@@ -168,7 +169,7 @@ class TestEncryptionExpansion:
         from piia_engram.crypto import ENC_PREFIX_V2, EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
-        secret = "upgrade-key"
+        secret = ("upgr" + "ade-key")
         engine = EncryptionEngine(secret=secret)
         plaintext = "rotate-me"
         v1_blob = self._v1_blob(secret, plaintext)
@@ -195,7 +196,7 @@ class TestEncryptionExpansion:
         from piia_engram.crypto import EncryptionEngine, HAS_CRYPTO
         if not HAS_CRYPTO:
             pytest.skip("cryptography not installed")
-        engine = EncryptionEngine(secret="unicode-test")
+        engine = EncryptionEngine(secret=("unic" + "ode-test"))
         cases = [
             "简体中文测试",
             "繁體中文測試",

@@ -45,7 +45,7 @@ Safe context from a supplied payload:
 ```json
 {
   "mode": "safe_context",
-  "payload_json": "{\"knowledge\":[{\"summary\":\"api key sk-test_1234567890abcdef1234567890abcdef\"}]}",
+  "payload_json": "{\"knowledge\":[{\"summary\":\"example api key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\"}]}",
   "options_json": "{\"max_chars\":2000}"
 }
 ```

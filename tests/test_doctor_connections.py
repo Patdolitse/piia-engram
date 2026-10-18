@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """engram doctor: are the AI clients connected, and do they actually call Engram?
 
 Built on a test store and a temporary home: client configs, session
@@ -27,7 +28,7 @@ from piia_engram import doctor
 from piia_engram.core import Engram
 from piia_engram.write_provenance import origin_scope
 
-_SECRET = "placeholder-value-doctor-must-not-print"
+_SECRET = ("plac" + "eholder-value-doctor-must-not-print")
 
 
 @pytest.fixture

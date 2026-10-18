@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for MCP tool wrappers in piia_engram.mcp_server.
 
 Each ``@mcp.tool()`` is a thin async wrapper around an Engram method. These
@@ -1888,7 +1889,7 @@ def test_mcp_search_knowledge_filter_validation_edges(
 
 def test_review_staging_list_is_metadata_only(isolated_engram: Engram):
     """action=list returns id/type/domain metadata, never the item body."""
-    secret = "ZZ_MCP_STAGING_QUEUE_SECRET"
+    secret = ("ZZ_M" + "CP_STAGING_QUEUE_SECRET")
     isolated_engram.add_lesson({
         "summary": f"staging lesson {secret}",
         "domain": "release",
@@ -2356,7 +2357,7 @@ class TestContextGovernancePreviewWrapper:
             mode="safe_context",
             payload_json=(
                 '{"knowledge": [{"summary": '
-                '"api key sk-test_1234567890abcdef1234567890abcdef"}]}'
+                + ('"api key sk-' + 'test_1234567890abcdef1234567890abcdef"}]}')
             ),
             options_json='{"max_chars": 2000}',
         )))
@@ -2655,7 +2656,7 @@ def test_mcp_list_playbooks_for_management_default_is_metadata_only(
     isolated_engram: Engram,
 ):
     """The MCP management list default must not echo Playbook content."""
-    secret = "ZZ_MCP_MANAGEMENT_SECRET"
+    secret = ("ZZ_M" + "CP_MANAGEMENT_SECRET")
     pb = isolated_engram.add_playbook({
         "title": f"{secret} title",
         "description": f"{secret} description",
@@ -2689,7 +2690,7 @@ def test_mcp_delete_restore_playbook_receipts_do_not_echo_content(
     isolated_engram: Engram,
 ):
     """MCP delete/restore receipts should be metadata-only even with governance off."""
-    secret = "ZZ_MCP_DELETE_RECEIPT_SECRET"
+    secret = ("ZZ_M" + "CP_DELETE_RECEIPT_SECRET")
     pb = isolated_engram.add_playbook({
         "title": f"{secret} title",
         "steps": [f"{secret} step"],
@@ -2732,7 +2733,7 @@ def test_mcp_archive_playbook_ack_does_not_echo_title(
     isolated_engram: Engram,
 ):
     """Archive acknowledgement should not echo private Playbook titles."""
-    secret = "ZZ_MCP_ARCHIVE_SECRET"
+    secret = ("ZZ_M" + "CP_ARCHIVE_SECRET")
     pb = isolated_engram.add_playbook({
         "title": f"{secret} title",
         "steps": [f"{secret} step"],

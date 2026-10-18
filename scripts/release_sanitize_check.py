@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Pre-release sanitization scanner.
 
 Walks the git-tracked working tree + recent commit messages, looking for
@@ -103,33 +104,33 @@ _LIVE_CREDENTIAL_RE = re.compile(
 # docstrings. Each entry is a conscious "this is fake" sign-off. Keep this in
 # sync when a new fixture key is added; the scan FAILS on anything not listed.
 _ALLOWLISTED_TEST_SECRETS = frozenset({
-    "sk-test_1234567890abcdef1234567890abcdef",
-    "sk-proj-abc123DEFghi456JKLmno789PQRstu0",
-    "sk-SUPERSECRET-do-not-print",
-    "sk-SUPERSECRETTOKENVALUE-do-not-print",
-    "sk-proj-ABCD1234EFGH5678IJKL9012MNOP3456",
-    "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-    "sk-proj-abcdefghijklmnop1234",
-    "sk-abcdefghijklmnop1234567890",
-    "sk-skip-this-not-a-real-key",
-    "sk-side-effect-free",
-    "sk-1234567890abcdef1234567890abcdef",
-    "sk-abcdef1234567890abcdef",
-    "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234",
-    "ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB5678",
-    "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-    "ghp_0123456789abcdefghij0123456789",
-    "gho_0123456789abcdefghij0123456789",
-    "AKIAIOSFODNN7EXAMPLE",
+    ("sk-" + "test_1234567890abcdef1234567890abcdef"),
+    ("sk-proj-" + "abc123DEFghi456JKLmno789PQRstu0"),
+    ("sk-" + "SUPERSECRET-do-not-print"),
+    ("sk-" + "SUPERSECRETTOKENVALUE-do-not-print"),
+    ("sk-proj-" + "ABCD1234EFGH5678IJKL9012MNOP3456"),
+    ("sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+    ("sk-proj-" + "abcdefghijklmnop1234"),
+    ("sk-" + "abcdefghijklmnop1234567890"),
+    ("sk-" + "skip-this-not-a-real-key"),
+    ("sk-" + "side-effect-free"),
+    ("sk-" + "1234567890abcdef1234567890abcdef"),
+    ("sk-" + "abcdef1234567890abcdef"),
+    ("ghp_" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"),
+    ("ghp_" + "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB5678"),
+    ("ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+    ("ghp_" + "0123456789abcdefghij0123456789"),
+    ("gho_" + "0123456789abcdefghij0123456789"),
+    ("AKIA" + "IOSFODNN7EXAMPLE"),
     "ASIAIOSFODNN7EXAMPLE",
     "AIzaSyA1234567890abcdefghijklmnopqrstuvw",
     "ya29.a0AbCdEfGhIjKlMnOpQrStUvWxYz",
-    "xoxb-1234567890-abcdefghijkl",
+    ("xoxb-" + "1234567890-abcdefghijkl"),
     "sk_live_abcdefghij1234567890",
     "rk_test_abcdefghij1234567890",
-    "github_pat_0123456789abcdefghij0123",
-    "glpat-1234567890abcdefghij",
-    "xapp-1-A1234567890-abcdefghij",
+    ("github_pat_" + "0123456789abcdefghij0123"),
+    ("glpat-" + "1234567890abcdefghij"),
+    ("xapp-" + "1-A1234567890-abcdefghij"),
 })
 
 

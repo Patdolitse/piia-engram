@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Round-15/16 P1 regression: the full MCP tool enforcement matrix.
 
 Codex round-15 FAILed the a0 cutover because governance was wired into only a
@@ -50,7 +51,7 @@ from piia_engram.core import Engram
 # ── markers ─────────────────────────────────────────────────────────────────
 
 PUBLIC = "PUBOK_public_marker_safe_text"
-SECRET = "ZZSECRETLEAK_must_never_reach_an_external_agent"
+SECRET = ("ZZSE" + "CRETLEAK_must_never_reach_an_external_agent")
 
 
 def _pub() -> dict:

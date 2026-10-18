@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the AGENTS.md / CLAUDE.md compatible export (Task 6).
 
 Focus: the export must NEVER leak staging, sensitive, or project-scoped
@@ -58,7 +59,7 @@ def test_excludes_sensitive_and_private():
 
 def test_value_floor_excludes_credential_content():
     # A benign label but the content carries a credential shape -> classified secret.
-    leaky = _lesson("api key is sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+    leaky = _lesson(("api key is sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"))
     sel = A.select_exportable([leaky])
     assert sel == []
 

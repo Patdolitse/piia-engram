@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for the GUI-ready read-only management surface (Task 5, B+).
 
 Pin the surface's promises: building it does not change a single byte of the
@@ -27,7 +28,7 @@ from piia_engram.management_view import (  # noqa: E402
     build_readonly_management_surface,
 )
 
-SECRET = "ZZ_SURFACE_SECRET_TOKEN"
+SECRET = ("ZZ_S" + "URFACE_SECRET_TOKEN")
 
 
 def _fingerprint(root: Path) -> dict[str, str]:

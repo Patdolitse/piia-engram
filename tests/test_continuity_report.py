@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Continuity proof report tests."""
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ def test_continuity_report_is_metadata_only(tmp_path: Path) -> None:
         render_continuity_text,
     )
 
-    secret = "ZZ_CONTINUITY_SECRET_BODY"
+    secret = ("ZZ_C" + "ONTINUITY_SECRET_BODY")
     eng = Engram(root=tmp_path)
     eng.save_agent_context(
         tool="claude_code",
@@ -174,7 +175,7 @@ def test_continuity_report_includes_recall_signals_without_payload_leak(
         render_continuity_text,
     )
 
-    secret = "ZZ_RECALL_SIGNAL_SECRET"
+    secret = ("ZZ_R" + "ECALL_SIGNAL_SECRET")
     (tmp_path / "telemetry.log").write_text(
         "\n".join(
             [

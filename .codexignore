@@ -1,0 +1,31 @@
+# Plugin artifact exclusions for local state, credentials, and generated output.
+# This list is not a runtime access-control or test-isolation boundary.
+.engram/
+.piia/
+.claude/
+.codex/
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
+.corpus_salt
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.coverage
+build/
+dist/
+node_modules/
+.tmp/
+.engram-local-evidence/
+engram_backup_*.json
+identity_card.md
+reader_cache/
+docs/internal/
+audits/

@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0  # full history so the on-main ancestry check works
 
@@ -41,7 +41,7 @@ jobs:
           echo "[ok] release commit is on main."
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 
@@ -49,7 +49,7 @@ jobs:
         run: python scripts/check_publish_workflow_order.py
 
       - name: Install project dependencies for release gates
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c requirements.lock
 
       - name: Public fact sync gate
         run: python scripts/check_public_fact_sync.py
@@ -82,12 +82,12 @@ jobs:
 
       - name: Canonical count gate (release re-run)
         run: |
-          pip install -e ".[dev]"
+          pip install -e ".[dev]" -c requirements.lock
           ENGRAM_TEST=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=src \
             pytest tests/ -q -p no:cacheprovider --junitxml=canonical-count.xml
           python scripts/check_canonical_counts.py canonical-count.xml
       - name: Install build tools
-        run: pip install build==1.5.0
+        run: pip install build==1.5.0 -c requirements.lock
 
       - name: Build package
         run: python -m build
@@ -98,8 +98,8 @@ jobs:
       - name: Generate CycloneDX SBOM
         run: |
           python -m venv .sbom-target-venv
-          .sbom-target-venv/bin/python -m pip install dist/*.whl
-          pip install cyclonedx-bom==7.3.0
+          .sbom-target-venv/bin/python -m pip install dist/*.whl -c requirements.lock
+          pip install cyclonedx-bom==7.3.0 -c requirements.lock
           cyclonedx-py environment .sbom-target-venv/bin/python --pyproject pyproject.toml --mc-type library --output-reproducible --output-format JSON --output-file dist/piia-engram-sbom.cdx.json
           # --output-reproducible omits serialNumber, but actions/attest requires
           # it; inject a content-derived (still reproducible) one.
@@ -109,14 +109,14 @@ jobs:
         run: python scripts/check_sbom_hygiene.py dist/piia-engram-sbom.cdx.json
 
       - name: Attest build provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             dist/*.whl
             dist/*.tar.gz
 
       - name: Attest SBOM
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             dist/*.whl
@@ -124,7 +124,7 @@ jobs:
           sbom-path: dist/piia-engram-sbom.cdx.json
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: sbom
           path: dist/piia-engram-sbom.cdx.json
@@ -136,7 +136,7 @@ jobs:
         run: rm dist/piia-engram-sbom.cdx.json
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         # Pure OIDC Trusted Publishing: configure the PyPI project to trust
         # repo Patdolitse/piia-engram, workflow publish.yml, environment pypi.
         # Do not pass username/password or long-lived API tokens here.

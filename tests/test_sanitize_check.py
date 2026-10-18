@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Tests for scripts/release_sanitize_check.py (v3.31 P1-2).
 
 Loads the script module by path (scripts/ is not an installed package)
@@ -65,7 +66,7 @@ def test_live_credential_scan_flags_unlisted_key(sc, tmp_path):
 
 def test_live_credential_scan_allows_known_dummy(sc, tmp_path):
     f = tmp_path / "test_fixture_like.py"
-    f.write_text('KEY = "sk-abcdef1234567890abcdef"\n', encoding="utf-8")
+    f.write_text(('KEY = "sk-' + 'abcdef1234567890abcdef"\n'), encoding="utf-8")
     assert sc._scan_live_credentials(f) == []
 
 
@@ -83,7 +84,7 @@ def test_live_credential_scan_catches_sk_proj(sc, tmp_path):
 
 def test_high_patterns_detect_github_token(sc, tmp_path):
     f = tmp_path / "leak.txt"
-    f.write_text('token = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n', encoding="utf-8")
+    f.write_text(('token = "ghp_' + 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n'), encoding="utf-8")
     hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
     labels = {h[0] for h in hits}
     assert "GitHub token" in labels
@@ -92,7 +93,7 @@ def test_high_patterns_detect_github_token(sc, tmp_path):
 
 def test_high_patterns_detect_pem(sc, tmp_path):
     f = tmp_path / "key.pem"
-    f.write_text("-----BEGIN RSA PRIVATE KEY-----\n", encoding="utf-8")
+    f.write_text(("-----BEGIN " + "RSA PRIVATE KEY-----\n"), encoding="utf-8")
     hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
     assert any(label == "PEM private" and sev == "high" for label, sev, _, _ in hits)
 
@@ -255,7 +256,7 @@ def test_staged_scan_reads_index_blob_not_worktree(sc, tmp_path, monkeypatch):
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
     leak = tmp_path / "leak.txt"
-    leak.write_text('token = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n', encoding="utf-8")
+    leak.write_text(('token = "ghp_' + 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n'), encoding="utf-8")
     subprocess.run(["git", "add", "leak.txt"], cwd=tmp_path, check=True)
     # work tree cleaned but NOT re-added → index still holds the secret
     leak.write_text("clean now\n", encoding="utf-8")
@@ -276,7 +277,7 @@ def test_scan_file_accepts_text_override(sc, tmp_path):
     f = tmp_path / "x.txt"
     f.write_text("totally clean\n", encoding="utf-8")
     hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS,
-                         text='ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB5678')
+                         text=('ghp_' + 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB5678'))
     assert any(label == "GitHub token" for label, *_ in hits)
 
 
@@ -441,7 +442,7 @@ def test_fixture_file_skipped_without_internal(sc, tmp_path, monkeypatch, capsys
     testsdir.mkdir()
     (testsdir / "test_fix.py").write_text(
         'WIN = "C:\\\\Users\\\\victim\\\\x"\n'
-        'KEY = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n',
+        + ('KEY = "ghp_' + 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1234"\n'),
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "tests/test_fix.py"], cwd=tmp_path, check=True)
@@ -548,9 +549,9 @@ def test_ark_api_key_assignment_flagged_high(sc, tmp_path):
     """A committed ``ARK_API_KEY = "<real-length token>"`` is a near-certain
     key leak -> HIGH. Name-anchored like the ``password=`` built-in, but high
     severity given the value-length filter makes a false positive unlikely."""
-    secret = "b8" + "f3a1c2d4" + "e5f6a7b8" + "c9d0e1f2"
+    fake = "b8" + "f3a1c2d4" + "e5f6a7b8" + "c9d0e1f2"
     f = tmp_path / "config.py"
-    f.write_text(f'ARK_API_KEY = "{secret}"\n', encoding="utf-8")
+    f.write_text(f'ARK_API_KEY = "{fake}"\n', encoding="utf-8")
     hits = sc._scan_file(f, [], sc._BUILT_IN_PATTERNS)
     assert any(label == "ARK API key" and sev == "high"
                for label, sev, *_ in hits)

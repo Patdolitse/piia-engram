@@ -1,0 +1,51 @@
+# CI constraints snapshot, not a universal resolver-generated lock.
+# Usage: pip install -e ".[dev]" -c requirements.lock
+# Base + dev versions come from installed CPython 3.12 distribution metadata.
+# Build/SBOM tool versions come from the existing CI workflow.
+# No package-index resolution or artifact hashes were available offline.
+# Python 3.10 dependencies (tomli, exceptiongroup, rpds-py), reader extras,
+# pip-audit and build/SBOM tool transitives still require online resolution.
+# Validate/update across Python 3.10-3.13 and all CI platforms before release.
+# Public package dependency ranges in pyproject.toml remain independent.
+annotated-types==0.7.0
+anyio==4.14.2
+attrs==26.1.0
+certifi==2026.7.22
+cffi==2.1.0
+click==8.4.2
+colorama==0.4.6
+cryptography==49.0.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+httpx-sse==0.4.3
+idna==3.18
+iniconfig==2.3.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+mcp==1.28.1
+packaging==26.2
+pluggy==1.6.0
+portalocker==3.2.0
+pycparser==3.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pydantic-settings==2.14.2
+Pygments==2.20.0
+PyJWT==2.13.0
+pytest==8.4.2
+python-dotenv==1.2.2
+python-multipart==0.0.32
+pywin32==311; sys_platform == "win32"
+referencing==0.37.0
+# The observed rpds-py build requires Python >=3.11; do not constrain 3.10 to it.
+rpds-py==2026.6.3; python_version >= "3.11"
+setuptools==83.0.0
+sse-starlette==3.4.6
+starlette==1.3.1
+typing-extensions==4.16.0
+typing-inspection==0.4.2
+uvicorn==0.51.0
+build==1.5.0
+twine==6.2.0
+cyclonedx-bom==7.3.0

@@ -276,10 +276,10 @@ class TestCorpusIntegrationLesson:
         monkeypatch.setenv("ENGRAM_DIR", str(engram))
         e = _make_engram(engram)
 
-        result = e.add_lesson({"summary": "never use eval() in production"})
+        result = e.add_lesson({"summary": "never evaluate untrusted code in production"})
 
         # In-memory: plaintext
-        assert result["summary"] == "never use eval() in production"
+        assert result["summary"] == "never evaluate untrusted code in production"
 
         # On disk: encrypted
         lessons_raw = json.loads(

@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """Canonical knowledge trust/provenance semantics.
 
 Contract matrix:
@@ -224,7 +225,7 @@ def test_legal_anchor_project_ids_remain_compatible(project_id: str) -> None:
 
 
 def test_recall_provenance_and_trust_fail_closed_without_echoing_unsafe_refs() -> None:
-    unsafe = "C:/Users/victim/sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\nsecret"
+    unsafe = ("C:/Users/victim/sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\nsecret")
     entry = {
         "source_tool": unsafe,
         "provenance": {

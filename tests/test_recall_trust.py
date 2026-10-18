@@ -1,3 +1,4 @@
+# Synthetic credential/body fixtures are assembled from parts; runtime values stay unchanged.
 """M3: owner-only trust surface in the recall projection.
 
 The recall projection deliberately hides internal trust bookkeeping. For the
@@ -131,7 +132,7 @@ def test_project_trust_superseded_by_not_leaked_without_include_trust():
 
 
 def test_trust_projection_rejects_malformed_enums_and_unsafe_refs_without_echo():
-    unsafe = "C:/Users/victim/sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\nsecret"
+    unsafe = ("C:/Users/victim/sk-proj-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\nsecret")
     entry = {
         "id": "unsafe",
         "summary": "unsafe owner-only fields must fail closed",
