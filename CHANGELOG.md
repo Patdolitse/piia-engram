@@ -11,12 +11,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ### Added
 
 - Optional event keys in both isolated store modes support idempotent retries, refuse conflicting reuse, and keep identical-template events independent. Existing unkeyed admission behavior is preserved.
-- Recall receipts record a snapshot ID, ordered item IDs, content hashes, effective cuts, query, limit and omission counts. `verify_recall_receipt` checks integrity and identifies later retirement, veto, changed content and missing items without returning their bodies.
+- Recall receipts record a snapshot ID, ordered item IDs, content hashes, effective cuts, query digest and term count, limit and omission counts. `verify_recall_receipt` checks integrity and identifies later retirement, veto, changed content and missing items without returning their bodies.
 - Replay experience retirement and restoration accept optional logical effective times while retaining real receipt timestamps and legacy ledger ordering. Owner vetoes apply at every time.
 
 ### Changed
 
-- GitHub Actions are pinned to full commit SHAs, CI dependencies use `requirements.lock`, and Dependabot and a repository plugin-scanner workflow are configured. Synthetic fixtures are explicitly labelled as synthetic.
+- GitHub Actions are pinned to full commit SHAs, CI dependencies use constraints in `requirements.lock`, and Dependabot and a repository plugin-scanner workflow are configured.
 
 ### Fixed
 

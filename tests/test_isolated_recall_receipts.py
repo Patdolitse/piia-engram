@@ -28,7 +28,7 @@ def test_recall_receipt_matches_ledger_and_binds_the_input_snapshot(tmp_path, mo
     assert receipt["returned_content_sha256"] == [content_hash(rows[item_id]) for item_id in receipt["returned_ids"]]
     assert receipt["effective_evidence_before"] == result["effective_evidence_before"]
     assert receipt["effective_admitted_before"] == result["effective_admitted_before"]
-    assert receipt["query"] == "cache" and receipt["limit"] == 1
+    assert "query" not in receipt and receipt["query_term_count"] == 1 and receipt["limit"] == 1
     assert receipt["root_mode"] == "production"
     assert receipt["as_of_utc"] == "2099-01-01T00:00:00Z"
     assert receipt["omitted"] == {"limit": 1}
