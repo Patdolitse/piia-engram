@@ -26,6 +26,7 @@ tests/**
 tests/test_isolated_events.py
 tests/test_isolated_recall_receipts.py
 tests/test_isolated_lifecycle_time.py
+tests/test_isolated_field_audit.py
 
 # ── Public helper scripts (sanitize check, hook installer, etc.) ─────
 scripts/**

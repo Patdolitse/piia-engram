@@ -114,6 +114,22 @@ class ReceiptsUnreadable(Exception):
 
 FAMILY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
 EVENT_KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
+IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}")
+
+
+def _identifier(value: Any, field: str) -> str:
+    """Public operation metadata is a bounded ASCII identifier, never prose."""
+    if not isinstance(value, str) or IDENTIFIER_RE.fullmatch(value) is None:
+        raise GuardRefused(f"{field}_invalid")
+    return value
+
+
+def _receipt_detail(record: dict) -> dict:
+    """Keep fixed reason codes; variable diagnostics may contain caller content."""
+    record = dict(record)
+    if "detail" in record and record["detail"] not in ("secret_or_path_shape", "already_archived"):
+        record["detail_sha256"] = _sha256_bytes(str(record.pop("detail")).encode("utf-8"))
+    return record
 
 
 def validate_event_key(value: Any) -> str:
@@ -582,8 +598,11 @@ def check_candidate(path: Path, deny: Iterable[str], *, label: str) -> str:
 def check_environment(cfg: Config) -> None:
     from . import capacity as _capacity
 
-    # Production keeps the released pinned-environment rule below. The new
-    # typed, bounded capacity contract belongs only to replay roots.
+    if (set(cfg.limits) != set(DEFAULT_LIMITS)
+            or not all(type(value) is int for value in cfg.limits.values())):
+        raise GuardRefused("guard_limits_invalid")
+    # Replay roots additionally bound capacity; production retains its pinned
+    # numeric settings and the released environment checks below.
     if cfg.mode == REPLAY_EXPERIENCE:
         try:
             valid_limits = (all(type(value) is int for value in cfg.limits.values())
@@ -748,8 +767,8 @@ class IsolatedStore:
 
     def _refuse_unreadable(self, op: str, detail: str) -> dict:
         """Refuse an operation without touching the broken chain; note it next to it."""
-        record = {"op": op, "result": "receipts_unreadable", "detail": detail, "ts": utc_now_z(),
-                  "pid": os.getpid()}
+        record = _receipt_detail({"op": op, "result": "receipts_unreadable", "detail": detail,
+                                  "ts": utc_now_z(), "pid": os.getpid()})
         with (self.receipts_dir / REFUSALS_FILE).open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(record, sort_keys=True) + "\n")
             fh.flush()
@@ -770,7 +789,7 @@ class IsolatedStore:
             **({"store_mode": self.mode} if self.mode == REPLAY_EXPERIENCE else {}),
             "root_state_sha256": self.state_hash(),
         }
-        full = {**base, **record}
+        full = {**base, **_receipt_detail(record)}
         with self.receipts_path.open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(full, ensure_ascii=False, sort_keys=True) + "\n")
             fh.flush()
@@ -855,7 +874,7 @@ class IsolatedStore:
         """Write one admitted card as a verified lesson. Returns the receipt."""
         from .storage import NOT_ADDED_STATUSES, hold_directory_lock
 
-        base = {"op": "admit", "round_id": str(round_id)}
+        base = {"op": "admit", "round_id": _identifier(round_id, "round_id")}
         problem = self._receipts_problem()
         if problem:
             return self._refuse_unreadable("admit", problem)
@@ -1161,6 +1180,11 @@ class IsolatedStore:
         if not FAMILY_RE.match(card["source_family"].strip()):
             raise ValueError("source_family must match [A-Za-z0-9_.-]{1,48}")
         subject = card["subject_id"].strip()
+        try:
+            _identifier(subject, "subject_id")
+            _identifier(card["source_decision_point"].strip(), "source_decision_point")
+        except GuardRefused as exc:
+            raise ValueError(exc.code) from exc
         return {
             "summary": summary,
             "detail": detail,
@@ -1198,12 +1222,15 @@ class IsolatedStore:
 
     def retire(self, item_id: str, round_id: str, admission: dict, *, _op: str = "retire",
                effective_at: str | None = None, now: str | None = None) -> dict:
-        base = {"op": _op, "round_id": str(round_id), "item_id": item_id}
+        if _op not in ("retire", "veto_retire"):
+            raise GuardRefused("lifecycle_op_invalid")
+        base = {"op": _op, "round_id": _identifier(round_id, "round_id"),
+                "item_id": _identifier(item_id, "item_id")}
         problem = self._receipts_problem()
         if problem:
             return self._refuse_unreadable(_op, problem)
         if _op == "veto_retire" and isinstance(admission, dict):
-            base["operator"] = str(admission.get("operator") or "")
+            base["operator"] = _identifier(admission.get("operator"), "operator")
         if _op == "retire" and not _full_admission(admission, "retire"):
             with self.serial():
                 return self._append({**base, "result": "admission_missing"})
@@ -1233,7 +1260,8 @@ class IsolatedStore:
 
     def restore(self, item_id: str, round_id: str, admission: dict, *,
                 effective_at: str | None = None, now: str | None = None) -> dict:
-        base = {"op": "restore", "round_id": str(round_id), "item_id": item_id}
+        base = {"op": "restore", "round_id": _identifier(round_id, "round_id"),
+                "item_id": _identifier(item_id, "item_id")}
         problem = self._receipts_problem()
         if problem:
             return self._refuse_unreadable("restore", problem)
@@ -1297,6 +1325,7 @@ class IsolatedStore:
     def owner_clear_latch(self, operator: str) -> dict:
         from . import strict_mode as _strict_mode
 
+        _identifier(operator, "operator")
         problem = self._receipts_problem()
         if problem:  # refuse before acting: never clear the latch without a receipt
             return self._refuse_unreadable("veto_clear_latch", problem)
@@ -1309,6 +1338,7 @@ class IsolatedStore:
     def owner_rebind(self, operator: str) -> dict:
         from .atomic_replace import replace_with_retry
 
+        _identifier(operator, "operator")
         problem = self._receipts_problem()
         if problem:  # refuse before acting: never rebind without a receipt
             return self._refuse_unreadable("rebind", problem)
@@ -1359,8 +1389,10 @@ class IsolatedStore:
         if mode not in MODES or not isinstance(family, str) or not FAMILY_RE.match(family.strip()):
             raise RecallRefused("decision-point file lacks mode or a valid family_code")
         try:
+            if dp.get("kind") is not None:
+                _identifier(dp["kind"], "decision_point_kind")
             parse_utc_z(as_of, "as_of_utc")
-        except ValueError as exc:
+        except (GuardRefused, ValueError) as exc:
             raise RecallRefused(str(exc)) from exc
         return dp
 
@@ -1449,6 +1481,7 @@ class IsolatedStore:
                query: str | None = None, limit: int = 8, now: str | None = None) -> dict:
         from . import tombstones as _tombstones
 
+        _identifier(round_id, "round_id")
         problem = self._receipts_problem()
         if problem:
             self._refuse_unreadable("recall", problem)
@@ -1474,10 +1507,14 @@ class IsolatedStore:
                 exc = GuardRefused("evidence_after_clock")
                 _append_refusal(self.receipts_dir, exc)
                 raise exc
-        exclude = {_family_key(f) for f in extra_exclude_families}
+        exclude = set()
+        for family in extra_exclude_families:
+            if not isinstance(family, str) or FAMILY_RE.fullmatch(family.strip()) is None:
+                raise RecallRefused("excluded family is invalid")
+            exclude.add(_family_key(family))
         if not experience and dp["mode"] in MODES_EXCLUDING_OWN_FAMILY:
             exclude.add(_family_key(dp["family_code"]))
-        wanted_subjects = {str(m) for m in subject_ids} if subject_ids is not None else None
+        wanted_subjects = {_identifier(m, "subject_id") for m in subject_ids} if subject_ids is not None else None
         terms = [t for t in str(query or "").casefold().split() if t]
         empty_query = query is not None and not terms  # design s8: an empty query returns nothing
         excluded: dict[str, int] = {}
@@ -1563,7 +1600,7 @@ class IsolatedStore:
                 "snapshot_id": _sha256_json(snapshot), "snapshot": snapshot,
                 "returned_content_sha256": [content_hash(row) for _ev, _id, row in picked[:effective_limit]],
                 "as_of_utc": dp["as_of_utc"], "root_mode": self.mode,
-                "limit": effective_limit, "query": str(query) if query is not None else None,
+                "limit": effective_limit, "query_term_count": len(terms),
                 "excluded_families": sorted(exclude),
                 "subject_ids": sorted(wanted_subjects) if wanted_subjects is not None else None,
                 "omitted": omitted,

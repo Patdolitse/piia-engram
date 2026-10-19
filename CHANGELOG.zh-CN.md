@@ -11,12 +11,12 @@
 ### 新增
 
 - 两种隔离存储模式支持可选事件键，提供幂等重试、拒绝冲突复用，并让相同模板的事件保持独立。无事件键的准入保留既有行为。
-- 召回收据记录快照 ID、有序条目 ID、内容哈希、生效截止时间、查询、数量上限和省略计数。`verify_recall_receipt` 可核对完整性，并识别后续退役、否决、内容变化和缺失，不返回条目正文。
+- 召回收据记录快照 ID、有序条目 ID、内容哈希、生效截止时间、查询摘要与词数、数量上限和省略计数。`verify_recall_receipt` 可核对完整性，并识别后续退役、否决、内容变化和缺失，不返回条目正文。
 - 回放经验的退役与恢复支持可选逻辑生效时间，同时保留真实收据时间与旧账本顺序。Owner 否决覆盖所有时刻。
 
 ### 变更
 
-- GitHub Actions 固定为完整提交 SHA，CI 依赖使用 `requirements.lock`，并配置 Dependabot 与仓库 plugin-scanner 工作流。合成测试样本明确标为合成数据。
+- GitHub Actions 固定为完整提交 SHA，CI 依赖使用 `requirements.lock` 中的约束，并配置 Dependabot 与仓库 plugin-scanner 工作流。
 
 ### 修复
 
