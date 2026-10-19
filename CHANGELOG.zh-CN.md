@@ -16,6 +16,7 @@
 
 ### 变更
 
+- 隔离存储的轮次、条目、主体与操作人标识必须是 ASCII 标识符（字母、数字及 . _ : / @ + -）；自由文本（包括含空格的名字）在写入前即被拒绝。召回收据不再保存原始查询文本。
 - GitHub Actions 固定为完整提交 SHA，CI 依赖使用 `requirements.lock` 中的约束，并配置 Dependabot 与仓库 plugin-scanner 工作流。
 
 ### 修复
