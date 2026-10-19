@@ -6,21 +6,26 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-- Supply-chain hygiene: pinned actions, a CI dependency lock, dependency update configuration, and a repository scanner workflow.
+## [4.25.0] - 2026-10-19
 
 ### Added
 
-- Optional event keys for automated offline and online evaluation callers in both isolated store modes: idempotent retries, stable conflict refusals, independent identical-template events, and key-based lifecycle and reconciliation checks. Ordinary stores and MCP cannot enable the internal admission path; unkeyed admission keeps existing behavior.
-- Recall receipts seal the input ledger snapshot, ordered item IDs and content hashes, effective cuts, query, limit and omission counts. Body-free verification identifies later retirement, veto, content changes and missing items.
-- Optional logical effective times for replay experience retirement and restoration, retaining real receipt timestamps and old ledger semantics. Owner vetoes still hide cards at every time.
+- Optional event keys in both isolated store modes support idempotent retries, refuse conflicting reuse, and keep identical-template events independent. Existing unkeyed admission behavior is preserved.
+- Recall receipts record a snapshot ID, ordered item IDs, content hashes, effective cuts, query, limit and omission counts. `verify_recall_receipt` checks integrity and identifies later retirement, veto, changed content and missing items without returning their bodies.
+- Replay experience retirement and restoration accept optional logical effective times while retaining real receipt timestamps and legacy ledger ordering. Owner vetoes apply at every time.
+
+### Changed
+
+- GitHub Actions are pinned to full commit SHAs, CI dependencies use `requirements.lock`, and Dependabot and a repository plugin-scanner workflow are configured. Synthetic fixtures are explicitly labelled as synthetic.
 
 ### Fixed
 
-- Refused keyed isolated admissions close their pending intents without changing admission receipt shapes. Reconciliation distinguishes dangling intents from committed rows awaiting completion; callers can explicitly abandon an intent with no row through a library-only operation.
-- Keyed isolated admissions recover missing completion receipts on a validated retry after an interrupted write. Reconciliation identifies incomplete admissions and duplicate active rows, while allowing append-only archive copies.
-- Replay experience logical lifecycle operations preserve legacy sequence ordering; event retries and recall receipt verification use the same logical lifecycle state as recall while separately checking stored content and integrity.
+- Retrying a keyed isolated admission after an interrupted write can recover its missing completion receipt. Reconciliation distinguishes unfinished admissions and duplicate active rows from append-only archive copies, and refused admissions close their pending intents.
+- Event retries and recall receipt verification use the same logical lifecycle state as replay recall while separately checking stored content and integrity.
+
+### Release Evidence
+
+See the [release evidence declarations](release-evidence/README.md) for the checks required before publication.
 
 ## [4.24.0] - 2026-10-11
 
