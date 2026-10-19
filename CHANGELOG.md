@@ -16,6 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Changed
 
+- Isolated store round, item, subject and operator identifiers must be ASCII identifiers (letters, digits and . _ : / @ + -); free text, including names with spaces, is refused before anything is written. Recall receipts no longer store the raw query.
 - GitHub Actions are pinned to full commit SHAs, CI dependencies use constraints in `requirements.lock`, and Dependabot and a repository plugin-scanner workflow are configured.
 
 ### Fixed
