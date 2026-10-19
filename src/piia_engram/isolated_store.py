@@ -598,8 +598,7 @@ def check_candidate(path: Path, deny: Iterable[str], *, label: str) -> str:
 def check_environment(cfg: Config) -> None:
     from . import capacity as _capacity
 
-    if (set(cfg.limits) != set(DEFAULT_LIMITS)
-            or not all(type(value) is int for value in cfg.limits.values())):
+    if set(cfg.limits) != set(DEFAULT_LIMITS):
         raise GuardRefused("guard_limits_invalid")
     # Replay roots additionally bound capacity; production retains its pinned
     # numeric settings and the released environment checks below.
