@@ -284,7 +284,9 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
         f"_Exported from Engram at {_now_iso()}_",
     ])
     soul_path = out / "SOUL.md"
-    soul_path.write_text(mode_prefix + "\n".join(soul_lines), encoding="utf-8")
+    from .generated_artifacts import write_generated_text
+
+    write_generated_text(engram.root, soul_path, mode_prefix + "\n".join(soul_lines))
     exported.append(str(soul_path))
 
     # --- USER.md: User personal info ---
@@ -298,7 +300,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
         f"_Source: Engram ({_now_iso()})_",
     ]
     user_path = out / "USER.md"
-    user_path.write_text(mode_prefix + "\n".join(user_lines), encoding="utf-8")
+    write_generated_text(engram.root, user_path, mode_prefix + "\n".join(user_lines))
     exported.append(str(user_path))
 
     # --- MEMORY.md: Long-term memory (verified lessons + decisions) ---
@@ -366,7 +368,7 @@ def export_to_openclaw(engram: "Engram", output_dir: str) -> dict:
 
     memory_lines.append(source_footer)
     memory_path = out / "MEMORY.md"
-    memory_path.write_text(mode_prefix + "\n".join(memory_lines), encoding="utf-8")
+    write_generated_text(engram.root, memory_path, mode_prefix + "\n".join(memory_lines))
     exported.append(str(memory_path))
 
     return {

@@ -11,7 +11,7 @@
 
 自动化离线与在线评估调用方可初始化独立隔离存储，在两种模式的 `IsolatedStore.admit` 中提供 `event_key`：同键同内容返回 `already_admitted`，同键不同内容返回 `event_key_conflict`，不同键允许相同摘要。不传键且不替换时保留既有去重规则。把召回返回的 `receipt` 与决策一起保存，其中包含账本快照、按顺序排列的 ID 与内容哈希、实际时间截止、查询摘要、数量上限和省略计数。`verify_recall_receipt(receipt)` 不返回正文，只报告退役、否决、内容变化或缺失。在 `replay_experience` 中，退役/恢复可传带时区的 `effective_at` 与 `now`，受准入时刻、调用方时钟和真实时钟约束。Owner 否决覆盖所有时间；封存收据仍记录此前实际使用的内容引用。这些准入选项不向 MCP 或普通存储开放，用于防止意外混用与重复，不提供抵抗蓄意篡改的认证。
 
-打开存储前调用 `from piia_engram.isolated_store import require_contract; require_contract("1")` 固定契约 v1（`CONTRACT_VERSION == "1"`）。`admit(card, round_id, admission, supersedes=old_id)` 原子替换旧项：族和主体须匹配，`source_decision_point` 作为不透明字符串逐字比较。未知、失活或身份不匹配的目标以稳定 `GuardRefused` 错误码拒绝且不写盘。完成收据记录 `supersedes` 和 `superseded_by`；未提供事件键的替换也可中断重试。历史召回在准入时刻切换版本，回放模式使用逻辑 `admitted_before`，截止均为严格上界。存在其它活动版本或历史区间重叠时，恢复以 `superseded_active` 拒绝；回滚通过追加新版本完成，v1 不提供组合回滚操作。召回返回并记录 `result_sha256`：有效截止、排除计数及有序 `(id, content_sha256)` 的规范 JSON 的 SHA256；验证器在字段存在时复算，旧收据继续可读。不兼容变更必须采用新契约版本，旧版继续支持或在使用前以 `contract_version_unsupported` 明确拒绝。
+打开存储前调用 `from piia_engram.isolated_store import require_contract; require_contract("1")` 固定契约 v1（`CONTRACT_VERSION == "1"`）。`admit(card, round_id, admission, supersedes=old_id)` 原子替换旧项：族和主体须匹配，`source_decision_point` 作为不透明字符串逐字比较。未知、失活或身份不匹配的目标以稳定 `GuardRefused` 错误码拒绝且不写盘。完成收据记录 `supersedes` 和 `superseded_by`；未提供事件键的替换也可中断重试。历史召回在准入时刻切换版本，回放模式使用逻辑 `admitted_before`，截止均为严格上界。存在其它活动版本或历史区间重叠时，恢复以 `superseded_active` 拒绝；激活前还须核对每个版本的磁盘活动状态与收据，中断恢复或退休造成不一致时以 `supersede_state_mismatch` 拒绝。运行 `reconcile()` 并从一致备份恢复根目录与账本后再重试；回滚通过追加新版本完成，v1 不提供组合回滚操作。召回返回并记录 `result_sha256`：有效截止、排除计数及有序 `(id, content_sha256)` 的规范 JSON 的 SHA256；验证器在字段存在时复算，旧收据继续可读。不兼容变更必须采用新契约版本，旧版继续支持或在使用前以 `contract_version_unsupported` 明确拒绝。
 
 Engram 是一个**本地优先的 AI 工具个人记忆与身份层**。它让 Claude Code、Codex、
 Cursor、Windsurf、Claude Desktop 等兼容 MCP 的工具共享本地身份、受治理的长期知识
@@ -21,6 +21,8 @@ Cursor、Windsurf、Claude Desktop 等兼容 MCP 的工具共享本地身份、�
 先前会话记录（checkpoint 和 snapshot），这些记录未经审核，不提供行动授权。
 
 ---
+
+本地 `engram repair replay-rows --dry-run` 显示标记行、全库行数和阻止应用的规则。应用修复仅适用于误粘贴标记行不超过 5 行、且占全部经验、决策和归档行不超过 10%，同时没有已识别隔离元数据或账本证据的普通存储。大部分行都带标记时应视为受损回放根：运行 `engram doctor`，从备份恢复元数据。面向模型的生成文件在写入前登记到 `generated_artifacts.json`，包括自定义外部目标；修复和清除索引会按路径删除这些文件，不限扩展名，消费者须重新生成。修复结果会列出不可写外部目标，供本地清理；存储内部目标失效失败则保持修复待完成状态，继续拒绝正常接入。
 
 ## 0. 心智模型：Engram 是什么，不是什么
 

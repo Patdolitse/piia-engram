@@ -87,6 +87,10 @@ def contaminated(root):
     rows = json.loads(path.read_text(encoding="utf-8"))
     rows[0]["store_mode"] = MODE
     path.write_text(json.dumps(rows), encoding="utf-8")
+    # Repair is only authorized for a small minority of the whole store.
+    (root / "knowledge/decisions.json").write_text(json.dumps([
+        {"id": f"clean-{n}", "status": "retired"} for n in range(9)
+    ]), encoding="utf-8")
     return eng, path, rows[0]
 
 
@@ -188,6 +192,10 @@ def test_repair_keeps_clean_rows_and_markers_in_backups_and_quarantine(tmp_path,
     text = (json.dumps(clean) + "\r\n" + json.dumps(marked) + "\r\n"
             if path.suffix == ".jsonl" else json.dumps([clean, marked]))
     path.write_bytes(text.encode("utf-8"))
+    other = root / ("knowledge/lessons.json" if relative == "knowledge/decisions.json"
+                    else "knowledge/decisions.json")
+    other.write_text(json.dumps([{"id": f"ordinary-{n}", "status": "retired"}
+                                for n in range(18)]), encoding="utf-8")
     original = path.read_bytes()
     assert run_cli(["replay-rows", "--apply"]) == 0
     actual = ([json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]

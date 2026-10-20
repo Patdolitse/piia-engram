@@ -619,7 +619,9 @@ class AnalyticsMixin:
         while report_path.exists():
             report_path = self._exports_dir / f"knowledge_report_{date_str}_{counter}.md"
             counter += 1
-        report_path.write_text(report, encoding="utf-8")
+        from .generated_artifacts import write_generated_text
+
+        write_generated_text(self.root, report_path, report)
         return report
 
     def get_stats(self) -> dict:

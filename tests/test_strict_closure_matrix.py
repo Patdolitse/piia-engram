@@ -1019,8 +1019,11 @@ def test_cli_export_sorts_reproposals_first_and_leaves_store_unchanged(eng, tmp_
     code, _out = _cli(monkeypatch, capsys, "export", "--out", str(out_dir))
 
     assert code == 0
-    after = {k: v for k, v in _snapshot(tmp_path).items() if not k.startswith("review-out")}
+    after = {k: v for k, v in _snapshot(tmp_path).items()
+             if not k.startswith("review-out") and k != "generated_artifacts.json"}
     assert after == before
+    manifest = json.loads((eng.root / "generated_artifacts.json").read_text(encoding="utf-8"))
+    assert manifest == {"version": 1, "targets": [str((out_dir / "review.md").resolve())]}
     ids = json.loads((out_dir / "ids.json").read_text(encoding="utf-8"))
     assert ids[0] == repro["id"]
     text = (out_dir / "review.md").read_text(encoding="utf-8")

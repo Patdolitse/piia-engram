@@ -292,7 +292,9 @@ def run_export(args: list[str]) -> int:
     ]
     for n, (kind, row) in enumerate(pending, 1):
         lines.extend(_card(n, kind, row, eng, lookup.get(kind)))
-    (out_dir / "review.md").write_text("\n".join(lines), encoding="utf-8")
+    from .generated_artifacts import write_generated_text
+
+    write_generated_text(eng.root, out_dir / "review.md", "\n".join(lines))
     (out_dir / "ids.json").write_text(
         json.dumps([row.get("id") for _kind, row in pending], indent=1), encoding="utf-8"
     )

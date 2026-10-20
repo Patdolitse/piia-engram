@@ -17,7 +17,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ### Fixed
 
 - Only complete 64-character hexadecimal digests in known digest metadata fields skip phone detection; free text and all other sensitive-data detectors retain their existing checks.
-- Ordinary stores containing replay-marked knowledge refuse normal use. Read-only doctor reports files and row counts; the local `engram repair replay-rows` command previews or backs up and quarantines pasted rows, invalidates generated context and search indexes, and records metadata-only audit evidence. Repair refuses recognized isolated roots and unreadable knowledge.
+- Ordinary stores containing replay-marked knowledge refuse normal use. Read-only doctor and local `engram repair replay-rows` previews report counts. Apply requires no recognized isolation evidence and at most five marked rows, comprising at most 10% of all lesson, decision and archive rows; otherwise restore damaged replay metadata from backup. Repair backs up and quarantines eligible rows, deletes every registered generated target regardless of extension (including writable external targets), reports external invalidation failures, and clears search indexes with metadata-only audit evidence. Generated targets are recorded in a store-local manifest before publication; index purges also invalidate them.
+- Isolated version activation checks physical activity across the entire supersede chain against receipts in both modes. Interrupted lifecycle writes refuse with `supersede_state_mismatch` before another activation; reconcile retains its diagnostics. Restore a consistent root and ledger backup before retrying.
 
 ## [4.25.0] - 2026-10-19
 

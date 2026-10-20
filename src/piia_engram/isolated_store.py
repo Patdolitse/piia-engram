@@ -293,7 +293,7 @@ def _replay_root_signal(root: Path) -> str:
 
 def stored_replay_findings(root: Path) -> dict:
     """Read-only, metadata-only diagnostics for refused replay rows and bad files."""
-    withheld, unreadable = {}, []
+    withheld, unreadable, total_rows = {}, [], 0
     for relative in ("knowledge/lessons.json", "knowledge/decisions.json",
                      "knowledge/overflow_archive/lessons.jsonl",
                      "knowledge/overflow_archive/decisions.jsonl"):
@@ -304,11 +304,13 @@ def stored_replay_findings(root: Path) -> dict:
                 if path.suffix == ".jsonl":
                     for line in source:
                         if line.strip():
+                            total_rows += 1
                             count += int(carries_replay_marker(json.loads(line)))
                 else:
                     rows = json.load(source)
                     if not isinstance(rows, list):
                         raise ValueError("expected a knowledge list")
+                    total_rows += len(rows)
                     count = sum(carries_replay_marker(row) for row in rows)
         except FileNotFoundError:
             continue
@@ -325,11 +327,16 @@ def stored_replay_findings(root: Path) -> dict:
         hints.append("guard_mode_immutable: normal use refused. Owner: run engram doctor, then "
                      "engram repair replay-rows --dry-run; use --apply to back up and quarantine "
                      "accidentally pasted rows in an ordinary store. Never strip provenance.")
+        marked_rows = sum(withheld.values())
+        if marked_rows > 5 or marked_rows * 10 > total_rows:
+            hints.append("repair_replay_dominant: marked rows exceed the ordinary-store minority limit; "
+                         "treat this as a damaged replay root and restore its metadata from backup.")
     if unreadable:
         hints.append("Check and restore a known-good local backup before repairing unreadable files; "
                      "no files were changed by this check.")
     return {"name": "stored_replay", "status": "WARN" if withheld or unreadable or pending else "PASS",
             "files": withheld, "withheld": withheld, "unreadable": unreadable, "read_only": True,
+            "total_rows": total_rows, "marked_rows": sum(withheld.values()),
             "repair_pending": pending,
             "hint": " ".join(hints)}
 
@@ -1224,6 +1231,10 @@ class IsolatedStore:
                 return {**reply, "result": "event_key_conflict"}
             status = self._event_intent_status(eng, intent)
             if status == "repairable":
+                if intent.get("supersedes"):
+                    completion = {**self._complete_event_intent(intent),
+                                  "ts": utc_now_z(), "seq": receipts[-1]["seq"] + 1}
+                    self._check_version_activity(eng, receipts + [completion], intent["item_id"])
                 return self._complete_event_intent(intent)
             if status == "not_written":
                 return None
@@ -1283,8 +1294,11 @@ class IsolatedStore:
             if (not self._same_supersede_request(prior, base)
                     or prior.get("content_sha256") != content_hash(eng._repair_incoming_text(dict(entry)))):
                 raise GuardRefused("event_key_conflict")
+            if pending and self._event_intent_status(eng, pending) == "not_written":
+                self._check_version_activity(eng, receipts, target)
             return
         self._check_pending_supersede(target, receipts)
+        self._check_version_activity(eng, receipts, target)
         latest, vetoed = self._replay(receipts, None, experience=self.mode == REPLAY_EXPERIENCE)
         state = latest.get(target)
         if state is None:
@@ -1325,6 +1339,25 @@ class IsolatedStore:
         if any(r.get("supersedes") in members or r.get("item_id") in members
                for r in self._pending_event_intents(receipts) if r.get("supersedes")):
             raise GuardRefused("supersede_pending")
+
+    def _check_version_activity(self, eng, receipts: list[dict], item_id: str) -> None:
+        """Refuse an interrupted lifecycle write before activating any version.
+
+        Physical activity follows receipt append order even in replay mode;
+        logical time is only for recall. An unreceipted restore/retire cannot
+        be inferred safely from a row, so leave it for Owner recovery rather
+        than inventing a successful lifecycle receipt.
+        """
+        members = self._version_family(receipts, item_id)
+        physical, _ = self._replay(receipts, None)
+        rows = self._rows(eng)
+        active = [r.get("id") for r in rows if r.get("id") in members
+                  and (r.get("status") or "active") == "active"]
+        if (len(active) > 1 or any((member in active) != bool(physical.get(member, {}).get("active"))
+                                   for member in members)):
+            raise GuardRefused("supersede_state_mismatch",
+                               "physical version activity differs from receipts; run reconcile; "
+                               "restore a consistent root and ledger backup before retrying")
 
     def _version_overlap(self, receipts: list[dict], item_id: str) -> bool:
         """Check all historical intervals, including later logical lifecycle events."""
@@ -1462,6 +1495,7 @@ class IsolatedStore:
             self._recheck_before_write()
             receipts = self.receipts()
             self._check_pending_supersede(item_id, receipts)
+            self._check_version_activity(self._engram(read_only=True), receipts, item_id)
             try:
                 base.update(self._lifecycle_time(item_id, effective_at, now))
             except GuardRefused as exc:

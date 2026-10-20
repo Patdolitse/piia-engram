@@ -1,6 +1,7 @@
 """Regression witnesses for conservative repair and physical version activity."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -82,3 +83,243 @@ def test_crashed_restore_does_not_allow_two_active_versions(tmp_path, monkeypatc
               if r.get("status") == "active"]
     assert active == [old["item_id"]]
     assert any(p.startswith("supersede_state_mismatch:") for p in w.pr.reconcile()["problems"])
+
+
+def _ordinary(root, total=10):
+    eng = Engram(root=root)
+    eng.add_lesson("GENERATED_ARTIFACT_CANARY synthetic observation", source_tool="cli")
+    path = root / "knowledge/lessons.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    rows.extend({"id": f"extra-{n}", "status": "retired"} for n in range(total - 1))
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    return eng, path, rows
+
+
+def _mark(path, rows, count=1):
+    for row in rows[:count]:
+        row["store_mode"] = "replay_experience"
+    path.write_text(json.dumps(rows), encoding="utf-8")
+
+
+@pytest.mark.parametrize("marked,total,refused", [
+    (1, 1, True), (5, 49, True), (6, 100, True), (1, 10, False), (5, 50, False),
+])
+def test_repair_minority_limits_are_conjunctive_and_dry_run_is_zero_write(tmp_path, marked, total, refused):
+    eng, path, rows = _ordinary(tmp_path / "ordinary", total=total)
+    _mark(path, rows, marked)
+    before = _snap(tmp_path)
+    preview = repair(eng.root)
+    assert preview["total_rows"] == total and preview["marked_rows"] == marked
+    assert preview["would_refuse"] == ("repair_replay_dominant" if refused else None)
+    assert _snap(tmp_path) == before
+    if refused:
+        with pytest.raises(GuardRefused, match="repair_replay_dominant.*doctor.*metadata.*backup"):
+            repair(eng.root, apply=True)
+        assert _snap(tmp_path) == before
+    else:
+        assert repair(eng.root, apply=True)["quarantined"] == marked
+
+
+def test_refused_cli_reports_counts_rules_and_backup_guidance_without_writes(tmp_path, monkeypatch, capsys):
+    from piia_engram.isolated_store import stored_replay_findings
+    from piia_engram.replay_row_repair import run_cli
+
+    eng, path, rows = _ordinary(tmp_path / "ordinary", total=1)
+    _mark(path, rows)
+    monkeypatch.setenv("ENGRAM_DIR", str(eng.root))
+    before = _snap(tmp_path)
+    assert run_cli(["replay-rows", "--dry-run"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["total_rows"] == preview["marked_rows"] == 1
+    assert preview["refusal_rules"] == ["marked_rows_over_10_percent"]
+    assert run_cli(["replay-rows", "--apply"]) == 1
+    refusal = json.loads(capsys.readouterr().out)
+    assert refusal["error"] == "repair_replay_dominant"
+    assert "doctor" in refusal["hint"] and "metadata" in refusal["hint"]
+    assert "repair_replay_dominant" in stored_replay_findings(eng.root)["hint"]
+    assert _snap(tmp_path) == before
+
+
+def test_minority_counts_include_both_archives_and_decisions(tmp_path):
+    eng, path, rows = _ordinary(tmp_path / "ordinary", total=1)
+    _mark(path, rows)
+    decisions = eng.root / "knowledge/decisions.json"
+    decisions.write_text(json.dumps([{"id": "clean-decision"}]), encoding="utf-8")
+    archive = eng.root / "knowledge/overflow_archive"
+    archive.mkdir(exist_ok=True)
+    for name in ("lessons.jsonl", "decisions.jsonl"):
+        (archive / name).write_text("\n".join(json.dumps({"id": f"clean-{n}"}) for n in range(4)),
+                                   encoding="utf-8")
+    preview = repair(eng.root)
+    assert preview["total_rows"] == 10 and len(preview["knowledge_rows"]) == 4
+    assert repair(eng.root, apply=True)["quarantined"] == 1
+
+
+@pytest.mark.parametrize("outside", [False, True])
+@pytest.mark.parametrize("suffix", [".txt", ".json", ".snapshot", ""])
+def test_registered_generated_targets_are_deleted_without_extension_filter(tmp_path, outside, suffix):
+    from piia_engram.generated_artifacts import MANIFEST
+
+    eng, path, rows = _ordinary(tmp_path / "ordinary")
+    target = (tmp_path if outside else eng.root) / ("cold-start" + suffix)
+    eng.refresh_quick_context(target=target)
+    manifest = json.loads((eng.root / MANIFEST).read_text(encoding="utf-8"))
+    assert manifest == {"version": 1, "targets": [str(target.resolve())]}
+    assert "GENERATED_ARTIFACT_CANARY" in target.read_text(encoding="utf-8")
+    _mark(path, rows)
+    result = repair(eng.root, apply=True)
+    assert not target.exists() and result["invalidation_failures"] == []
+
+
+def test_legacy_unregistered_store_local_text_snapshot_is_also_invalidated(tmp_path):
+    from piia_engram.generated_artifacts import MANIFEST
+
+    eng, path, rows = _ordinary(tmp_path / "ordinary")
+    target = eng.root / "legacy-cold-start.txt"
+    eng.refresh_quick_context(target=target)
+    (eng.root / MANIFEST).unlink()  # an artifact generated before manifests existed
+    _mark(path, rows)
+    assert repair(eng.root, apply=True)["changed"] and not target.exists()
+
+
+def test_external_unwritable_artifact_is_reported_without_hiding_other_targets(tmp_path, monkeypatch):
+    eng, path, rows = _ordinary(tmp_path / "ordinary")
+    external = tmp_path / "external.txt"
+    local = eng.root / "another.snapshot"
+    for target in (external, local):
+        eng.refresh_quick_context(target=target)
+    _mark(path, rows)
+    unlink = Path.unlink
+
+    def deny(target, *args, **kwargs):
+        if target == external:
+            raise PermissionError("synthetic unwritable target")
+        return unlink(target, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", deny)
+    result = repair(eng.root, apply=True)
+    assert result["changed"] and not local.exists() and external.exists()
+    assert result["invalidation_failures"] == [{"target": str(external),
+                                               "error": "PermissionError", "outside_store": True}]
+
+
+def test_local_unwritable_artifact_keeps_repair_closed(tmp_path, monkeypatch):
+    eng, path, rows = _ordinary(tmp_path / "ordinary")
+    target = eng.root / "locked.snapshot"
+    eng.refresh_quick_context(target=target)
+    _mark(path, rows)
+    original = path.read_bytes()
+    unlink = Path.unlink
+
+    def deny(candidate, *args, **kwargs):
+        if candidate == target:
+            raise PermissionError("synthetic unwritable target")
+        return unlink(candidate, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", deny)
+        with pytest.raises(GuardRefused, match="repair_artifact_invalidation_failed"):
+            repair(eng.root, apply=True)
+    assert path.read_bytes() == original
+    with pytest.raises(GuardRefused):
+        Engram(root=eng.root, read_only=True)
+    assert repair(eng.root, apply=True)["changed"] and not target.exists()
+
+
+def test_index_purge_invalidates_registered_artifacts(tmp_path):
+    eng, _, _ = _ordinary(tmp_path / "ordinary")
+    targets = [eng.root / "local.txt", tmp_path / "external.snapshot"]
+    for target in targets:
+        eng.refresh_quick_context(target=target)
+    assert eng.purge_search_index()
+    assert not any(target.exists() for target in targets)
+
+
+def test_generators_register_external_model_facing_exports(tmp_path, monkeypatch):
+    from piia_engram.compat import export_to_openclaw
+    from piia_engram.context_preview import write_context_preview_html
+    from piia_engram.generated_artifacts import recorded_targets
+
+    eng, path, rows = _ordinary(tmp_path / "ordinary")
+    monkeypatch.setenv("ENGRAM_DIR", str(eng.root))
+    export_to_openclaw(eng, str(tmp_path / "exports"))
+    preview = write_context_preview_html({}, eng.root, tmp_path / "preview.snapshot")
+    targets = [preview, *(tmp_path / "exports" / name for name in ("SOUL.md", "USER.md", "MEMORY.md"))]
+    assert set(targets).issubset(set(recorded_targets(eng.root)))
+    _mark(path, rows)
+    assert repair(eng.root, apply=True)["changed"]
+    assert not any(target.exists() for target in targets)
+
+
+def test_artifact_publication_failure_cannot_leave_an_unregistered_target(tmp_path, monkeypatch):
+    from piia_engram import generated_artifacts as generated
+
+    eng, _, _ = _ordinary(tmp_path / "ordinary")
+    target = tmp_path / "external.txt"
+    write = generated.atomic_write_text
+
+    def crash(path, text):
+        if path == target:
+            raise SystemExit("synthetic interrupted publication")
+        return write(path, text)
+
+    monkeypatch.setattr(generated, "atomic_write_text", crash)
+    with pytest.raises(SystemExit):
+        eng.refresh_quick_context(target=target)
+    assert target in generated.recorded_targets(eng.root)
+    assert not target.exists()
+
+
+def test_corrupt_manifest_refuses_repair_before_any_knowledge_write(tmp_path):
+    from piia_engram.generated_artifacts import MANIFEST
+
+    eng, path, rows = _ordinary(tmp_path / "ordinary")
+    _mark(path, rows)
+    (eng.root / MANIFEST).write_text("{torn", encoding="utf-8")
+    before = _snap(tmp_path)
+    with pytest.raises(ValueError):
+        repair(eng.root, apply=True)
+    assert _snap(tmp_path) == before
+
+
+@pytest.mark.parametrize("mode", ["production", "replay_experience"])
+@pytest.mark.parametrize("activation", ["restore", "supersede"])
+def test_all_physical_chain_members_are_checked_before_activation(tmp_path, monkeypatch, mode, activation):
+    w = _world(tmp_path, monkeypatch, mode=mode)
+    first = admit(w, 1)
+    second = admit(w, 2, supersedes=first["item_id"])
+    third = admit(w, 3, supersedes=second["item_id"])
+    # Simulate pre-existing drift in a non-adjacent ancestor of the target.
+    eng = w.pr._engram(read_only=False)
+    eng.update_lesson(first["item_id"], {"status": "active"})
+    before = _snap(w.area)
+    with pytest.raises(GuardRefused, match="supersede_state_mismatch"):
+        if activation == "restore":
+            w.pr.restore(second["item_id"], "round", RESTORE)
+        else:
+            admit(w, 4, supersedes=third["item_id"])
+    assert _snap(w.area) == before
+    assert any(p.startswith("supersede_state_mismatch:") for p in w.pr.reconcile()["problems"])
+
+
+@pytest.mark.parametrize("mode", ["production", "replay_experience"])
+def test_crashed_retire_also_refuses_conflicting_restore(tmp_path, monkeypatch, mode):
+    w = _world(tmp_path, monkeypatch, mode=mode)
+    first = admit(w, 1)
+    second = admit(w, 2, supersedes=first["item_id"])
+    append = w.pr._append
+
+    def crash(record):
+        if record.get("op") == "retire" and record.get("result") == "retired":
+            raise SystemExit("crash after physical retire before receipt")
+        return append(record)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(w.pr, "_append", crash)
+        with pytest.raises(SystemExit):
+            w.pr.retire(second["item_id"], "round", RETIRE)
+    w.pr = IsolatedStore.open(w.cfg)
+    before = _snap(w.area)
+    with pytest.raises(GuardRefused, match="supersede_state_mismatch"):
+        w.pr.restore(first["item_id"], "round", RESTORE)
+    assert _snap(w.area) == before

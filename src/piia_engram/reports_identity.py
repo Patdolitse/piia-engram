@@ -161,6 +161,8 @@ class IdentityCardMixin:
 
         # Also save to exports folder
         export_path = self._exports_dir / "identity_card.md"
-        export_path.write_text(card, encoding="utf-8")
+        from .generated_artifacts import write_generated_text
+
+        write_generated_text(self.root, export_path, card)
 
         return card

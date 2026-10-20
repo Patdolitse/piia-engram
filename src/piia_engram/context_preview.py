@@ -1111,6 +1111,7 @@ def write_context_preview_html(
     stamp = str(preview.get("generated_at", "")).replace(":", "").replace("-", "")
     name = f"context-preview-{stamp or 'latest'}.html"
     path = output or (root / "reports" / name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_context_preview_html(preview), encoding="utf-8")
+    from .generated_artifacts import write_generated_text
+
+    write_generated_text(root, path, lambda: render_context_preview_html(preview))
     return path
