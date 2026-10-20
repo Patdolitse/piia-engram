@@ -220,3 +220,6 @@ requirements.lock
 
 # Owner-local repair command (CLI only)
 src/piia_engram/replay_row_repair.py
+
+# Explicit review additions (also covered by tests/**).
+tests/test_review2_426.py
