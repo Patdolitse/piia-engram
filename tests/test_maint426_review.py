@@ -209,6 +209,8 @@ def test_repair_keeps_clean_rows_and_markers_in_backups_and_quarantine(tmp_path,
     assert json.loads(quarantine.read_text(encoding="utf-8")) == {"file": relative, "row": marked}
     assert Engram(root=root, read_only=True)._store_mode == "production"
     before = _snap(tmp_path)
+    # Force a timestamp boundary without depending on wall-clock scheduling.
+    monkeypatch.setattr("piia_engram.reports_identity._now_iso", lambda: "2099-01-01T00:00:00Z")
     assert run_cli(["replay-rows", "--apply"]) == 0
     after = _snap(tmp_path)
     assert after.keys() == before.keys()
