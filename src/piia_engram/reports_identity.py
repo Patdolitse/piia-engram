@@ -48,11 +48,11 @@ class IdentityCardMixin:
         write_generated_text(self.root, self._exports_dir / "identity_card.md", card)
         return card
 
-    def _render_identity_card(self) -> str:
+    def _render_identity_card(self, *, _mode_prefix: str | None = None) -> str:
         """Render without publishing, also used by local canonical repair."""
         from .isolated_store import export_mode_prefix
 
-        mode_prefix = export_mode_prefix(self)
+        mode_prefix = export_mode_prefix(self) if _mode_prefix is None else _mode_prefix
         zh = get_lang() == "zh"
 
         lines = [

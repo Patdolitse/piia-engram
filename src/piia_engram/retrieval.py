@@ -289,7 +289,8 @@ class RetrievalMixin:
 
     def _corpus_encrypted(self) -> bool:
         """True when corpus encryption is active for this engram."""
-        return bool(getattr(self, "_corpus_key", b""))
+        return bool(getattr(self, "_corpus_key", b"")) or bool(
+            getattr(getattr(self, "_crypto", None), "enabled", False))
 
     # ------------------------------------------------------------------
     # Round-3: non-destructive semantic near-duplicate surfacing on write
@@ -398,6 +399,9 @@ class RetrievalMixin:
 
         Returns True if anything was removed.
         """
+        return self._purge_search_index()
+
+    def _purge_search_index(self) -> bool:
         # Drop the cached handle first. SearchIndex opens/closes a fresh
         # connection per operation, so no file handle lingers between calls,
         # but clearing the cache forces a clean rebuild path afterwards.
@@ -519,12 +523,16 @@ class RetrievalMixin:
 
     def rebuild_index(self) -> dict:
         """Explicitly rebuild the search index from current JSON (CLI: reindex)."""
+        return self._rebuild_index()
+
+    def _rebuild_index(self) -> dict:
+        """Shared canonical builder; callers own attachment and write guards."""
         # Corpus encryption on → the FTS/vector tables would materialise
         # decrypted bodies into search_index.db in cleartext. Refuse to build
         # and purge any stale plaintext index instead of leaking it through the
         # explicit reindex path (Codex a5 round-2 P1-1).
         if self._corpus_encrypted():
-            purged = self.purge_search_index()
+            purged = self._purge_search_index()
             return {
                 "indexed": 0,
                 "vector_enabled": False,

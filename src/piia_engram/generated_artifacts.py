@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import ntpath
 import os
 from pathlib import Path
 import re
@@ -30,32 +31,72 @@ SOURCE_AREAS = frozenset({
 })
 STALE_MESSAGE = "stale generated file - regenerate or delete it yourself"
 UNVERIFIED_MESSAGE = "not verified, left untouched"
+SOURCE_FILES = frozenset({
+    MANIFEST, "audit.log", "replay_row_repair.pending.json",
+    "isolated_store_root.json", "isolated_store_limits.json",
+    "replay_experience.marker", "receipts.jsonl", "refusals.jsonl",
+    ".engram-write.lock", ".corpus_salt", ".backup_state.json",
+    ".bootstrap_done", ".update_check.json", "session_state.json",
+    "schema_version", "schema_version.json", "approval_mode.json",
+    "shared_instructions.md", "file_safety_ledger.jsonl", "file_safety_ledger.jsonl.1",
+    "audit.log.1", "telemetry.log", "telemetry.log.1", "telemetry_config.json",
+    "beta_events.jsonl", "beta_events.jsonl.1", "setup_report.jsonl",
+})
+
+
+def _windows_path(value: str) -> str:
+    value = value.replace("\\", "/")
+    if value[:8].casefold() in {"//?/unc/", "//./unc/"}:
+        value = "//" + value[8:]
+    elif value.startswith(("//?/", "//./")):
+        value = value[4:]
+    return ntpath.normpath(value).replace("\\", "/").casefold()
 
 
 def _path_key(path: Path) -> str:
+    if os.name == "nt":
+        return _windows_path(str(Path(_windows_path(str(path))).resolve()))
     value = str(path.resolve()).replace(os.sep, "/")
     # Default macOS volumes and Windows compare paths without case.
     return value.casefold() if os.name == "nt" or sys.platform == "darwin" else value
 
 
-def _source_target(root: Path, path: Path) -> bool:
+def _same_file(first: Path, second: Path) -> bool:
+    try:
+        return os.path.samefile(first, second)
+    except (OSError, ValueError):
+        return False
+
+
+def _source_paths(root: Path) -> list[Path]:
+    paths = [root, *(root / name for name in SOURCE_FILES)]
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        base = Path(directory)
+        if base == root:
+            dirs[:] = [name for name in dirs if name.casefold() in SOURCE_AREAS]
+        dirs[:] = [name for name in dirs if not (base / name).is_symlink()
+                   and not (hasattr(base / name, "is_junction") and (base / name).is_junction())]
+        if base != root:
+            paths.append(base)
+            paths.extend(base / name for name in (*dirs, *files))
+    return paths
+
+
+def _source_target(root: Path, path: Path, sources: list[Path] | None = None) -> bool:
     base, target = _path_key(root).rstrip("/"), _path_key(path)
     if target == base:
         return True
-    if not target.startswith(base + "/"):
-        return False
-    parts = target[len(base) + 1:].split("/")
-    return parts[0] in SOURCE_AREAS or (len(parts) == 1 and parts[0] in {
-        MANIFEST, "audit.log", "replay_row_repair.pending.json",
-        "isolated_store_root.json", "isolated_store_limits.json",
-        "replay_experience.marker", "receipts.jsonl", "refusals.jsonl",
-        ".engram-write.lock", ".corpus_salt", ".backup_state.json",
-        ".bootstrap_done", ".update_check.json", "session_state.json",
-        "schema_version", "schema_version.json", "approval_mode.json",
-        "shared_instructions.md", "file_safety_ledger.jsonl", "file_safety_ledger.jsonl.1",
-        "audit.log.1", "telemetry.log", "telemetry.log.1", "telemetry_config.json",
-        "beta_events.jsonl", "beta_events.jsonl.1", "setup_report.jsonl",
-    })
+    if target.startswith(base + "/"):
+        parts = target[len(base) + 1:].split("/")
+        if parts[0] in SOURCE_AREAS or (len(parts) == 1 and parts[0] in SOURCE_FILES):
+            return True
+    return path.exists() and any(_same_file(path, source) for source in (
+        sources if sources is not None else _source_paths(root)))
+
+
+def _canonical_target(root: Path, path: Path, names: tuple[str, ...]) -> bool:
+    key = _path_key(path)
+    return any(key == _path_key(root / name) or _same_file(path, root / name) for name in names)
 
 
 def _manifest_path(root: Path) -> Path:
@@ -116,7 +157,7 @@ def write_generated_text(root: Path, path: Path, text: str | Callable[[], str]) 
         content = text() if callable(text) else text
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(target, content)
-        if _path_key(target) in {_path_key(root / name) for name in (*CANONICAL_TEXT, *CANONICAL_METADATA)}:
+        if _canonical_target(root, target, (*CANONICAL_TEXT, *CANONICAL_METADATA)):
             return original
         # atomic_write_text uses UTF-8 and platform newline translation.
         digest = hashlib.sha256(content.replace("\n", os.linesep).encode("utf-8")).hexdigest()
@@ -155,6 +196,7 @@ def inspect_generated(root: Path) -> dict:
     root = Path(root)
     records, report = _inventory(root)
     seen = set()
+    sources = _source_paths(root)
     canonical = {_path_key(root / name) for name in (*CANONICAL_TEXT, *CANONICAL_METADATA, *CANONICAL_INDEX)}
     for record in records:
         path = Path(record["path"])
@@ -162,9 +204,9 @@ def inspect_generated(root: Path) -> dict:
         try:
             key = _path_key(path)
             seen.add(key)
-            if _source_target(root, path):
+            if _source_target(root, path, sources):
                 item.update(status="invalid", reason="reserved_store_source")
-            elif key in canonical:
+            elif _canonical_target(root, path, (*CANONICAL_TEXT, *CANONICAL_METADATA, *CANONICAL_INDEX)):
                 item.update(status="invalid", reason="canonical_artifact_managed_separately")
             elif not path.is_file():
                 item["reason"] = "missing_or_not_file"
@@ -190,14 +232,14 @@ def inspect_generated(root: Path) -> dict:
     # areas or directory links; require Engram's own header, not an extension.
     for directory, dirs, files in os.walk(root, followlinks=False):
         base = Path(directory)
-        dirs[:] = [name for name in dirs if not _source_target(root, base / name)
+        dirs[:] = [name for name in dirs if not _source_target(root, base / name, sources)
                    and not (base / name).is_symlink()
                    and not (hasattr(base / name, "is_junction") and (base / name).is_junction())]
         for name in sorted(files):
             path = base / name
             try:
                 key = _path_key(path)
-                if key in seen or key in canonical or _source_target(root, path):
+                if key in seen or key in canonical or _source_target(root, path, sources):
                     continue
                 if _legacy_header(path):
                     report.append({"target": str(path), "status": "stale_generated_file",
