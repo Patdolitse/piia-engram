@@ -226,3 +226,6 @@ tests/test_review2_426.py
 
 # Generated-artifact inventory and invalidation helper.
 src/piia_engram/generated_artifacts.py
+
+# Report-only generated-artifact regressions.
+tests/test_review3_426.py
