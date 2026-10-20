@@ -179,6 +179,11 @@ class Engram(
         with non_quarantining_reads() if read_only else nullcontext():
             self._initialize(candidate, read_only=read_only)
 
+    def _read_store_mode(self) -> str:
+        from .isolated_store import root_mode
+
+        return root_mode(self.root, self._store_mode)
+
     def _initialize(self, root: Path | None, *, read_only: bool):
         # read_only: open the store for a guaranteed zero-write read — e.g. a
         # local desktop client that only needs a resume brief and must never
@@ -3732,10 +3737,10 @@ def _non_quarantining_read_guard(method):
 
     @functools.wraps(method)
     def guarded(self, *args, **kwargs):
-        from .isolated_store import (root_mode, REPLAY_EXPERIENCE, mark_replay_export,
+        from .isolated_store import (REPLAY_EXPERIENCE, mark_replay_export,
                                      carries_replay_marker)
 
-        mode = root_mode(self.root, self._store_mode)
+        mode = self._read_store_mode()
         if getattr(self, '_read_only', False):
             with non_quarantining_reads():
                 result = method(self, *args, **kwargs)

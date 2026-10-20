@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -200,6 +201,7 @@ def test_repair_keeps_clean_rows_and_markers_in_backups_and_quarantine(tmp_path,
     other.write_text(json.dumps([{"id": f"ordinary-{n}", "status": "retired"}
                                 for n in range(18)]), encoding="utf-8")
     original = path.read_bytes()
+    monkeypatch.setattr("piia_engram.reports_identity._now_iso", lambda: "2000-01-01T00:00:00Z")
     assert run_cli(["replay-rows", "--apply"]) == 0
     actual = ([json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
               if path.suffix == ".jsonl" else json.loads(path.read_text(encoding="utf-8")))
@@ -214,8 +216,10 @@ def test_repair_keeps_clean_rows_and_markers_in_backups_and_quarantine(tmp_path,
     assert run_cli(["replay-rows", "--apply"]) == 0
     after = _snap(tmp_path)
     assert after.keys() == before.keys()
+    card = next(name for name in before if Path(name).as_posix().endswith("exports/identity_card.md"))
+    assert after[card] != before[card]
     for name in before:
-        if not name.endswith(("audit.log", "quick_context.md", "search_index.db", "exports/identity_card.md")):
+        if not Path(name).as_posix().endswith(("audit.log", "quick_context.md", "search_index.db", "exports/identity_card.md")):
             assert after[name] == before[name]  # all sources and recovery evidence stay byte-identical
 
 

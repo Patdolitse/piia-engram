@@ -129,3 +129,46 @@ def test_hardlink_to_store_source_is_invalid(tmp_path):
         entry = next(item for item in result["generated_files"] if item["target"] == str(alias))
         assert entry["status"] == "invalid" and entry["reason"] == "reserved_store_source"
     assert (source.read_bytes(), source.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize("alias,ordinary", [
+    ("\\\\?\\E:\\Store\\Knowledge\\rows.json", "e:/store/knowledge/rows.json"),
+    ("\\\\.\\E:\\Store\\Knowledge\\rows.json", "e:/store/knowledge/rows.json"),
+    ("\\\\?\\UNC\\server\\share\\Store\\rows.json", "//server/share/store/rows.json"),
+    ("//?/uNc/server/share/Store/rows.json", "//server/share/store/rows.json"),
+])
+def test_windows_namespace_normalization(alias, ordinary):
+    from piia_engram.generated_artifacts import _windows_path
+
+    assert _windows_path(alias) == _windows_path(ordinary)
+
+
+@pytest.mark.parametrize("failure", ["render", "purge"])
+def test_encrypted_regeneration_failure_refuses_until_retry(tmp_path, monkeypatch, failure):
+    pytest.importorskip("cryptography")
+    eng, path, rows = _ordinary(tmp_path / "store")
+    eng.rebuild_index()
+    (eng.root / ".corpus_salt").write_bytes(bytes(range(16)))
+    monkeypatch.setenv("ENGRAM_SECRET", "synthetic-retry-secret")
+    _mark(path, rows)
+    with monkeypatch.context() as patch:
+        if failure == "render":
+            def fail(*args, **kwargs):
+                raise OSError("synthetic render failure")
+            patch.setattr(Engram, "_render_quick_context", fail)
+        else:
+            unlink = Path.unlink
+
+            def fail(target, *args, **kwargs):
+                if target == eng.root / "search_index.db":
+                    raise PermissionError("synthetic index lock")
+                return unlink(target, *args, **kwargs)
+            patch.setattr(Path, "unlink", fail)
+        with pytest.raises(GuardRefused, match="repair_artifact_regeneration_failed"):
+            repair(eng.root, apply=True)
+    assert (eng.root / PENDING).exists()
+    with pytest.raises(GuardRefused):
+        Engram(root=eng.root, read_only=True)
+    assert repair(eng.root, apply=True)["changed"]
+    assert len(Engram(root=eng.root, read_only=True).get_lessons()) == 9
+    assert all(not (eng.root / name).exists() for name in CANONICAL_INDEX)

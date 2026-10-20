@@ -149,16 +149,14 @@ def _write_new(path: Path, data: bytes) -> None:
         os.fsync(target.fileno())
 
 
-def _regenerate(root: Path) -> list[str]:
-    """Rebuild a fixed set from a clean, private read view while pending stays.
+def _regenerate(root: Path) -> tuple[list[str], list[dict]]:
+    """Rebuild fixed canonical paths in the locked store, retaining pending.
 
-    The view uses the ordinary read-only Engram guard, without bypassing or
-    temporarily removing the real store's refusal marker. No inventory paths
-    participate in copying, rendering or publication.
+    The private reader permits only clean ordinary sources during this repair;
+    its public writes remain read-only. Normal attachments still refuse pending.
+    Initialization, rendering and index policy are shared with normal operation,
+    including the real salt and secret. Inventory paths never select writes.
     """
-    import shutil
-    import tempfile
-
     from .core import Engram
     from .file_safety import atomic_write_text
     from .generated_artifacts import CANONICAL_INDEX, CANONICAL_METADATA, CANONICAL_TEXT
@@ -167,45 +165,55 @@ def _regenerate(root: Path) -> list[str]:
 
     for relative in (*CANONICAL_TEXT, *CANONICAL_METADATA, *CANONICAL_INDEX):
         _local_path(root, relative)
-    regenerated = []
-    with tempfile.TemporaryDirectory(prefix=".replay-derived-", dir=root) as area:
-        view = Path(area)
-        for name in ("identity", "knowledge", "playbooks", "environment"):
-            source = _local_path(root, name)
-            if not source.exists():
-                continue
+    # Preflight sources as well as destinations before following any read path.
+    for name in ("identity", "knowledge", "playbooks", "environment", ".corpus_salt"):
+        source = _local_path(root, name)
+        if source.is_dir():
             for directory, dirs, files in os.walk(source, followlinks=False):
                 for child in (*dirs, *files):
                     _local_path(root, (Path(directory) / child).relative_to(root).as_posix())
-            shutil.copytree(source, view / name, ignore=shutil.ignore_patterns(".engram-write.lock"))
-        with non_quarantining_reads():
-            eng = Engram(root=view, read_only=True)
-            eng.data_orphans = []  # the view is intentionally detached
-            entries = eng._all_indexable_entries()
-            index = SearchIndex(view / "search_index.db", enable_vector=False)
-            index.rebuild(entries, fingerprint=eng._entries_fingerprint(entries))
-            quick = eng._render_quick_context()
-            card = eng._render_identity_card()
-            lessons = eng.get_lessons(limit=None, _update_access=False)
-            decisions = eng.get_decisions(limit=None, _update_access=False)
-        # A fresh database also discards unused pages containing old bodies.
-        # Regenerate existing SQLite sidecars as empty canonical files so stale
-        # WAL content cannot be replayed onto the newly published database.
-        for relative in CANONICAL_INDEX[1:]:
-            path = _local_path(root, relative)
-            if path.exists():
-                atomic_write_text(path, "")
+
+    class _CanonicalRepairReader(Engram):
+        def _read_store_mode(self) -> str:
+            _, preview = _inspection(self.root)
+            _require_eligible(preview)
+            if preview["marked_rows"] or not (self.root / PENDING).is_file():
+                raise GuardRefused("repair_reader_requires_clean_pending_store")
+            return "production"
+
+    regenerated, skipped = [], []
+    with non_quarantining_reads():
+        eng = _CanonicalRepairReader.__new__(_CanonicalRepairReader)
+        eng.root = root
+        eng._store_mode = eng._read_store_mode()
+        eng._initialize(root, read_only=True)
+        eng.data_orphans = []
+        # Fresh files discard old free pages and hot SQLite rollback content.
+        sidecars = [name for name in CANONICAL_INDEX[1:] if (root / name).exists()]
+        for relative in CANONICAL_INDEX:
+            _local_path(root, relative).unlink(missing_ok=True)
+        eng._search_index_cache = SearchIndex(root / "search_index.db", enable_vector=False)
+        index_result = eng._rebuild_index()
+        if "skipped" in index_result:
+            skipped.append({"path": "search_index.db", "reason": index_result["skipped"]})
+            # Purge failures must also cover sidecars, not just the database.
+            if any((root / name).exists() for name in CANONICAL_INDEX):
+                raise OSError("repair_index_purge_incomplete")
+        else:
+            for relative in sidecars:
+                atomic_write_text(_local_path(root, relative), "")
                 regenerated.append(relative)
-        replace_with_retry(view / "search_index.db", _local_path(root, "search_index.db"))
-        regenerated.append("search_index.db")
+            regenerated.append("search_index.db")
+        quick = eng._render_quick_context()
+        card = eng._render_identity_card(_mode_prefix="")
+        lessons = eng.get_lessons(limit=None, _update_access=False)
+        decisions = eng.get_decisions(limit=None, _update_access=False)
         for relative, content in (("quick_context.md", quick), ("exports/identity_card.md", card)):
             path = _local_path(root, relative)
             path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(path, content)
             regenerated.append(relative)
-    # Refresh existing fixed metadata pages after removing the private view,
-    # so storage counts do not include that temporary source copy. No probes,
-    # external-memory scan or client command is run during repair.
+    # No probes, external-memory scan or client command is run during repair.
     for relative in CANONICAL_METADATA:
         path = _local_path(root, relative)
         if not path.exists():
@@ -222,7 +230,7 @@ def _regenerate(root: Path) -> list[str]:
                 lessons=lessons, decisions=decisions, integrity_report=scan_integrity(root)))
         atomic_write_text(_local_path(root, relative), content)
         regenerated.append(relative)
-    return regenerated
+    return regenerated, skipped
 
 
 def repair(root: Path, *, apply: bool = False) -> dict:
@@ -274,7 +282,7 @@ def repair(root: Path, *, apply: bool = False) -> dict:
             finally:
                 temp.unlink(missing_ok=True)
         try:
-            regenerated = _regenerate(root)
+            regenerated, skipped = _regenerate(root)
         except Exception as cause:
             exc = GuardRefused("repair_artifact_regeneration_failed",
                                "Run engram doctor; retry local repair to regenerate canonical artifacts")
@@ -284,6 +292,7 @@ def repair(root: Path, *, apply: bool = False) -> dict:
         event = {"action": "replay_rows_repaired", "ts": stamp, "files": files,
                  "quarantined": sum(files.values()),
                  "regenerated": len(regenerated),
+                 "skipped": len(skipped),
                  "stale_generated": sum(item["status"] == "stale_generated_file"
                                         for item in generated["generated_files"])}
         with (root / "audit.log").open("a", encoding="utf-8") as audit:
@@ -292,7 +301,7 @@ def repair(root: Path, *, apply: bool = False) -> dict:
             os.fsync(audit.fileno())
         (root / PENDING).unlink()
     result = {**preview, "changed": True, "quarantined": sum(files.values()),
-              "regenerated_artifacts": regenerated, **generated}
+              "regenerated_artifacts": regenerated, "skipped_artifacts": skipped, **generated}
     if any(item["status"] == "stale_generated_file" for item in generated["generated_files"]):
         result["hint"] = "Stale generated files are left untouched; regenerate or delete them yourself."
     return result
