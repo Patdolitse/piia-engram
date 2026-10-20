@@ -461,7 +461,7 @@ def test_dock_portrait_json_arg_error_stays_json(monkeypatch, tmp_path, capsys):
     assert payload["markdown"] == ""
 
 
-def test_dock_portrait_html_writes_styled_page_zero_write(monkeypatch, tmp_path):
+def test_dock_portrait_html_writes_styled_page_and_registers_target(monkeypatch, tmp_path):
     from piia_engram.setup_wizard import _run_dock_portrait
 
     store = tmp_path / "store"
@@ -473,7 +473,11 @@ def test_dock_portrait_html_writes_styled_page_zero_write(monkeypatch, tmp_path)
     page = out.read_text(encoding="utf-8")
     assert page.startswith("<!doctype html>")
     assert 'class="hero"' in page and 'class="stats"' in page
-    assert _snapshot(store) == before  # rendering HTML never touches the store
+    after = {key: value for key, value in _snapshot(store).items()
+             if key != "generated_artifacts.json"}
+    assert after == before  # knowledge and identity remain unchanged
+    manifest = json.loads((store / "generated_artifacts.json").read_text(encoding="utf-8"))
+    assert manifest == {"version": 1, "targets": [str(out.resolve())]}
 
 
 def test_dock_portrait_html_requires_output(monkeypatch, tmp_path):
@@ -483,7 +487,7 @@ def test_dock_portrait_html_requires_output(monkeypatch, tmp_path):
     assert _run_dock_portrait(["--html"]) == 2
 
 
-def test_dock_portrait_html_zero_write_with_missing_trust_boundaries(monkeypatch, tmp_path):
+def test_dock_portrait_html_registration_does_not_backfill_trust_boundaries(monkeypatch, tmp_path):
     """read_only must NOT lazily backfill trust_boundaries.json to disk — the
     central _atomic_write guard."""
     from piia_engram.setup_wizard import _run_dock_portrait
@@ -498,7 +502,12 @@ def test_dock_portrait_html_zero_write_with_missing_trust_boundaries(monkeypatch
     before = _snapshot(store)
     assert _run_dock_portrait(["--html", "--output", str(out)]) == 0
     assert out.exists()  # the portrait still renders (backfilled in memory)
-    assert _snapshot(store) == before  # …but trust_boundaries.json was not written
+    after = {key: value for key, value in _snapshot(store).items()
+             if key != "generated_artifacts.json"}
+    assert after == before
+    assert not tb.exists()
+    manifest = json.loads((store / "generated_artifacts.json").read_text(encoding="utf-8"))
+    assert manifest == {"version": 1, "targets": [str(out.resolve())]}
 
 
 # --- dock-archive / dock-restore / dock-archived (reversible prune) -----------
