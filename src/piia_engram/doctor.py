@@ -1000,6 +1000,11 @@ def run_doctor_json(days: int | None = None) -> int:
         from piia_engram.hooks.spool import backlog
         report["hook_spool"] = backlog(Path(_engram_root()))
         from piia_engram.core import Engram
+        stored = stored_replay_check(Path(_engram_root()))
+        report["stored_replay"] = stored
+        if stored["unreadable"]:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 1
         report["decision_consistency"] = decision_consistency_check(Engram(root=Path(_engram_root()), read_only=True))
     except Exception as exc:  # the message may hold a private path: name the type only
         print(json.dumps({"error": type(exc).__name__, "read_only": True}))
@@ -1080,6 +1085,17 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
         print(f"    [!!] piia_engram.core import failed: {exc}")
         problems += 1
         return problems  # 后续检查都依赖 core
+
+    from .storage import _engram_root
+    stored = stored_replay_check(Path(_engram_root()))
+    if stored["status"] == "WARN":
+        print(f"    [!!] Stored replay entries withheld: {sum(stored['withheld'].values())}")
+        for issue in stored["unreadable"]:
+            print(f"    [!!] Knowledge file unreadable: {issue['file']} ({issue['error']})")
+        print("         Local repair: " + stored["hint"])
+        problems += 1
+        if stored["unreadable"]:
+            return problems
 
     # 2. Engram 实例化（读取 ~/.engram/）。Without --fix doctor only looks: a
     # read-only open stamps no session state and appends no audit receipts, so
@@ -1666,6 +1682,11 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
     return problems
 
 
+def stored_replay_check(root: Path) -> dict:
+    from .isolated_store import stored_replay_findings
+    return stored_replay_findings(root)
+
+
 def decision_consistency_check(eng) -> dict:
     """Read-only diagnostic for historical active predecessors; never repairs."""
     from . import recall_policy, version_chain
@@ -1682,7 +1703,8 @@ def decision_consistency_check(eng) -> dict:
         # Ordinary store readers may quarantine corruption. Diagnostics must
         # report it without creating a backup, audit entry or migrated record.
         raw_rows = read_list("decisions.json")
-        rows = [eng._ensure_fields(dict(row), "decision") for row in raw_rows]
+        rows = [eng._ensure_fields(dict(row), "decision") for row in raw_rows
+                if not eng._replay_withheld(row)]
         edges = validate_edges(read_list("relations.json"))
         lineage_rows = eng._lineage_authority_rows("decision")
     except (ValueError, UnicodeError, OSError):

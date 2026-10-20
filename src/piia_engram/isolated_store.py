@@ -246,7 +246,7 @@ def _initial_receipt(receipts_dir: Path, *, required: bool = True) -> dict | Non
     return initial
 
 
-def _replay_root_signal(root: Path) -> str:
+def _replay_root_signal(root: Path, *, withhold_rows: bool = False) -> str:
     """Discover replay provenance in the root without metadata or a launcher."""
     def marked(text: str) -> bool:
         try:
@@ -268,15 +268,54 @@ def _replay_root_signal(root: Path) -> str:
             with path.open(encoding="utf-8-sig") as source:
                 if path.suffix == ".jsonl":
                     for line in source:
-                        if line.strip() and marked(line):
+                        if line.strip() and marked(line) and not withhold_rows:
                             return relative
-                elif marked(source.read()):
+                elif marked(source.read()) and not withhold_rows:
                     return relative
         except FileNotFoundError:
             continue
         except (OSError, UnicodeError) as exc:
-            raise GuardRefused("guard_mode_immutable", "stored provenance unreadable") from exc
+            raise GuardRefused("guard_mode_immutable",
+                               f"stored provenance unreadable: {relative} ({type(exc).__name__}); "
+                               "check local backups before repairing") from exc
     return ""
+
+
+def stored_replay_findings(root: Path) -> dict:
+    """Read-only, metadata-only diagnostics for pasted replay rows and bad files."""
+    withheld, unreadable = {}, []
+    for relative in ("knowledge/lessons.json", "knowledge/decisions.json",
+                     "knowledge/overflow_archive/lessons.jsonl",
+                     "knowledge/overflow_archive/decisions.jsonl"):
+        path = Path(root) / relative
+        count = 0
+        try:
+            with path.open(encoding="utf-8-sig") as source:
+                if path.suffix == ".jsonl":
+                    for line in source:
+                        if line.strip():
+                            count += int(carries_replay_marker(json.loads(line)))
+                else:
+                    rows = json.load(source)
+                    if not isinstance(rows, list):
+                        raise ValueError("expected a knowledge list")
+                    count = sum(carries_replay_marker(row) for row in rows)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as exc:
+            unreadable.append({"file": relative, "error": type(exc).__name__})
+        if count:
+            withheld[relative] = count
+    hints = []
+    if withheld:
+        hints.append("Owner: archive or remove the replay-marked entries locally; "
+                     "do not strip their provenance to make them recallable.")
+    if unreadable:
+        hints.append("Check and restore a known-good local backup before repairing unreadable files; "
+                     "no files were changed by this check.")
+    return {"name": "stored_replay", "status": "WARN" if withheld or unreadable else "PASS",
+            "withheld": withheld, "unreadable": unreadable, "read_only": True,
+            "hint": " ".join(hints)}
 
 
 def _check_legacy_root(root: Path, marker: dict, audit_dir: Path, *, allow_rebind: bool = False) -> None:
@@ -333,8 +372,21 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None,
     try:
         if not isinstance(expected, str) or expected not in ROOT_MODES:
             raise GuardRefused("guard_mode_invalid")
-        if marker is None and _replay_root_signal(root):
-            raise GuardRefused("guard_mode_immutable", "replay root signal requires initialized metadata")
+        if marker is None:
+            # A surviving init ledger is independent isolation provenance even
+            # if metadata and the replay marker were accidentally removed.
+            if not isolated:
+                for directory in (audit_dir, root.with_name("receipts")):
+                    try:
+                        initial = _initial_receipt(directory, required=False)
+                    except GuardRefused:
+                        continue  # an unrelated sibling ledger is not this root's metadata
+                    if initial and root.is_dir() and initial.get("root_id") == _root_id(root):
+                        isolated = True
+                        if carries_replay_marker(initial):
+                            raise GuardRefused("guard_mode_immutable", "replay initialization requires root metadata")
+            if _replay_root_signal(root, withhold_rows=not isolated):
+                raise GuardRefused("guard_mode_immutable", "replay root signal requires initialized metadata")
         if not isolated:
             if expected != PRODUCTION:
                 raise GuardRefused("guard_mode_immutable", "initialized replay root required")

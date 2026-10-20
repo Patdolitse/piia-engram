@@ -680,17 +680,41 @@ def test_two_concurrent_imports_respect_the_queue_limit(store, monkeypatch):
     assert sum(r["queue_full"] for r in results) == 2
 
 
-def test_receipt_names_are_long_random_and_never_overwritten(store, monkeypatch):
+@pytest.mark.parametrize("cross_second", [False, True])
+def test_receipt_names_are_long_random_and_never_overwritten(store, monkeypatch, cross_second):
     import secrets as _secrets
+    from datetime import datetime, timezone
 
     from piia_engram import memory_import
 
+    class ReceiptClock:
+        calls = 0
+
+        @classmethod
+        def now(cls, tz):
+            cls.calls += 1
+            second = 36 + (cls.calls - 1 if cross_second else 0)
+            return datetime(2026, 10, 20, 15, 58, second, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(memory_import, "datetime", ReceiptClock)
     tokens = iter(["a" * 16, "a" * 16, "b" * 16])
-    monkeypatch.setattr(_secrets, "token_hex", lambda n=None: next(tokens))
+    requested_lengths = []
+
+    def token_hex(n):
+        requested_lengths.append(n)
+        return next(tokens)
+
+    monkeypatch.setattr(_secrets, "token_hex", token_hex)
     payload = {"items": [], "imported": 0, "sources": ["memories"], "partial": True, "error": "X"}
     first_id, first = memory_import.write_receipt(store, payload)
+    first_bytes = first.read_bytes()
     second_id, second = memory_import.write_receipt(store, payload)
 
-    assert first_id.endswith("a" * 16) and second_id.endswith("b" * 16)
+    # A collision requires BOTH timestamp and random suffix to match.
+    suffix = "a" if cross_second else "b"
+    assert first_id.endswith("a" * 16) and second_id.endswith(suffix * 16)
+    assert requested_lengths == [8] * (2 if cross_second else 3)
+    assert first.read_bytes() == first_bytes
+    assert json.loads(second.read_text(encoding="utf-8"))["receipt_id"] == second_id
     assert first != second and first.is_file() and second.is_file()
     assert json.loads(first.read_text(encoding="utf-8"))["receipt_id"] == first_id

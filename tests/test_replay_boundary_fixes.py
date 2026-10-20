@@ -406,3 +406,185 @@ def test_production_markdown_and_native_exports_match_base_bytes(tmp_path, monke
     actual = eng.export_all_with_summary(str(path))
     assert _bytes(actual) == _bytes(expected)
     assert path.read_bytes() == expected_bytes
+
+
+
+@pytest.mark.parametrize("kind", ["lesson", "decision"])
+@pytest.mark.parametrize("placement", ["text", "metadata", "mode", "nested"])
+@pytest.mark.parametrize("archived", [False, True])
+def test_ordinary_store_withholds_pasted_replay_row(tmp_path, monkeypatch, kind, placement, archived):
+    root = tmp_path / "ordinary"
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.setenv("ENGRAM_AUDIT", "1")
+    eng = Engram(root=root)
+    eng.add_lesson("Use deterministic fixtures for the clean sample", domain="testing")
+    filename = "lessons.json" if kind == "lesson" else "decisions.json"
+    path = root / "knowledge" / filename
+    rows = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    row = {"id": "withheld-synthetic", "status": "active", "tier": "verified",
+           "summary": "WITHHELD_CANARY", "detail": "WITHHELD_CANARY",
+           "question": "WITHHELD_CANARY", "choice": "WITHHELD_CANARY",
+           "reasoning": "WITHHELD_CANARY"}
+    if placement == "text":
+        row["detail"] += REPLAY_EXPORT_MARKER
+    elif placement == "metadata":
+        row["store_mode"] = MODE
+    elif placement == "mode":
+        row["mode"] = MODE
+    else:
+        row["provenance"] = {"origin": [{"store_mode": MODE}]}
+    if archived:
+        path = root / "knowledge" / "overflow_archive" / filename.replace(".json", ".jsonl")
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    else:
+        rows.append(row)
+        path.write_text(json.dumps(rows), encoding="utf-8")
+    for read_only in (True, False):
+        eng = Engram(root=root, read_only=read_only)
+        if not read_only:
+            events = [json.loads(line) for line in (root / "audit.log").read_text(encoding="utf-8").splitlines()]
+            assert any(event["action"] == "replay_withheld" for event in events)
+        assert "WITHHELD_CANARY" not in json.dumps(eng.get_lessons(limit=None))
+        assert "WITHHELD_CANARY" not in json.dumps(eng.get_decisions(limit=None))
+        assert "WITHHELD_CANARY" not in json.dumps(eng.search_knowledge("WITHHELD_CANARY"))
+        assert "WITHHELD_CANARY" not in eng.generate_context(level="full")
+        assert "WITHHELD_CANARY" not in json.dumps(eng.get_knowledge_history(row["id"], include_bodies=True))
+        assert eng.get_overflow_archived(kind, row["id"]) is None
+        assert "WITHHELD_CANARY" not in json.dumps(eng._all_indexable_entries())
+        assert "deterministic fixtures" in json.dumps(eng.get_lessons(limit=None))
+        if not read_only:
+            output = tmp_path / "backup.json"
+            eng.export_all(str(output))
+            assert "WITHHELD_CANARY" not in output.read_text(encoding="utf-8")
+            eng.refresh_quick_context()
+            for report in (eng.export_identity_card(), eng.export_knowledge_report()):
+                assert "WITHHELD_CANARY" not in report
+            assert "WITHHELD_CANARY" not in (root / "quick_context.md").read_text(encoding="utf-8")
+            from piia_engram.compat import export_to_openclaw, hermes_handoff_payload
+            directory = tmp_path / "openclaw"
+            export_to_openclaw(eng, str(directory))
+            for exported in directory.glob("*.md"):
+                assert "WITHHELD_CANARY" not in exported.read_text(encoding="utf-8")
+            assert "WITHHELD_CANARY" not in json.dumps(hermes_handoff_payload(eng))
+            import asyncio
+            from piia_engram import mcp_server as server
+            monkeypatch.setattr(server, "_engram", eng)
+            for response in (
+                asyncio.run(server.get_lessons()), asyncio.run(server.get_decisions()),
+                asyncio.run(server.search_knowledge("WITHHELD_CANARY")),
+                asyncio.run(server.get_user_context()),
+                asyncio.run(server.get_knowledge_history(row["id"], include_bodies=True)),
+            ):
+                assert "WITHHELD_CANARY" not in response
+    # Neither withholding nor migrations normalize/rewrite the pasted row.
+    persisted = ([json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+                 if archived else json.loads(path.read_text(encoding="utf-8")))
+    assert next(r for r in persisted if r["id"] == row["id"]) == row
+    from piia_engram import doctor
+    finding = doctor.stored_replay_check(root)
+    assert finding["withheld"] == {path.relative_to(root).as_posix(): 1}
+    assert "archive or remove" in finding["hint"]
+    assert "WITHHELD_CANARY" not in json.dumps(finding)
+    audit = (root / "audit.log").read_text(encoding="utf-8")
+    assert "replay_withheld" in audit
+    assert "WITHHELD_CANARY" not in audit
+
+
+@pytest.mark.parametrize("bad", [b"\xff\xfe", b"[{not json"])
+def test_ordinary_undecodable_knowledge_is_diagnosable_without_rewrite(tmp_path, monkeypatch, bad):
+    root = tmp_path / "ordinary"
+    Engram(root=root)
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    path = root / "knowledge" / "lessons.json"
+    path.write_bytes(bad)
+    for read_only in (True, False):
+        with pytest.raises(Exception):
+            Engram(root=root, read_only=read_only).get_lessons()
+        assert path.read_bytes() == bad
+    from piia_engram import doctor
+    finding = doctor.stored_replay_check(root)
+    assert finding["unreadable"][0]["file"] == "knowledge/lessons.json"
+    assert finding["unreadable"][0]["error"] in {"UnicodeDecodeError", "JSONDecodeError"}
+    assert "restore" in finding["hint"].lower()
+    assert path.read_bytes() == bad
+
+
+
+@pytest.mark.parametrize("bad", [None, b"\xff", b"{torn"])
+def test_doctor_explains_withholding_and_decode_errors_read_only(tmp_path, monkeypatch, capsys, bad):
+    from piia_engram import doctor
+
+    root = tmp_path / "ordinary"
+    Engram(root=root)
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    path = root / "knowledge" / "lessons.json"
+    if bad is None:
+        path.write_text(json.dumps([{"id": "WITHHELD_CANARY", "store_mode": MODE,
+                                     "summary": "WITHHELD_CANARY"}]), encoding="utf-8")
+    else:
+        path.write_bytes(bad)
+    before = _snap(tmp_path)
+    assert doctor._run_functional_checks() > 0
+    text = capsys.readouterr().out
+    assert "Local repair:" in text
+    if bad is None:
+        assert "archive or remove" in text
+    else:
+        assert "Knowledge file unreadable: knowledge/lessons.json" in text
+    assert "WITHHELD_CANARY" not in text
+    assert doctor.run_doctor_json() == (0 if bad is None else 1)
+    result = json.loads(capsys.readouterr().out)
+    assert result["stored_replay"]["status"] == "WARN"
+    assert "WITHHELD_CANARY" not in json.dumps(result)
+    assert _snap(tmp_path) == before
+
+
+def test_existing_index_drops_a_row_marked_after_open(tmp_path):
+    import sqlite3
+
+    eng = Engram(root=tmp_path / "ordinary")
+    eng.add_lesson("WITHHELD_CANARY synthetic cache observation", source_tool="cli")
+    assert eng.rebuild_index()["indexed"] == 1
+    path = eng._knowledge_dir / "lessons.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    rows[0]["detail"] = REPLAY_EXPORT_MARKER
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    assert "WITHHELD_CANARY" not in json.dumps(eng.search_knowledge("WITHHELD_CANARY"))
+    assert eng.rebuild_index()["indexed"] == 0
+    with sqlite3.connect(eng.root / "search_index.db") as connection:
+        assert "WITHHELD_CANARY" not in "".join(connection.iterdump())
+
+
+def test_unrelated_sibling_replay_receipts_do_not_isolate_ordinary_root(tmp_path, monkeypatch):
+    w = _world(tmp_path / "source", monkeypatch)
+    monkeypatch.delenv("PIIA_ISOLATED_STORE_CONFIG", raising=False)
+    root = w.pr.root.with_name("ordinary")
+    assert Engram(root=root)._store_mode == "production"
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_empty_replay_marker_file_still_blocks_ordinary_attachment(tmp_path, read_only):
+    root = tmp_path / "ordinary"
+    Engram(root=root)
+    (root / "replay_experience.marker").write_text("", encoding="utf-8")
+    with pytest.raises(GuardRefused, match="guard_mode_immutable"):
+        Engram(root=root, read_only=read_only)
+
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_bound_production_ledger_keeps_pasted_replay_root_isolated(tmp_path, monkeypatch, read_only):
+    from piia_engram.isolated_store import CONFIG_ENV, LIMITS_FILE, MARKER
+
+    w = _world(tmp_path, monkeypatch, mode="production")
+    (w.pr.root / MARKER).unlink()
+    (w.pr.root / LIMITS_FILE).unlink()
+    monkeypatch.delenv(CONFIG_ENV, raising=False)
+    path = w.pr.root / "knowledge" / "lessons.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps([{"summary": "WITHHELD_CANARY", "store_mode": MODE}]), encoding="utf-8")
+    before = _snap(w.pr.root)
+    with pytest.raises(GuardRefused, match="guard_mode_immutable"):
+        Engram(root=w.pr.root, read_only=read_only)
+    assert _snap(w.pr.root) == before

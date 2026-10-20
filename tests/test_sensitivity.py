@@ -825,3 +825,71 @@ def test_contiguous_no_separator_blob_is_known_limitation_round13():
     # blob is NOT sliced into card-sized windows (would balloon Luhn false
     # positives over order numbers / hashes / serials). Left public on purpose.
     assert sv.classify_value("41111111111111114242424242424242") == "public"
+
+
+
+def test_digest_digit_runs_are_not_phone_numbers():
+    digest = "a" * 25 + "13800138000" + "b" * 28
+    assert len(digest) == 64
+    assert sv.classify_value(digest) == "public"
+    assert sv.classify_item({"summary": "Synthetic review evidence",
+                             "correction_approval": {"fingerprint": digest}}) == "work"
+
+
+def test_seeded_hash_and_identifier_phone_false_positives():
+    import hashlib
+    import random
+
+    rng = random.Random(426)
+    for _ in range(2000):
+        digest = hashlib.sha256(rng.getrandbits(256).to_bytes(32, "big")).hexdigest()
+        assert sv.classify_item({"correction_approval": {"fingerprint": digest}}) == "work", digest
+        # Put a phone-shaped run at different positions, independent of the
+        # chance of hitting one in a small sample of uniform digests.
+        position = rng.randrange(1, 52)
+        shaped = digest[:position] + "13800138000" + digest[position + 11:]
+        assert sv.classify_item({"correction_approval": {"fingerprint": shaped}}) == "work", shaped
+    for value in ("build13800138000abc", "run_13800138000_result",
+                  "YWJj13800138000ZGVm+YWJjZGVm/ZA==",
+                  "v1.38.0013.8000", "v1.13800138000", "V2.13800138000", "20261020T13800138000Z",
+                  "2026-10-20T15:58:36.13800138000Z",
+                  "42b9854a-1380-4138-8000-13800138000a"):
+        assert sv.classify_value(value) == "public", value
+
+
+def test_identifier_phone_exception_keeps_other_private_detectors():
+    for value in ("Phone: 13800138000", "电话13800138000", "call:13800138000",
+                  "13800138000", "+86 138 0013 8000", "138.0013.8000", "call/13800138000",
+                  "digest abc13800138000def; 13900139000"):
+        assert sv.classify_value(value) == "private", value
+    for value in ("a4111111111111111b", "a11010519491231002Xb",
+                  "owner@example.com", "sk-proj-abcdefghijklmnop1234"):
+        assert sv.classify_value(value) in {"private", "secret"}, value
+    assert sv.classify_item({"phone": "abc13800138000def"}) == "private"
+    assert sv.classify_item({"api_key": "a" * 64}) == "secret"
+
+
+def test_digest_metadata_exception_requires_exact_sha256_and_keeps_floors():
+    digest = "a" * 23 + "4111111111111111" + "b" * 25
+    assert sv.classify_item({"correction_approval": {"fingerprint": digest}}) == "work"
+    # Card detection in ordinary text and sensitive field names stays intact.
+    assert sv.classify_value(digest) == "private"
+    assert sv.classify_item({"phone": digest}) == "private"
+    for value in ("13800138000", "13800138000!", {"note": "13800138000"}):
+        assert sv.classify_item({"fingerprint": value}) == "private", value
+    assert sv.classify_item({"fingerprint": digest}, restricted_fields=["fingerprint"]) == "private"
+
+
+def test_approved_fingerprint_row_survives_context_projection(tmp_path):
+    import json
+    from piia_engram.core import Engram
+
+    eng = Engram(root=tmp_path / "store")
+    summary = "Keep the synthetic approved fingerprint lesson in the context"
+    eng.add_lesson(summary, source_tool="cli")
+    path = eng._knowledge_dir / "lessons.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    rows[0]["correction_approval"] = {"fingerprint": "a" * 25 + "13800138000" + "b" * 28}
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    assert sv.classify_item(rows[0]) == "work"
+    assert summary in eng.generate_context(level="full")

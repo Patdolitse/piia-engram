@@ -280,6 +280,12 @@ class Engram(
             enabled=audit_enabled,
         )
 
+        if self._store_mode == "production" and not read_only:
+            from .isolated_store import MARKER, stored_replay_findings
+            if not (self.root / MARKER).exists():
+                for resource, count in stored_replay_findings(self.root)["withheld"].items():
+                    self._audit_replay_withheld(resource, count)
+
         # Data fragmentation detection — warn, don't silently split.
         # Skip in test environments (ENGRAM_TEST=1) to avoid noisy warnings
         # when a temporary ENGRAM_DIR coexists with the real ~/.engram.
@@ -1473,6 +1479,19 @@ class Engram(
             return self._crypto.decrypt_entry(data, self._corpus_key, "playbook")
         return data
 
+    def _replay_withheld(self, entry) -> bool:
+        from .isolated_store import carries_replay_marker
+        return self._store_mode == "production" and carries_replay_marker(entry)
+
+    def _audit_replay_withheld(self, resource: str, count: int) -> None:
+        if self._read_only:
+            return
+        seen = self.__dict__.setdefault("_replay_withheld_audited", set())
+        key = (resource, count)
+        if key not in seen:
+            self._audit.log("replay_withheld", resource, detail=f"withheld {count} replay-marked entries")
+            seen.add(key)
+
     def _read_entries(
         self,
         path: Path,
@@ -1487,6 +1506,9 @@ class Engram(
         changed = False
         ensured: list[dict] = []
         for entry in entries:
+            # Preserve the raw marked record, including during lazy migrations.
+            if self._replay_withheld(entry):
+                continue
             before = dict(entry) if isinstance(entry, dict) else {}
             item = self._ensure_fields(entry, entry_type)
             if item != before:
@@ -1506,7 +1528,8 @@ class Engram(
             def _migrate_locked(current):
                 if not isinstance(current, list):
                     raise SkipWrite()
-                migrated = [self._ensure_fields(e, _entry_type) for e in current]
+                migrated = [e if self._replay_withheld(e) else self._ensure_fields(e, _entry_type)
+                            for e in current]
                 if all(a == b for a, b in zip(current, migrated)):
                     raise SkipWrite()
                 return migrated
@@ -1516,9 +1539,13 @@ class Engram(
 
         # Decrypt content fields for in-memory use
         if self._corpus_key:
-            return [self._crypto.decrypt_entry(e, self._corpus_key, entry_type)
-                    for e in ensured]
-        return ensured
+            ensured = [self._crypto.decrypt_entry(e, self._corpus_key, entry_type)
+                       for e in ensured]
+        visible = [e for e in ensured if not self._replay_withheld(e)]
+        count = len(entries) - len(visible)
+        if count:
+            self._audit_replay_withheld(path.relative_to(self.root).as_posix(), count)
+        return visible
 
     def _display_sanitize(self, entries: list[dict], entry_type: str) -> list[dict]:
         """Return display-safe copies of decrypted entries.
@@ -1549,11 +1576,14 @@ class Engram(
 
         normalized: list[dict] = []
         for entry in entries:
+            if self._replay_withheld(entry):
+                continue
             item = self._ensure_fields(entry, entry_type)
             if self._corpus_key:
                 item = self._crypto.decrypt_entry(item, self._corpus_key, entry_type)
                 item = self._ensure_fields(item, entry_type)
-            normalized.append(item)
+            if not self._replay_withheld(item):
+                normalized.append(item)
         return normalized
 
     def _entries_for_storage(self, entries: list[dict], entry_type: str) -> list[dict]:
@@ -1591,6 +1621,12 @@ class Engram(
         unpinned: list[str] = []
 
         def _locked(current: Any) -> list[dict]:
+            preserved = []
+            for index, raw in enumerate(current if isinstance(current, list) else []):
+                item = (self._crypto.decrypt_entry(raw, self._corpus_key, entry_type)
+                        if self._corpus_key else raw)
+                if self._replay_withheld(raw) or self._replay_withheld(item):
+                    preserved.append((index, raw))
             entries = self._entries_for_locked_mutation(current, entry_type)
             # v4.19.1: mutators mutate the list IN PLACE and return it, so the
             # no-change check needs the pre-mutation state. Deepcopy (not
@@ -1636,7 +1672,10 @@ class Engram(
             # read-shaped call into a write; SkipWrite aborts with zero I/O.
             if updated == before:
                 raise SkipWrite()
-            return self._entries_for_storage(updated, entry_type)
+            stored = self._entries_for_storage(updated, entry_type)
+            for index, raw in preserved:
+                stored.insert(min(index, len(stored)), raw)
+            return stored
 
         with knowledge_write_allowed():
             _update_json(path, _locked, default=[], blocking=blocking)
@@ -1875,9 +1914,13 @@ class Engram(
         slots: list[dict | None] = []
         latest: dict[tuple[str, str], int] = {}
         for entry in raw_rows:
+            if self._replay_withheld(entry):
+                continue
             item = self._ensure_fields(dict(entry), entry_type)
             if self._corpus_key:
                 item = self._crypto.decrypt_entry(item, self._corpus_key, entry_type)
+            if self._replay_withheld(item):
+                continue
             key = (str(item.get("id") or ""), _capacity.content_digest(item, entry_type))
             if key in latest:
                 slots[latest[key]] = None
@@ -1955,12 +1998,14 @@ class Engram(
         latest: dict[str, dict] = {}
         archived, _ = _read_jsonl_rows(self._overflow_archive_path(kind))
         for row in archived:
+            if self._replay_withheld(row):
+                continue
             rid = str(row.get("id") or "")
             if rid and (rid not in latest or self._archive_rank(row) >= self._archive_rank(latest[rid])):
                 latest[rid] = row
         active = _read_json(self._knowledge_dir / ("lessons.json" if kind == "lesson" else "decisions.json"))
         for row in active if isinstance(active, list) else []:
-            if isinstance(row, dict) and row.get("id"):
+            if isinstance(row, dict) and row.get("id") and not self._replay_withheld(row):
                 latest[str(row["id"])] = row
         return list(latest.values())
 
