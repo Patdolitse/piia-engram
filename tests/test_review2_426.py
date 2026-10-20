@@ -39,7 +39,7 @@ def test_nested_external_ledger_must_refuse_repair(tmp_path, monkeypatch):
         Engram(root=w.pr.root, read_only=True)
 
 
-def test_all_store_local_snapshot_extensions_are_invalidated(tmp_path):
+def test_all_store_local_snapshot_extensions_are_reported(tmp_path):
     root = tmp_path / "ordinary"
     eng = Engram(root=root)
     eng.add_lesson("CUSTOM_SNAPSHOT_CANARY synthetic fixture", source_tool="cli")
@@ -52,9 +52,12 @@ def test_all_store_local_snapshot_extensions_are_invalidated(tmp_path):
     # Eligible ordinary store: only one of ten rows is accidentally marked.
     rows.extend({"id": f"clean-{n}", "summary": "Synthetic clean fixture"} for n in range(9))
     knowledge.write_text(json.dumps(rows), encoding="utf-8")
-    assert repair(root, apply=True)["changed"]
+    result = repair(root, apply=True)
+    assert result["changed"]
     assert len(Engram(root=root, read_only=True).get_lessons()) == 9
-    assert not path.exists(), "generated snapshot survives repair with quarantined content"
+    assert path.exists() and "CUSTOM_SNAPSHOT_CANARY" in path.read_text(encoding="utf-8")
+    assert any(item["target"] == str(path) and item["status"] == "stale_generated_file"
+               for item in result["generated_files"])
 
 
 @pytest.mark.parametrize("mode", ["production", "replay_experience"])
@@ -157,21 +160,29 @@ def test_minority_counts_include_both_archives_and_decisions(tmp_path):
 
 @pytest.mark.parametrize("outside", [False, True])
 @pytest.mark.parametrize("suffix", [".txt", ".json", ".snapshot", ""])
-def test_registered_generated_targets_are_deleted_without_extension_filter(tmp_path, outside, suffix):
+def test_registered_generated_targets_are_reported_without_extension_filter(tmp_path, outside, suffix):
+    import hashlib
     from piia_engram.generated_artifacts import MANIFEST
 
     eng, path, rows = _ordinary(tmp_path / "ordinary")
     target = (tmp_path if outside else eng.root) / ("cold-start" + suffix)
     eng.refresh_quick_context(target=target)
     manifest = json.loads((eng.root / MANIFEST).read_text(encoding="utf-8"))
-    assert manifest == {"version": 1, "targets": [str(target.resolve())]}
+    assert manifest["version"] == 2 and len(manifest["targets"]) == 1
+    record = manifest["targets"][0]
+    assert set(record) == {"path", "sha256", "generated_at"}
+    assert record["path"] == str(target.resolve())
+    assert record["sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
+    assert record["generated_at"]
     assert "GENERATED_ARTIFACT_CANARY" in target.read_text(encoding="utf-8")
     _mark(path, rows)
     result = repair(eng.root, apply=True)
-    assert not target.exists() and result["invalidation_failures"] == []
+    assert target.exists()
+    assert any(item["target"] == str(target) and item["status"] == "stale_generated_file"
+               for item in result["generated_files"])
 
 
-def test_legacy_unregistered_store_local_text_snapshot_is_also_invalidated(tmp_path):
+def test_legacy_unregistered_store_local_text_snapshot_is_also_reported(tmp_path):
     from piia_engram.generated_artifacts import MANIFEST
 
     eng, path, rows = _ordinary(tmp_path / "ordinary")
@@ -179,36 +190,41 @@ def test_legacy_unregistered_store_local_text_snapshot_is_also_invalidated(tmp_p
     eng.refresh_quick_context(target=target)
     (eng.root / MANIFEST).unlink()  # an artifact generated before manifests existed
     _mark(path, rows)
-    assert repair(eng.root, apply=True)["changed"] and not target.exists()
+    result = repair(eng.root, apply=True)
+    assert result["changed"] and target.exists()
+    assert any(item["target"] == str(target) and item["verification"] == "legacy_header"
+               for item in result["generated_files"])
 
 
-def test_external_unwritable_artifact_is_reported_without_hiding_other_targets(tmp_path, monkeypatch):
+def test_external_unreadable_artifact_is_reported_without_hiding_other_targets(tmp_path, monkeypatch):
     eng, path, rows = _ordinary(tmp_path / "ordinary")
     external = tmp_path / "external.txt"
     local = eng.root / "another.snapshot"
     for target in (external, local):
         eng.refresh_quick_context(target=target)
     _mark(path, rows)
-    unlink = Path.unlink
+    open_file = Path.open
 
     def deny(target, *args, **kwargs):
         if target == external:
-            raise PermissionError("synthetic unwritable target")
-        return unlink(target, *args, **kwargs)
+            raise PermissionError("synthetic unreadable target")
+        return open_file(target, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", deny)
+    monkeypatch.setattr(Path, "open", deny)
     result = repair(eng.root, apply=True)
-    assert result["changed"] and not local.exists() and external.exists()
-    assert result["invalidation_failures"] == [{"target": str(external),
-                                               "error": "PermissionError", "outside_store": True}]
+    assert result["changed"] and local.exists() and external.exists()
+    assert any(item["target"] == str(external) and item["status"] == "not_verified"
+               and item["reason"] == "PermissionError" for item in result["generated_files"])
+    assert any(item["target"] == str(local) and item["status"] == "stale_generated_file"
+               for item in result["generated_files"])
 
 
-def test_local_unwritable_artifact_keeps_repair_closed(tmp_path, monkeypatch):
+def test_local_custom_artifact_is_left_untouched_without_blocking_repair(tmp_path, monkeypatch):
     eng, path, rows = _ordinary(tmp_path / "ordinary")
     target = eng.root / "locked.snapshot"
     eng.refresh_quick_context(target=target)
     _mark(path, rows)
-    original = path.read_bytes()
+    original = target.read_bytes()
     unlink = Path.unlink
 
     def deny(candidate, *args, **kwargs):
@@ -218,21 +234,21 @@ def test_local_unwritable_artifact_keeps_repair_closed(tmp_path, monkeypatch):
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "unlink", deny)
-        with pytest.raises(GuardRefused, match="repair_artifact_invalidation_failed"):
-            repair(eng.root, apply=True)
-    assert path.read_bytes() == original
-    with pytest.raises(GuardRefused):
-        Engram(root=eng.root, read_only=True)
-    assert repair(eng.root, apply=True)["changed"] and not target.exists()
+        result = repair(eng.root, apply=True)
+    assert result["changed"] and target.read_bytes() == original
+    assert len(Engram(root=eng.root, read_only=True).get_lessons()) == 0
+    assert any(item["target"] == str(target) and item["status"] == "stale_generated_file"
+               for item in result["generated_files"])
 
 
-def test_index_purge_invalidates_registered_artifacts(tmp_path):
+def test_index_purge_leaves_registered_artifacts_untouched(tmp_path):
     eng, _, _ = _ordinary(tmp_path / "ordinary")
     targets = [eng.root / "local.txt", tmp_path / "external.snapshot"]
     for target in targets:
         eng.refresh_quick_context(target=target)
-    assert eng.purge_search_index()
-    assert not any(target.exists() for target in targets)
+    before = {target: target.read_bytes() for target in targets}
+    eng.purge_search_index()
+    assert {target: target.read_bytes() for target in targets} == before
 
 
 def test_generators_register_external_model_facing_exports(tmp_path, monkeypatch):
@@ -247,11 +263,12 @@ def test_generators_register_external_model_facing_exports(tmp_path, monkeypatch
     targets = [preview, *(tmp_path / "exports" / name for name in ("SOUL.md", "USER.md", "MEMORY.md"))]
     assert set(targets).issubset(set(recorded_targets(eng.root)))
     _mark(path, rows)
-    assert repair(eng.root, apply=True)["changed"]
-    assert not any(target.exists() for target in targets)
+    result = repair(eng.root, apply=True)
+    assert result["changed"] and all(target.exists() for target in targets)
+    assert set(targets).issubset({Path(item["target"]) for item in result["generated_files"]})
 
 
-def test_artifact_publication_failure_cannot_leave_an_unregistered_target(tmp_path, monkeypatch):
+def test_failed_publication_never_registers_unwritten_content(tmp_path, monkeypatch):
     from piia_engram import generated_artifacts as generated
 
     eng, _, _ = _ordinary(tmp_path / "ordinary")
@@ -266,20 +283,21 @@ def test_artifact_publication_failure_cannot_leave_an_unregistered_target(tmp_pa
     monkeypatch.setattr(generated, "atomic_write_text", crash)
     with pytest.raises(SystemExit):
         eng.refresh_quick_context(target=target)
-    assert target in generated.recorded_targets(eng.root)
+    assert target not in generated.recorded_targets(eng.root)
     assert not target.exists()
 
 
-def test_corrupt_manifest_refuses_repair_before_any_knowledge_write(tmp_path):
+def test_corrupt_informational_record_is_reported_without_blocking_repair(tmp_path):
     from piia_engram.generated_artifacts import MANIFEST
 
     eng, path, rows = _ordinary(tmp_path / "ordinary")
     _mark(path, rows)
     (eng.root / MANIFEST).write_text("{torn", encoding="utf-8")
-    before = _snap(tmp_path)
-    with pytest.raises(ValueError):
-        repair(eng.root, apply=True)
-    assert _snap(tmp_path) == before
+    result = repair(eng.root, apply=True)
+    assert result["changed"]
+    assert result["generated_files"] == [{"target": str(eng.root / MANIFEST),
+                                         "status": "invalid", "reason": "JSONDecodeError",
+                                         "message": "not verified, left untouched"}]
 
 
 @pytest.mark.parametrize("mode", ["production", "replay_experience"])

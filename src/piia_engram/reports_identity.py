@@ -42,6 +42,14 @@ class IdentityCardMixin:
         and the AI will immediately understand their work style.
         Language follows user's profile.language preference (Chinese default).
         """
+        from .generated_artifacts import write_generated_text
+
+        card = self._render_identity_card()
+        write_generated_text(self.root, self._exports_dir / "identity_card.md", card)
+        return card
+
+    def _render_identity_card(self) -> str:
+        """Render without publishing, also used by local canonical repair."""
         from .isolated_store import export_mode_prefix
 
         mode_prefix = export_mode_prefix(self)
@@ -157,12 +165,4 @@ class IdentityCardMixin:
             else "_Paste this at the start of any AI conversation so the AI instantly understands you._"
         )
 
-        card = mode_prefix + "\n".join(lines)
-
-        # Also save to exports folder
-        export_path = self._exports_dir / "identity_card.md"
-        from .generated_artifacts import write_generated_text
-
-        write_generated_text(self.root, export_path, card)
-
-        return card
+        return mode_prefix + "\n".join(lines)
