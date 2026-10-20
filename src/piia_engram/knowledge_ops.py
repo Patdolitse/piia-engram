@@ -1676,12 +1676,9 @@ class KnowledgeOpsMixin:
             if not isinstance(rows, list):
                 raise SkipWrite
             for idx, raw in enumerate(rows):
-                if not isinstance(raw, dict) or raw.get("id") != item_id or self._replay_withheld(raw):
+                if not isinstance(raw, dict) or raw.get("id") != item_id:
                     continue
-                normalized = self._entries_for_locked_mutation([deepcopy(raw)], item_type)
-                if not normalized:
-                    continue
-                entry = normalized[0]
+                entry = self._entries_for_locked_mutation([deepcopy(raw)], item_type)[0]
                 before = deepcopy(entry)
                 updated = mutator(entry)
                 if updated is None:
