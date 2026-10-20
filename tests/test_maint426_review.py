@@ -274,3 +274,19 @@ def test_cli_repair_dispatches_before_startup_effects(tmp_path, monkeypatch):
         cli.main()
     assert result.value.code == 0
     assert _snap(tmp_path) == before
+
+
+@pytest.mark.parametrize("bad", [None, b"\xff", b"{torn"])
+def test_complete_doctor_diagnoses_knowledge_without_clients_zero_write(tmp_path, monkeypatch, capsys, bad):
+    from piia_engram import doctor
+
+    eng, path, _ = contaminated(tmp_path / "ordinary")
+    if bad is not None:
+        path.write_bytes(bad)
+    monkeypatch.setenv("ENGRAM_DIR", str(eng.root))
+    monkeypatch.setattr(doctor, "_detect_installed_tools", lambda: [])
+    before = _snap(tmp_path)
+    assert doctor.run_doctor() > 0
+    text = capsys.readouterr().out
+    assert "knowledge/lessons.json" in text and "DERIVED_CANARY" not in text
+    assert _snap(tmp_path) == before

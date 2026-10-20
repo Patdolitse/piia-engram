@@ -794,6 +794,12 @@ def _run_playbook_index_check(*, fix: bool = False) -> int:
 @non_quarantining_reads()
 def run_doctor(fix: bool = False, days: int | None = None) -> int:
     """Report playbook index drift; --fix reconciles it before client checks."""
+    from .storage import _engram_root
+
+    # Diagnose refused knowledge before *any* normal handle can append a guard
+    # refusal, and even when no supported client is configured on this machine.
+    if stored_replay_check(Path(_engram_root()))["status"] == "WARN":
+        return _run_functional_checks(fix=fix, days=days)
     return _run_playbook_index_check(fix=fix) + _run_doctor_config_checks(fix=fix, days=days)
 
 
