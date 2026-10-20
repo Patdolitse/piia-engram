@@ -392,7 +392,7 @@ class RetrievalMixin:
         When corpus encryption is enabled the FTS/vector tables would
         materialise decrypted bodies into ``<root>/search_index.db`` in
         cleartext, defeating the encryption. This removes the db file and its
-        SQLite sidecars (-wal/-shm) and drops the in-process cache so a stale
+        SQLite sidecars (-wal/-shm/-journal) and drops the in-process cache so a stale
         plaintext index left over from a pre-encryption run can't survive
         (Codex a5 round-2 P1-1/P1-2).
 
@@ -405,7 +405,8 @@ class RetrievalMixin:
         removed = False
         for path in (self.root / "search_index.db",
                      self.root / "search_index.db-wal",
-                     self.root / "search_index.db-shm"):
+                     self.root / "search_index.db-shm",
+                     self.root / "search_index.db-journal"):
             try:
                 if path.exists():
                     path.unlink()

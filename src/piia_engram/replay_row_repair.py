@@ -161,11 +161,11 @@ def _regenerate(root: Path) -> list[str]:
 
     from .core import Engram
     from .file_safety import atomic_write_text
-    from .generated_artifacts import CANONICAL_INDEX, CANONICAL_TEXT
+    from .generated_artifacts import CANONICAL_INDEX, CANONICAL_METADATA, CANONICAL_TEXT
     from .search_index import SearchIndex
     from .storage import non_quarantining_reads
 
-    for relative in (*CANONICAL_TEXT, *CANONICAL_INDEX):
+    for relative in (*CANONICAL_TEXT, *CANONICAL_METADATA, *CANONICAL_INDEX):
         _local_path(root, relative)
     regenerated = []
     with tempfile.TemporaryDirectory(prefix=".replay-derived-", dir=root) as area:
@@ -186,6 +186,8 @@ def _regenerate(root: Path) -> list[str]:
             index.rebuild(entries, fingerprint=eng._entries_fingerprint(entries))
             quick = eng._render_quick_context()
             card = eng._render_identity_card()
+            lessons = eng.get_lessons(limit=None, _update_access=False)
+            decisions = eng.get_decisions(limit=None, _update_access=False)
         # A fresh database also discards unused pages containing old bodies.
         # Regenerate existing SQLite sidecars as empty canonical files so stale
         # WAL content cannot be replayed onto the newly published database.
@@ -201,6 +203,25 @@ def _regenerate(root: Path) -> list[str]:
             path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(path, content)
             regenerated.append(relative)
+    # Refresh existing fixed metadata pages after removing the private view,
+    # so storage counts do not include that temporary source copy. No probes,
+    # external-memory scan or client command is run during repair.
+    for relative in CANONICAL_METADATA:
+        path = _local_path(root, relative)
+        if not path.exists():
+            continue
+        if relative == "reports/status.html":
+            from .status_report import build_status, render_status_html
+
+            content = render_status_html(build_status(probe=False, root=root))
+        else:
+            from .integrity import scan_integrity
+            from .owner_dashboard import build_owner_dashboard, render_dashboard_html
+
+            content = render_dashboard_html(build_owner_dashboard(
+                lessons=lessons, decisions=decisions, integrity_report=scan_integrity(root)))
+        atomic_write_text(_local_path(root, relative), content)
+        regenerated.append(relative)
     return regenerated
 
 
@@ -211,17 +232,15 @@ def repair(root: Path, *, apply: bool = False) -> dict:
 
     if mcp_origin():
         raise GuardRefused("local_repair_only")
-    from .generated_artifacts import CANONICAL_INDEX, CANONICAL_TEXT, inspect_generated
+    from .generated_artifacts import CANONICAL_INDEX, CANONICAL_METADATA, CANONICAL_TEXT, inspect_generated
 
     plan, preview = _inspection(root)
     preview.update(inspect_generated(root))
     if not apply:
         return {**preview, "read_only": True, "changed": False}
     _require_eligible(preview)
-    if not plan and not (root / PENDING).exists():
-        return {**preview, "changed": False}
     # Preflight only fixed, store-owned destinations, never inventory paths.
-    for relative in (*CANONICAL_TEXT, *CANONICAL_INDEX):
+    for relative in (*CANONICAL_TEXT, *CANONICAL_METADATA, *CANONICAL_INDEX):
         _local_path(root, relative)
     _local_path(root, "audit.log")
     _local_path(root, PENDING)
@@ -241,7 +260,8 @@ def repair(root: Path, *, apply: bool = False) -> dict:
             _write_new(recovery / (relative + ".bak"), raw)
         quarantined = [json.dumps({"file": relative, "row": row}, ensure_ascii=False)
                        for relative, _, _, rows in plan for row in rows]
-        _write_new(recovery / "quarantine.jsonl", ("\r\n".join(quarantined) + "\r\n").encode("utf-8"))
+        if quarantined:
+            _write_new(recovery / "quarantine.jsonl", ("\r\n".join(quarantined) + "\r\n").encode("utf-8"))
         # An interrupted rewrite/regeneration must remain closed until rerun.
         if not (root / PENDING).exists():
             _write_new(root / PENDING, b'{"repair":"replay-rows"}\r\n')

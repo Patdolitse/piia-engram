@@ -21,10 +21,12 @@ from .storage import hold_directory_lock
 
 MANIFEST = "generated_artifacts.json"
 CANONICAL_TEXT = ("quick_context.md", "exports/identity_card.md")
-CANONICAL_INDEX = ("search_index.db", "search_index.db-wal", "search_index.db-shm")
+CANONICAL_METADATA = ("reports/status.html", "reports/dashboard.html")
+CANONICAL_INDEX = ("search_index.db", "search_index.db-wal", "search_index.db-shm", "search_index.db-journal")
 SOURCE_AREAS = frozenset({
     "knowledge", "identity", "playbooks", "recovery", "backups", "ledgers",
     "receipts", "projects", "environment", "context", "contexts", "logs",
+    "daily", "operations", "portraits", "governance",
 })
 STALE_MESSAGE = "stale generated file - regenerate or delete it yourself"
 UNVERIFIED_MESSAGE = "not verified, left untouched"
@@ -48,7 +50,11 @@ def _source_target(root: Path, path: Path) -> bool:
         "isolated_store_root.json", "isolated_store_limits.json",
         "replay_experience.marker", "receipts.jsonl", "refusals.jsonl",
         ".engram-write.lock", ".corpus_salt", ".backup_state.json",
-        "session_state.json", "schema_version",
+        ".bootstrap_done", ".update_check.json", "session_state.json",
+        "schema_version", "schema_version.json", "approval_mode.json",
+        "shared_instructions.md", "file_safety_ledger.jsonl", "file_safety_ledger.jsonl.1",
+        "audit.log.1", "telemetry.log", "telemetry.log.1", "telemetry_config.json",
+        "beta_events.jsonl", "beta_events.jsonl.1", "setup_report.jsonl",
     })
 
 
@@ -110,7 +116,7 @@ def write_generated_text(root: Path, path: Path, text: str | Callable[[], str]) 
         content = text() if callable(text) else text
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(target, content)
-        if _path_key(target) in {_path_key(root / name) for name in CANONICAL_TEXT}:
+        if _path_key(target) in {_path_key(root / name) for name in (*CANONICAL_TEXT, *CANONICAL_METADATA)}:
             return original
         # atomic_write_text uses UTF-8 and platform newline translation.
         digest = hashlib.sha256(content.replace("\n", os.linesep).encode("utf-8")).hexdigest()
@@ -149,7 +155,7 @@ def inspect_generated(root: Path) -> dict:
     root = Path(root)
     records, report = _inventory(root)
     seen = set()
-    canonical = {_path_key(root / name) for name in (*CANONICAL_TEXT, *CANONICAL_INDEX)}
+    canonical = {_path_key(root / name) for name in (*CANONICAL_TEXT, *CANONICAL_METADATA, *CANONICAL_INDEX)}
     for record in records:
         path = Path(record["path"])
         item = {"target": record["path"], "status": "not_verified", "message": UNVERIFIED_MESSAGE}

@@ -565,6 +565,7 @@ def render_status_html(status: dict[str, Any]) -> str:
 def write_status_html(status: dict[str, Any], output: Path | None = None) -> Path:
     root = _engram_root()
     path = output or (root / "reports" / "status.html")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_status_html(status), encoding="utf-8")
+    from .generated_artifacts import write_generated_text
+
+    write_generated_text(root, path, render_status_html(status))
     return path

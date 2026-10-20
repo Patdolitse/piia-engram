@@ -1023,7 +1023,14 @@ def test_cli_export_sorts_reproposals_first_and_leaves_store_unchanged(eng, tmp_
              if not k.startswith("review-out") and k != "generated_artifacts.json"}
     assert after == before
     manifest = json.loads((eng.root / "generated_artifacts.json").read_text(encoding="utf-8"))
-    assert manifest == {"version": 1, "targets": [str((out_dir / "review.md").resolve())]}
+    import hashlib
+    from datetime import datetime
+    assert manifest["version"] == 2 and len(manifest["targets"]) == 1
+    record = manifest["targets"][0]
+    assert set(record) == {"path", "sha256", "generated_at"}
+    assert record["path"] == str((out_dir / "review.md").resolve())
+    assert record["sha256"] == hashlib.sha256((out_dir / "review.md").read_bytes()).hexdigest()
+    assert datetime.fromisoformat(record["generated_at"]).tzinfo is not None
     ids = json.loads((out_dir / "ids.json").read_text(encoding="utf-8"))
     assert ids[0] == repro["id"]
     text = (out_dir / "review.md").read_text(encoding="utf-8")

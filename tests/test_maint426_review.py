@@ -94,7 +94,7 @@ def contaminated(root):
     return eng, path, rows[0]
 
 
-def test_review_5_refusal_then_repair_invalidates_existing_artifacts(tmp_path, monkeypatch):
+def test_review_5_refusal_then_repair_regenerates_canonical_artifacts(tmp_path, monkeypatch):
     eng, path, marked = contaminated(tmp_path / "ordinary")
     monkeypatch.setenv("ENGRAM_DIR", str(eng.root))
     original = path.read_bytes()
@@ -104,8 +104,12 @@ def test_review_5_refusal_then_repair_invalidates_existing_artifacts(tmp_path, m
     from piia_engram.replay_row_repair import run_cli
     assert run_cli(["replay-rows", "--apply"]) == 0
     assert json.loads(path.read_text(encoding="utf-8")) == []
-    assert not (eng.root / "quick_context.md").exists()
-    assert not (eng.root / "search_index.db").exists()
+    assert (eng.root / "quick_context.md").exists()
+    assert (eng.root / "search_index.db").exists()
+    assert "DERIVED_CANARY" not in (eng.root / "quick_context.md").read_text(encoding="utf-8")
+    with sqlite3.connect(eng.root / "search_index.db") as connection:
+        assert connection.execute("SELECT eid, doc FROM fts").fetchall() == []
+    connection.close()
     recovery = eng.root / "recovery/replay-rows"
     assert any(p.read_bytes() == original for p in recovery.rglob("lessons.json.bak"))
     quarantine = next(recovery.rglob("quarantine.jsonl"))
@@ -113,11 +117,10 @@ def test_review_5_refusal_then_repair_invalidates_existing_artifacts(tmp_path, m
     audit = (eng.root / "audit.log").read_text(encoding="utf-8")
     assert "replay_rows_repaired" in audit and "DERIVED_CANARY" not in audit
     clean = Engram(root=eng.root)
-    clean.refresh_quick_context()
-    clean.rebuild_index()
     assert "DERIVED_CANARY" not in (eng.root / "quick_context.md").read_text(encoding="utf-8")
     with sqlite3.connect(eng.root / "search_index.db") as connection:
         assert connection.execute("SELECT eid, doc FROM fts").fetchall() == []
+    connection.close()
 
 
 def test_doctor_and_repair_dry_run_are_metadata_only_zero_write(tmp_path, monkeypatch, capsys):
@@ -207,7 +210,11 @@ def test_repair_keeps_clean_rows_and_markers_in_backups_and_quarantine(tmp_path,
     assert Engram(root=root, read_only=True)._store_mode == "production"
     before = _snap(tmp_path)
     assert run_cli(["replay-rows", "--apply"]) == 0
-    assert _snap(tmp_path) == before
+    after = _snap(tmp_path)
+    assert after.keys() == before.keys()
+    for name in before:
+        if not name.endswith(("audit.log", "quick_context.md", "search_index.db", "exports/identity_card.md")):
+            assert after[name] == before[name]  # all sources and recovery evidence stay byte-identical
 
 
 @pytest.mark.parametrize("signal", [MARKER, LIMITS_FILE, REPLAY_MARKER_FILE])
@@ -234,7 +241,7 @@ def test_repair_cannot_run_with_mcp_origin(tmp_path, monkeypatch):
     assert _snap(tmp_path) == before
 
 
-def test_repair_invalidates_named_generated_exports_and_custom_snapshot(tmp_path, monkeypatch):
+def test_repair_reports_legacy_generated_exports_and_custom_snapshot(tmp_path, monkeypatch, capsys):
     from piia_engram.replay_row_repair import run_cli
 
     eng, _, _ = contaminated(tmp_path / "ordinary")
@@ -244,10 +251,14 @@ def test_repair_invalidates_named_generated_exports_and_custom_snapshot(tmp_path
     custom = eng.root / "custom/cold-start.md"
     custom.parent.mkdir()
     custom.write_bytes((eng.root / "quick_context.md").read_bytes())
-    for path in generated:
-        path.write_text("DERIVED_CANARY", encoding="utf-8")
+    generated[0].write_text("# 个人知识报告\n生成时间：2026-01-01\nDERIVED_CANARY", encoding="utf-8")
+    generated[1].write_text("<!DOCTYPE html>\n<title>Engram Knowledge Review</title>\nDERIVED_CANARY", encoding="utf-8")
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in [*generated, custom]}
     assert run_cli(["replay-rows", "--apply"]) == 0
-    assert not any(path.exists() for path in [*generated, custom])
+    report = json.loads(capsys.readouterr().out)
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before} == before
+    assert {str(path) for path in before}.issubset({item["target"] for item in report["generated_files"]
+                                                   if item["status"] == "stale_generated_file"})
 
 
 def test_interrupted_repair_stays_closed_and_can_finish(tmp_path, monkeypatch):
