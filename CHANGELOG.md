@@ -10,8 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
-- Phone detection no longer treats digit runs inside hashes, fingerprints and mixed alphanumeric identifiers as phone numbers; other sensitive-data checks are unchanged.
-- Ordinary stores with accidentally pasted replay entries stay available while withholding those entries from reads, exports and indexes; doctor provides local repair hints and writable opens record metadata-only audit entries. Replay roots retain their attachment guards.
+- Only complete 64-character hexadecimal digests in known digest metadata fields skip phone detection; free text and all other sensitive-data detectors retain their existing checks.
+- Ordinary stores containing replay-marked knowledge refuse normal use. Read-only doctor reports files and row counts; the local `engram repair replay-rows` command previews or backs up and quarantines pasted rows, invalidates generated context and search indexes, and records metadata-only audit evidence. Repair refuses recognized isolated roots and unreadable knowledge.
 
 ## [4.25.0] - 2026-10-19
 

@@ -1002,7 +1002,7 @@ def run_doctor_json(days: int | None = None) -> int:
         from piia_engram.core import Engram
         stored = stored_replay_check(Path(_engram_root()))
         report["stored_replay"] = stored
-        if stored["unreadable"]:
+        if stored["unreadable"] or stored["files"] or stored["repair_pending"]:
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 1
         report["decision_consistency"] = decision_consistency_check(Engram(root=Path(_engram_root()), read_only=True))
@@ -1089,13 +1089,15 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
     from .storage import _engram_root
     stored = stored_replay_check(Path(_engram_root()))
     if stored["status"] == "WARN":
-        print(f"    [!!] Stored replay entries withheld: {sum(stored['withheld'].values())}")
-        for resource, count in stored["withheld"].items():
-            print(f"         {resource}: {count} replay-marked entries withheld")
+        print(f"    [!!] Stored replay rows (normal use refused): {sum(stored['files'].values())}")
+        for resource, count in stored["files"].items():
+            print(f"         {resource}: {count} replay-marked rows")
         for issue in stored["unreadable"]:
             print(f"    [!!] Knowledge file unreadable: {issue['file']} ({issue['error']})")
         print("         Local repair: " + stored["hint"])
         problems += 1
+        if stored["files"] or stored["repair_pending"]:
+            return problems  # No normal handle or refusal-audit write in doctor.
         # Malformed JSON still permits a read-only handle. Keep the rest
         # of doctor's diagnostics (capacity, activation, etc.) available;
         # non_quarantining_reads prevents corruption backups on these reads.
@@ -1713,8 +1715,7 @@ def decision_consistency_check(eng) -> dict:
         # Ordinary store readers may quarantine corruption. Diagnostics must
         # report it without creating a backup, audit entry or migrated record.
         raw_rows = read_list("decisions.json")
-        rows = [eng._ensure_fields(dict(row), "decision") for row in raw_rows
-                if not eng._replay_withheld(row)]
+        rows = [eng._ensure_fields(dict(row), "decision") for row in raw_rows]
         edges = validate_edges(read_list("relations.json"))
         lineage_rows = eng._lineage_authority_rows("decision")
     except (ValueError, UnicodeError, OSError):

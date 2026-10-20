@@ -246,7 +246,7 @@ def _initial_receipt(receipts_dir: Path, *, required: bool = True) -> dict | Non
     return initial
 
 
-def _replay_root_signal(root: Path, *, withhold_rows: bool = False) -> str:
+def _replay_root_signal(root: Path) -> str:
     """Discover replay provenance in the root without metadata or a launcher."""
     def marked(text: str) -> bool:
         try:
@@ -258,6 +258,8 @@ def _replay_root_signal(root: Path, *, withhold_rows: bool = False) -> str:
                     or re.search(r'"store_mode"\s*:\s*"replay_experience"', text) is not None)
 
     # Presence is sufficient, including an accidentally emptied marker file.
+    if (root / "replay_row_repair.pending.json").exists():
+        return "replay_row_repair.pending.json"
     if (root / REPLAY_MARKER_FILE).exists():
         return REPLAY_MARKER_FILE
     for relative in ("knowledge/lessons.json", "knowledge/decisions.json",
@@ -268,21 +270,21 @@ def _replay_root_signal(root: Path, *, withhold_rows: bool = False) -> str:
             with path.open(encoding="utf-8-sig") as source:
                 if path.suffix == ".jsonl":
                     for line in source:
-                        if line.strip() and marked(line) and not withhold_rows:
+                        if line.strip() and marked(line):
                             return relative
-                elif marked(source.read()) and not withhold_rows:
+                elif marked(source.read()):
                     return relative
         except FileNotFoundError:
             continue
         except (OSError, UnicodeError) as exc:
             raise GuardRefused("guard_mode_immutable",
                                f"stored provenance unreadable: {relative} ({type(exc).__name__}); "
-                               "check local backups before repairing") from exc
+                               "run engram doctor; check local backups before repairing") from exc
     return ""
 
 
 def stored_replay_findings(root: Path) -> dict:
-    """Read-only, metadata-only diagnostics for pasted replay rows and bad files."""
+    """Read-only, metadata-only diagnostics for refused replay rows and bad files."""
     withheld, unreadable = {}, []
     for relative in ("knowledge/lessons.json", "knowledge/decisions.json",
                      "knowledge/overflow_archive/lessons.jsonl",
@@ -307,14 +309,20 @@ def stored_replay_findings(root: Path) -> dict:
         if count:
             withheld[relative] = count
     hints = []
+    pending = (Path(root) / "replay_row_repair.pending.json").exists()
+    if pending:
+        hints.append("guard_mode_immutable: interrupted replay row repair; run engram doctor, "
+                     "then rerun engram repair replay-rows --apply to finish safely.")
     if withheld:
-        hints.append("Owner: archive or remove the replay-marked entries locally; "
-                     "do not strip their provenance to make them recallable.")
+        hints.append("guard_mode_immutable: normal use refused. Owner: run engram doctor, then "
+                     "engram repair replay-rows --dry-run; use --apply to back up and quarantine "
+                     "accidentally pasted rows in an ordinary store. Never strip provenance.")
     if unreadable:
         hints.append("Check and restore a known-good local backup before repairing unreadable files; "
                      "no files were changed by this check.")
-    return {"name": "stored_replay", "status": "WARN" if withheld or unreadable else "PASS",
-            "withheld": withheld, "unreadable": unreadable, "read_only": True,
+    return {"name": "stored_replay", "status": "WARN" if withheld or unreadable or pending else "PASS",
+            "files": withheld, "withheld": withheld, "unreadable": unreadable, "read_only": True,
+            "repair_pending": pending,
             "hint": " ".join(hints)}
 
 
@@ -350,7 +358,7 @@ def _check_legacy_root(root: Path, marker: dict, audit_dir: Path, *, allow_rebin
         raise GuardRefused("guard_mode_immutable", "replay configuration contradicts legacy metadata")
     signal = _replay_root_signal(root)
     if signal:
-        raise GuardRefused("guard_mode_immutable", f"replay root signal contradicts legacy metadata: {signal}")
+        raise GuardRefused("guard_mode_immutable", f"replay root signal contradicts legacy metadata: {signal}; run engram doctor")
     try:
         current = _identity(root)
     except OSError as exc:
@@ -384,9 +392,9 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None,
                     if initial and root.is_dir() and initial.get("root_id") == _root_id(root):
                         isolated = True
                         if carries_replay_marker(initial):
-                            raise GuardRefused("guard_mode_immutable", "replay initialization requires root metadata")
-            if _replay_root_signal(root, withhold_rows=not isolated):
-                raise GuardRefused("guard_mode_immutable", "replay root signal requires initialized metadata")
+                            raise GuardRefused("guard_mode_immutable", "replay initialization requires root metadata; run engram doctor")
+            if _replay_root_signal(root):
+                raise GuardRefused("guard_mode_immutable", "replay provenance refuses normal use; run engram doctor")
         if not isolated:
             if expected != PRODUCTION:
                 raise GuardRefused("guard_mode_immutable", "initialized replay root required")
@@ -430,7 +438,7 @@ def root_mode(root: Path, expected: str, *, receipts_dir: Path | None = None,
             signal = _replay_root_signal(root)
             if signal:
                 raise GuardRefused("guard_mode_immutable",
-                                   f"replay root signal contradicts production metadata: {signal}")
+                                   f"replay root signal contradicts production metadata: {signal}; run engram doctor")
         return actual
     except GuardRefused as exc:
         if audit_refusal:

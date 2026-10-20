@@ -831,7 +831,7 @@ def test_contiguous_no_separator_blob_is_known_limitation_round13():
 def test_digest_digit_runs_are_not_phone_numbers():
     digest = "a" * 25 + "13800138000" + "b" * 28
     assert len(digest) == 64
-    assert sv.classify_value(digest) == "public"
+    assert sv.classify_value(digest) == "private"  # free text keeps the baseline scan
     assert sv.classify_item({"summary": "Synthetic review evidence",
                              "correction_approval": {"fingerprint": digest}}) == "work"
 
@@ -843,18 +843,22 @@ def test_seeded_hash_and_identifier_phone_false_positives():
     rng = random.Random(426)
     for _ in range(2000):
         digest = hashlib.sha256(rng.getrandbits(256).to_bytes(32, "big")).hexdigest()
-        assert sv.classify_item({"correction_approval": {"fingerprint": digest}}) == "work", digest
+        # Some random digests also contain valid Luhn card runs. They must
+        # remain private; the property excludes PHONE false positives only.
+        expected = sv.classify_value(digest, _phones=False)
+        assert sv.classify_item({"sensitivity": "public", "correction_approval": {"fingerprint": digest}}) == expected, digest
         # Put a phone-shaped run at different positions, independent of the
         # chance of hitting one in a small sample of uniform digests.
         position = rng.randrange(1, 52)
         shaped = digest[:position] + "13800138000" + digest[position + 11:]
-        assert sv.classify_item({"correction_approval": {"fingerprint": shaped}}) == "work", shaped
+        expected = sv.classify_value(shaped, _phones=False)
+        assert sv.classify_item({"sensitivity": "public", "correction_approval": {"fingerprint": shaped}}) == expected, shaped
     for value in ("build13800138000abc", "run_13800138000_result",
                   "YWJj13800138000ZGVm+YWJjZGVm/ZA==",
                   "v1.38.0013.8000", "v1.13800138000", "V2.13800138000", "20261020T13800138000Z",
                   "2026-10-20T15:58:36.13800138000Z",
                   "42b9854a-1380-4138-8000-13800138000a"):
-        assert sv.classify_value(value) == "public", value
+        assert sv.classify_value(value) == "private", value
 
 
 def test_identifier_phone_exception_keeps_other_private_detectors():
@@ -871,7 +875,7 @@ def test_identifier_phone_exception_keeps_other_private_detectors():
 
 def test_digest_metadata_exception_requires_exact_sha256_and_keeps_floors():
     digest = "a" * 23 + "4111111111111111" + "b" * 25
-    assert sv.classify_item({"correction_approval": {"fingerprint": digest}}) == "work"
+    assert sv.classify_item({"correction_approval": {"fingerprint": digest}}) == "private"
     # Card detection in ordinary text and sensitive field names stays intact.
     assert sv.classify_value(digest) == "private"
     assert sv.classify_item({"phone": digest}) == "private"
