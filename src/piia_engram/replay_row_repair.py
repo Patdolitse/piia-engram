@@ -149,29 +149,59 @@ def _write_new(path: Path, data: bytes) -> None:
         os.fsync(target.fileno())
 
 
-def _derived(root: Path) -> list[Path]:
-    # Legacy artifacts predate the generated-artifacts manifest. Recorded
-    # destinations (including external files) are invalidated separately.
-    from .generated_artifacts import recorded_targets
+def _regenerate(root: Path) -> list[str]:
+    """Rebuild a fixed set from a clean, private read view while pending stays.
 
-    registered = set(recorded_targets(root))
-    paths = [root / name for name in (
-        "quick_context.md", "search_index.db", "search_index.db-wal", "search_index.db-shm",
-    )]
-    exports = root / "exports"
-    for pattern in ("identity_card.md", "knowledge_report_*.md", "review_*.html"):
-        paths.extend(exports.glob(pattern))
-    # refresh_quick_context(target=...) can use another store-local name.
-    for path in root.rglob("*"):
-        if not path.is_file() or path.name.startswith(".") or path in registered:
-            continue
-        if path.relative_to(root).parts[0] in {"recovery", "knowledge", "backups"}:
-            continue
-        _local_path(root, path.relative_to(root).as_posix())
-        with path.open("rb") as source:
-            if source.read(160).startswith(b"<!-- Engram quick_context snapshot"):
-                paths.append(path)
-    return sorted({p for p in paths if p.exists()} - registered)
+    The view uses the ordinary read-only Engram guard, without bypassing or
+    temporarily removing the real store's refusal marker. No inventory paths
+    participate in copying, rendering or publication.
+    """
+    import shutil
+    import tempfile
+
+    from .core import Engram
+    from .file_safety import atomic_write_text
+    from .generated_artifacts import CANONICAL_INDEX, CANONICAL_TEXT
+    from .search_index import SearchIndex
+    from .storage import non_quarantining_reads
+
+    for relative in (*CANONICAL_TEXT, *CANONICAL_INDEX):
+        _local_path(root, relative)
+    regenerated = []
+    with tempfile.TemporaryDirectory(prefix=".replay-derived-", dir=root) as area:
+        view = Path(area)
+        for name in ("identity", "knowledge", "playbooks", "environment"):
+            source = _local_path(root, name)
+            if not source.exists():
+                continue
+            for directory, dirs, files in os.walk(source, followlinks=False):
+                for child in (*dirs, *files):
+                    _local_path(root, (Path(directory) / child).relative_to(root).as_posix())
+            shutil.copytree(source, view / name, ignore=shutil.ignore_patterns(".engram-write.lock"))
+        with non_quarantining_reads():
+            eng = Engram(root=view, read_only=True)
+            eng.data_orphans = []  # the view is intentionally detached
+            entries = eng._all_indexable_entries()
+            index = SearchIndex(view / "search_index.db", enable_vector=False)
+            index.rebuild(entries, fingerprint=eng._entries_fingerprint(entries))
+            quick = eng._render_quick_context()
+            card = eng._render_identity_card()
+        # A fresh database also discards unused pages containing old bodies.
+        # Regenerate existing SQLite sidecars as empty canonical files so stale
+        # WAL content cannot be replayed onto the newly published database.
+        for relative in CANONICAL_INDEX[1:]:
+            path = _local_path(root, relative)
+            if path.exists():
+                atomic_write_text(path, "")
+                regenerated.append(relative)
+        replace_with_retry(view / "search_index.db", _local_path(root, "search_index.db"))
+        regenerated.append("search_index.db")
+        for relative, content in (("quick_context.md", quick), ("exports/identity_card.md", card)):
+            path = _local_path(root, relative)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(path, content)
+            regenerated.append(relative)
+    return regenerated
 
 
 def repair(root: Path, *, apply: bool = False) -> dict:
@@ -181,16 +211,18 @@ def repair(root: Path, *, apply: bool = False) -> dict:
 
     if mcp_origin():
         raise GuardRefused("local_repair_only")
+    from .generated_artifacts import CANONICAL_INDEX, CANONICAL_TEXT, inspect_generated
+
     plan, preview = _inspection(root)
+    preview.update(inspect_generated(root))
     if not apply:
         return {**preview, "read_only": True, "changed": False}
     _require_eligible(preview)
     if not plan and not (root / PENDING).exists():
-        return {"files": {}, "changed": False}
-    # Preflight generated paths and all recovery destinations before writing.
-    artifacts = _derived(root)
-    for path in artifacts:
-        _local_path(root, path.relative_to(root).as_posix())
+        return {**preview, "changed": False}
+    # Preflight only fixed, store-owned destinations, never inventory paths.
+    for relative in (*CANONICAL_TEXT, *CANONICAL_INDEX):
+        _local_path(root, relative)
     _local_path(root, "audit.log")
     _local_path(root, PENDING)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex[:8]
@@ -202,26 +234,17 @@ def repair(root: Path, *, apply: bool = False) -> dict:
             stack.enter_context(hold_directory_lock(directory))
         # Re-read under the same directory locks used by normal knowledge writes.
         plan, preview = _inspection(root)
+        preview.update(inspect_generated(root))
         _require_eligible(preview)
         files = preview["files"]
-        artifacts = _derived(root)
-        from .generated_artifacts import recorded_targets, invalidate_generated
-        recorded_targets(root)  # validate the manifest before any recovery write
         for relative, raw, _, _ in plan:
             _write_new(recovery / (relative + ".bak"), raw)
         quarantined = [json.dumps({"file": relative, "row": row}, ensure_ascii=False)
                        for relative, _, _, rows in plan for row in rows]
         _write_new(recovery / "quarantine.jsonl", ("\r\n".join(quarantined) + "\r\n").encode("utf-8"))
-        # An interrupted invalidation/rewrite must remain closed until rerun.
+        # An interrupted rewrite/regeneration must remain closed until rerun.
         if not (root / PENDING).exists():
             _write_new(root / PENDING, b'{"repair":"replay-rows"}\r\n')
-        for path in artifacts:
-            path.unlink(missing_ok=True)
-        invalidation = invalidate_generated(root)
-        if any(not item["outside_store"] for item in invalidation["invalidation_failures"]):
-            exc = GuardRefused("repair_artifact_invalidation_failed", "Run engram doctor; retry local invalidation")
-            exc.repair_preview = {**preview, **invalidation}
-            raise exc
         for relative, _, replacement, _ in plan:
             path = root / relative
             temp = path.with_name(path.name + ".repair-" + uuid.uuid4().hex + ".tmp")
@@ -230,18 +253,28 @@ def repair(root: Path, *, apply: bool = False) -> dict:
                 replace_with_retry(temp, path)
             finally:
                 temp.unlink(missing_ok=True)
+        try:
+            regenerated = _regenerate(root)
+        except Exception as cause:
+            exc = GuardRefused("repair_artifact_regeneration_failed",
+                               "Run engram doctor; retry local repair to regenerate canonical artifacts")
+            exc.repair_preview = {**preview, "regeneration_error": type(cause).__name__}
+            raise exc from cause
+        generated = inspect_generated(root)
         event = {"action": "replay_rows_repaired", "ts": stamp, "files": files,
                  "quarantined": sum(files.values()),
-                 "invalidated": len(artifacts) + len(invalidation["invalidated_targets"]),
-                 "invalidation_failed": len(invalidation["invalidation_failures"])}
+                 "regenerated": len(regenerated),
+                 "stale_generated": sum(item["status"] == "stale_generated_file"
+                                        for item in generated["generated_files"])}
         with (root / "audit.log").open("a", encoding="utf-8") as audit:
             audit.write(json.dumps(event, ensure_ascii=False) + "\n")
             audit.flush()
             os.fsync(audit.fileno())
         (root / PENDING).unlink()
-    result = {**preview, "changed": True, "quarantined": sum(files.values()), **invalidation}
-    if invalidation["invalidation_failures"]:
-        result["hint"] = "Remove or regenerate the listed external targets locally before consuming them."
+    result = {**preview, "changed": True, "quarantined": sum(files.values()),
+              "regenerated_artifacts": regenerated, **generated}
+    if any(item["status"] == "stale_generated_file" for item in generated["generated_files"]):
+        result["hint"] = "Stale generated files are left untouched; regenerate or delete them yourself."
     return result
 
 
@@ -258,7 +291,7 @@ def run_cli(args: list[str]) -> int:
     except (GuardRefused, OSError, ValueError) as exc:
         result = {**getattr(exc, "repair_preview", {}),
                   "error": exc.code if isinstance(exc, GuardRefused) else type(exc).__name__,
-                  "hint": "Run engram doctor; no unreadable knowledge file was rewritten.",
+                  "hint": "Run engram doctor and retry local repair; pending repairs refuse normal use.",
                   "stored_replay": stored_replay_findings(root)}
         if getattr(exc, "repair_preview", {}).get("would_refuse"):
             result["hint"] = REPAIR_HINT

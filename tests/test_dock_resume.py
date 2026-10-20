@@ -477,7 +477,14 @@ def test_dock_portrait_html_writes_styled_page_and_registers_target(monkeypatch,
              if key != "generated_artifacts.json"}
     assert after == before  # knowledge and identity remain unchanged
     manifest = json.loads((store / "generated_artifacts.json").read_text(encoding="utf-8"))
-    assert manifest == {"version": 1, "targets": [str(out.resolve())]}
+    import hashlib
+    from datetime import datetime
+    assert manifest["version"] == 2 and len(manifest["targets"]) == 1
+    record = manifest["targets"][0]
+    assert set(record) == {"path", "sha256", "generated_at"}
+    assert record["path"] == str(out.resolve())
+    assert record["sha256"] == hashlib.sha256(out.read_bytes()).hexdigest()
+    assert datetime.fromisoformat(record["generated_at"]).tzinfo is not None
 
 
 def test_dock_portrait_html_requires_output(monkeypatch, tmp_path):
@@ -507,7 +514,14 @@ def test_dock_portrait_html_registration_does_not_backfill_trust_boundaries(monk
     assert after == before
     assert not tb.exists()
     manifest = json.loads((store / "generated_artifacts.json").read_text(encoding="utf-8"))
-    assert manifest == {"version": 1, "targets": [str(out.resolve())]}
+    import hashlib
+    from datetime import datetime
+    assert manifest["version"] == 2 and len(manifest["targets"]) == 1
+    record = manifest["targets"][0]
+    assert set(record) == {"path", "sha256", "generated_at"}
+    assert record["path"] == str(out.resolve())
+    assert record["sha256"] == hashlib.sha256(out.read_bytes()).hexdigest()
+    assert datetime.fromisoformat(record["generated_at"]).tzinfo is not None
 
 
 # --- dock-archive / dock-restore / dock-archived (reversible prune) -----------
