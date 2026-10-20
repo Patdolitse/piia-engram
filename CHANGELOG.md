@@ -6,6 +6,13 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Phone detection no longer treats digit runs inside hashes, fingerprints and mixed alphanumeric identifiers as phone numbers; other sensitive-data checks are unchanged.
+- Ordinary stores with accidentally pasted replay entries stay available while withholding those entries from reads, exports and indexes; doctor provides local repair hints and writable opens record metadata-only audit entries. Replay roots retain their attachment guards.
+
 ## [4.25.0] - 2026-10-19
 
 ### Added

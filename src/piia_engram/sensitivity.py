@@ -388,7 +388,7 @@ def _scan_cn_id(s: str) -> bool:
     return False
 
 
-def _scan_formatted_groups(groups: list[str]) -> bool:
+def _scan_formatted_groups(groups: list[str], *, phones: bool = True) -> bool:
     """A formatted PII is *some run* of consecutive separator-delimited digit
     groups (e.g. a 16-digit card written as four 4-digit groups). Slide every
     consecutive-group window, compact it, and validate with the SAME
@@ -416,12 +416,12 @@ def _scan_formatted_groups(groups: list[str]) -> bool:
             if 13 <= len(compact) <= 19 and _luhn_ok(compact):    # payment card
                 return True
             mob = compact[2:] if (len(compact) == 13 and compact.startswith("86")) else compact
-            if _CN_MOBILE_BARE.fullmatch(mob):                    # CN mobile (+ 86 prefix)
+            if phones and _CN_MOBILE_BARE.fullmatch(mob):        # CN mobile (+ 86 prefix)
                 return True
     return False
 
 
-def _has_formatted_pii(s: str) -> bool:
+def _has_formatted_pii(s: str, *, phones: bool = True) -> bool:
     """Catch phone/card PII written with presentation separators (whitespace,
     hyphen, dot, slash, middle-dot family — see ``_FORMATTED_NUM_SEP``) or a
     country code. Each candidate is split into its separator-delimited digit
@@ -438,18 +438,41 @@ def _has_formatted_pii(s: str) -> bool:
       visible separator (r13). The validators stay the confidence gate."""
     for m in _FORMATTED_NUM_RE.finditer(s):
         groups = [g for g in re.split(_FORMATTED_NUM_SEP, m.group().replace("+", "")) if g]
-        if _scan_formatted_groups(groups):
+        if _scan_formatted_groups(groups, phones=phones):
             return True
     return False
 
 
+# Phone-shaped substrings of mixed alphanumeric tokens are identifiers,
+# not standalone numbers. Only the PHONE scanner uses this view: credential,
+# email, payment-card and resident-ID checks still inspect the original text.
+_PHONE_IDENTIFIER_RE = re.compile(
+    r"[A-Za-z0-9_]+(?:[+/][A-Za-z0-9_]+)+(?:={1,2})?"
+    r"|[vV][0-9]+(?:\.[0-9]+)+"
+    r"|[A-Za-z0-9_]+"
+)
+
+
+def _phone_scan_text(s: str) -> str:
+    def mask(match):
+        token = match.group()
+        if ("/" in token or "+" in token) and len(token) < 24:
+            return token  # short prose such as call/13800138000 is not base64
+        if any(c.isdigit() for c in token) and any(c.isalpha() or c == "_" for c in token):
+            return " " * len(token)
+        return token
+    return _PHONE_IDENTIFIER_RE.sub(mask, s)
+
+
 def _has_pii_pattern(s: str) -> bool:
+    phone_text = _phone_scan_text(s)
     return bool(
         _EMAIL_RE.search(s)
-        or _CN_PHONE_RE.search(s)
+        or _CN_PHONE_RE.search(phone_text)
         or _scan_cn_id(s)
         or any(_luhn_ok(m.group()) for m in _CARD_RE.finditer(s))
-        or _has_formatted_pii(s)
+        or _has_formatted_pii(s, phones=False)
+        or _has_formatted_pii(phone_text)
     )
 
 
@@ -527,6 +550,11 @@ def _walk_item(obj, *, max_nodes: int = 10000) -> tuple[set[str], list, bool]:
         if isinstance(cur, dict):
             for k, v in cur.items():
                 names.add(str(k))
+                # Exact, validated digest metadata is not free text. Keep
+                # scanning its NAME, and never skip malformed values/containers.
+                if (k in {"fingerprint", "sha256", "content_sha256", "content_hash", "query_digest"}
+                        and isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{64}", v)):
+                    continue
                 stack.append(v)
         elif isinstance(cur, (list, tuple)):
             stack.extend(cur)
@@ -553,7 +581,8 @@ def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
       (metadata.api_key, steps[].private_key, 密码, …);
     * **value floor** — a sensitive field VALUE at any depth (a credential
       shape -> secret, a PII shape -> private) regardless of how benign its
-      field name is. This is the language-independent half that closes the
+      field name is. Exact SHA-256 values in known digest metadata fields
+      are excluded; sensitive field-name floors still apply. This closes the
       benign-name / sensitive-value gap a name list can never cover.
 
     Codex round-10 P1: a dict KEY is also visible text returned to the agent,
