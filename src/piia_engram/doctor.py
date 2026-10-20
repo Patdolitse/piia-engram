@@ -1090,11 +1090,21 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
     stored = stored_replay_check(Path(_engram_root()))
     if stored["status"] == "WARN":
         print(f"    [!!] Stored replay entries withheld: {sum(stored['withheld'].values())}")
+        for resource, count in stored["withheld"].items():
+            print(f"         {resource}: {count} replay-marked entries withheld")
         for issue in stored["unreadable"]:
             print(f"    [!!] Knowledge file unreadable: {issue['file']} ({issue['error']})")
         print("         Local repair: " + stored["hint"])
         problems += 1
-        if stored["unreadable"]:
+        # Malformed JSON still permits a read-only handle. Keep the rest
+        # of doctor's diagnostics (capacity, activation, etc.) available;
+        # non_quarantining_reads prevents corruption backups on these reads.
+        # Byte/I/O failures cannot pass the root guard, and --fix must not
+        # construct a writable handle over unreadable knowledge.
+        if stored["unreadable"] and (
+            fix or any(issue["error"] not in {"JSONDecodeError", "ValueError"}
+                       for issue in stored["unreadable"])
+        ):
             return problems
 
     # 2. Engram 实例化（读取 ~/.engram/）。Without --fix doctor only looks: a

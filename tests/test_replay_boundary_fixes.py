@@ -530,6 +530,7 @@ def test_doctor_explains_withholding_and_decode_errors_read_only(tmp_path, monke
     assert "Local repair:" in text
     if bad is None:
         assert "archive or remove" in text
+        assert "knowledge/lessons.json" in text
     else:
         assert "Knowledge file unreadable: knowledge/lessons.json" in text
     assert "WITHHELD_CANARY" not in text
