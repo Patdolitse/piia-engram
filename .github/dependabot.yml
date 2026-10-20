@@ -10,3 +10,7 @@ updates:
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 3
+    ignore:
+      # mcp 2.x removed the entry point this package depends on; review majors manually.
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
