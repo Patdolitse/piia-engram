@@ -4749,8 +4749,9 @@ def _run_dashboard(args: list[str]) -> int:
         idx = args.index("--html")
         out = args[idx + 1] if idx + 1 < len(args) and not args[idx + 1].startswith("-") else ""
         dest = Path(out).expanduser().resolve() if out else (root / "reports" / "dashboard.html")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(render_dashboard_html(dashboard), encoding="utf-8")
+        from .generated_artifacts import write_generated_text
+
+        write_generated_text(root, dest, render_dashboard_html(dashboard))
         print(f"Wrote dashboard: {dest}")
         return 0
     print(render_dashboard_text(dashboard))

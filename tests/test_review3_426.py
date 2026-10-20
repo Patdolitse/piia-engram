@@ -1,10 +1,13 @@
 """Repair reports untrusted generated targets and rebuilds only canonical files."""
 
+from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -118,6 +121,7 @@ def test_canonical_derived_files_are_rebuilt_clean_before_reopening(tmp_path, mo
     eng.rebuild_index()
     assert CANARY in quick.read_text(encoding="utf-8")
     assert CANARY in card.read_text(encoding="utf-8")
+    assert CANARY.casefold().encode("utf-8") in (eng.root / "search_index.db").read_bytes().lower()
     _mark(path, rows)
     rebuild = SearchIndex.rebuild
     observed = []
@@ -137,9 +141,9 @@ def test_canonical_derived_files_are_rebuilt_clean_before_reopening(tmp_path, mo
     assert CANARY not in quick.read_text(encoding="utf-8")
     assert CANARY not in card.read_text(encoding="utf-8")
     with sqlite3.connect(eng.root / "search_index.db") as db:
-        assert CANARY not in str(db.execute("SELECT eid, doc FROM fts").fetchall())
+        assert CANARY.casefold() not in str(db.execute("SELECT eid, doc FROM fts").fetchall()).casefold()
         assert db.execute("SELECT count(*) FROM fts").fetchone()[0] == 9
-    assert CANARY.encode("utf-8") not in (eng.root / "search_index.db").read_bytes()
+    assert CANARY.casefold().encode("utf-8") not in (eng.root / "search_index.db").read_bytes().lower()
     assert len(Engram(root=eng.root, read_only=True).get_lessons()) == 9
 
 
@@ -288,11 +292,11 @@ def test_canonical_symlink_is_refused_without_following_it(tmp_path):
 
 def test_existing_canonical_sidecars_are_regenerated_without_old_content(tmp_path):
     eng, path, rows = _ordinary(tmp_path / "store")
-    for suffix in ("-wal", "-shm"):
+    for suffix in ("-wal", "-shm", "-journal"):
         (eng.root / ("search_index.db" + suffix)).write_bytes(CANARY.encode("utf-8"))
     _mark(path, rows)
     result = repair(eng.root, apply=True)
-    for suffix in ("-wal", "-shm"):
+    for suffix in ("-wal", "-shm", "-journal"):
         relative = "search_index.db" + suffix
         assert relative in result["regenerated_artifacts"]
         assert (eng.root / relative).read_bytes() == b""
@@ -323,3 +327,96 @@ def test_legacy_default_exports_need_generated_headers_and_are_only_reported(tmp
         assert _entry(result, target)["verification"] == "legacy_header"
     assert not any(item["target"] == str(unrelated) for item in result["generated_files"])
     assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+
+
+def test_hot_rollback_journal_cannot_restore_quarantined_index_content(tmp_path):
+    eng, path, rows = _ordinary(tmp_path / "store")
+    eng.rebuild_index()
+    child = (
+        "import os,sqlite3,sys; db=sqlite3.connect(sys.argv[1]); "
+        "db.execute('PRAGMA cache_size=1'); db.execute('BEGIN IMMEDIATE'); "
+        "db.execute('UPDATE fts SET doc=?', ('INTERRUPTED ' * 10000,)); os._exit(0)"
+    )
+    subprocess.run([sys.executable, "-c", child, str(eng.root / "search_index.db")], check=True)
+    journal = eng.root / "search_index.db-journal"
+    assert journal.exists() and journal.read_bytes()[:8] != bytes(8)
+    assert CANARY.casefold().encode("utf-8") in journal.read_bytes().lower()
+    _mark(path, rows)
+    result = repair(eng.root, apply=True)
+    with closing(sqlite3.connect(eng.root / "search_index.db")) as db:
+        indexed = db.execute("SELECT eid, doc FROM fts").fetchall()
+    assert CANARY.casefold() not in str(indexed).casefold()
+    assert "search_index.db-journal" in result["regenerated_artifacts"]
+
+
+def test_apply_regenerates_canonical_files_when_no_new_rows_are_marked(tmp_path):
+    eng, path, rows = _ordinary(tmp_path / "store")
+    _mark(path, rows)
+    assert repair(eng.root, apply=True)["changed"]
+    quick = eng.root / "quick_context.md"
+    quick.write_text("<!-- Engram quick_context snapshot -->\n" + CANARY, encoding="utf-8")
+    assert repair(eng.root, apply=True)["changed"]
+    assert CANARY not in quick.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("relative", ["reports/status.html", "reports/dashboard.html"])
+def test_existing_fixed_metadata_derived_files_are_also_regenerated(tmp_path, monkeypatch, relative):
+    eng, path, rows = _ordinary(tmp_path / "store")
+    target = eng.root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(CANARY, encoding="utf-8")
+    _mark(path, rows)
+    before = _snapshot(eng.root)
+    from piia_engram import status_report
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("repair must not run a client probe or external-memory scan")
+
+    monkeypatch.setattr(status_report, "_probe_mcp_entry", forbidden)
+    monkeypatch.setattr(status_report, "_external_memory_summary", forbidden)
+    result = repair(eng.root, apply=True)
+    assert CANARY not in target.read_text(encoding="utf-8")
+    assert relative in result["regenerated_artifacts"]
+    allowed = {"knowledge/lessons.json", "audit.log", "quick_context.md", "exports/identity_card.md",
+               "reports/status.html", "reports/dashboard.html", "search_index.db"}
+
+    def sources(snapshot):
+        return {name.replace("\\", "/"): value[0] for name, value in snapshot.items()
+                if value[0] is not None and name.replace("\\", "/") not in allowed
+                and not name.replace("\\", "/").startswith("recovery/")}
+
+    assert sources(_snapshot(eng.root)) == sources(before)
+
+
+@pytest.mark.parametrize("name", ["file_safety_ledger.jsonl", "shared_instructions.md",
+                                  "schema_version.json", "approval_mode.json", "audit.log.1"])
+def test_root_source_metadata_records_are_invalid_and_cannot_redirect_repair(tmp_path, name):
+    eng, path, rows = _ordinary(tmp_path / "store")
+    target = eng.root / name
+    target.write_text("{}", encoding="utf-8")
+    _record(eng.root, target)
+    _mark(path, rows)
+    before = target.read_bytes(), target.stat().st_mtime_ns
+    result = repair(eng.root, apply=True)
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before
+    assert _entry(result, target)["status"] == "invalid"
+
+
+@pytest.mark.parametrize("kind", ["status", "dashboard"])
+def test_custom_metadata_outputs_record_hashes_without_gaining_repair_authority(tmp_path, monkeypatch, kind):
+    eng, path, rows = _ordinary(tmp_path / "store")
+    monkeypatch.setenv("ENGRAM_DIR", str(eng.root))
+    target = tmp_path / (kind + ".html")
+    if kind == "status":
+        from piia_engram.status_report import build_status, write_status_html
+        write_status_html(build_status(probe=False, root=eng.root), target)
+    else:
+        from piia_engram.cli_commands import _run_dashboard
+        assert _run_dashboard(["--html", str(target)]) == 0
+    record = json.loads((eng.root / MANIFEST).read_text(encoding="utf-8"))["targets"][0]
+    assert record["path"] == str(target.resolve())
+    assert record["sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
+    before = target.read_bytes(), target.stat().st_mtime_ns
+    _mark(path, rows)
+    assert _entry(repair(eng.root, apply=True), target)["status"] == "stale_generated_file"
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before
