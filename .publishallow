@@ -23,6 +23,7 @@
 # ── Package source + test suite ─────────────────────────────────────
 src/**
 tests/**
+tests/test_maint426_review.py
 tests/test_isolated_events.py
 tests/test_isolated_recall_receipts.py
 tests/test_isolated_lifecycle_time.py
