@@ -307,6 +307,7 @@ def test_production_nonempty_recall_matches_base_bytes(tmp_path, monkeypatch, po
     actual = w.pr.recall(point, "R2", **args)
     assert [row["id"] for row in actual["items"]] == [receipt["item_id"]]
     sealed = actual.pop("receipt")
+    assert actual.pop("result_sha256") == sealed["result_sha256"]
     assert sealed == w.pr.receipts()[-1]
     assert sealed["returned_ids"] == [row["id"] for row in actual["items"]]
     assert _bytes(actual) == _bytes(expected)
@@ -348,6 +349,7 @@ def test_production_recall_matches_base_bytes(tmp_path, monkeypatch, point, quer
     actual = w.pr.recall(point, "R2", **args)
     sealed = actual.pop("receipt")
     assert sealed == w.pr.receipts()[-1]
+    assert actual.pop("result_sha256") == sealed["result_sha256"]
     assert sealed["returned_ids"] == [row["id"] for row in actual["items"]]
     assert _bytes(actual) == _bytes(expected)
 
