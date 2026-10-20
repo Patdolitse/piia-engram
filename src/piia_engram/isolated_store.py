@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 CONFIG_ENV = "PIIA_ISOLATED_STORE_CONFIG"
+CONTRACT_VERSION = "1"
 MARKER = "isolated_store_root.json"
 REPLAY_MARKER_FILE = "replay_experience.marker"
 LIMITS_FILE = "isolated_store_limits.json"
@@ -102,6 +103,13 @@ class GuardRefused(Exception):
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
         self.detail = detail
+
+
+def require_contract(version: str) -> str:
+    """Assert the caller's pinned store contract before opening or writing a store."""
+    if version != CONTRACT_VERSION:
+        raise GuardRefused("contract_version_unsupported")
+    return CONTRACT_VERSION
 
 
 class RecallRefused(Exception):
@@ -929,11 +937,13 @@ class IsolatedStore:
 
     def admit(self, card: dict, round_id: str, admission: dict, *,
               admitted_before: str | None = None, now: str | None = None,
-              event_key: str | None = None) -> dict:
+              event_key: str | None = None, supersedes: str | None = None) -> dict:
         """Write one admitted card as a verified lesson. Returns the receipt."""
         from .storage import NOT_ADDED_STATUSES, hold_directory_lock
 
         base = {"op": "admit", "round_id": _identifier(round_id, "round_id")}
+        if supersedes is not None:
+            _identifier(supersedes, "supersedes")
         problem = self._receipts_problem()
         if problem:
             return self._refuse_unreadable("admit", problem)
@@ -973,10 +983,20 @@ class IsolatedStore:
                     return self._append({**base, "result": "evidence_after_clock"})
             entry["store_mode"] = self.mode
         base.update({k: entry[k] for k in ("subject_id", "evidence_as_of", "source_family")})
+        if supersedes is not None:
+            # An unkeyed replacement still needs a recoverable, content-bound
+            # identity. No caller prose or extra receipt fields are introduced.
+            base["supersedes"] = supersedes
+            if event_key is None:
+                event_key = "supersede:" + _sha256_json({"entry": entry, "operation": base})
+                base["event_key"] = event_key
+            base["superseded_by"] = _sha256_bytes(event_key.encode("utf-8"))
         if event_key is not None:
             entry["event_key"] = event_key
         with self.serial():
             self._recheck_before_write()
+            if supersedes is not None:
+                self._check_supersede(self._engram(read_only=True), entry, base, card)
             eng = self._engram(read_only=False)
             if eng._assess_memory_risk(dict(entry)).get("risk_level") == "high":
                 return self._append({**base, "result": "risk_refused"})
@@ -996,11 +1016,13 @@ class IsolatedStore:
                         # Recovery preflight must not cancel an interrupted
                         # operation on content or identity drift.
                         return self._append(prior)
-                if self._verified_budget_full(eng):
+                if supersedes is None and self._verified_budget_full(eng):
                     return self._append_admission_refusal({**base, "result": "capacity_full"}, intent)
                 # Template similarity is only a relation in replay admission;
                 # exact, retired and archived twin guards still run in core.
                 write_options = {"_replay_admission": True} if self.mode == REPLAY_EXPERIENCE else {}
+                if supersedes is not None:
+                    write_options["_isolated_supersedes"] = supersedes
                 if event_key is not None:
                     write_options["_isolated_event_key"] = event_key
                     intent = self._pending_event_intent(self.receipts(), event_key)
@@ -1068,6 +1090,11 @@ class IsolatedStore:
         return self._append(record)
 
     def _append_admission_refusal(self, record: dict, intent: dict | None) -> dict:
+        if intent is not None and intent.get("supersedes"):
+            # A failure in post-write audit/domain work must not close a
+            # committed atomic replacement as a refused admission.
+            if self._event_intent_status(self._engram(read_only=True), intent) == "repairable":
+                return self._append(self._complete_event_intent(intent))
         receipt = self._append(record)
         if intent is not None:
             self._close_event_intent(intent, receipt)
@@ -1117,6 +1144,8 @@ class IsolatedStore:
     def _event_intent_record(self, eng, entry: dict, base: dict) -> dict:
         return {**base, "op": "admit_intent", "result": "pending",
                 "item_id": _sha256_bytes(entry["event_key"].encode("utf-8")),
+                **({"superseded_by": _sha256_bytes(entry["event_key"].encode("utf-8"))}
+                   if base.get("supersedes") else {}),
                 "content_sha256": content_hash(eng._repair_incoming_text(dict(entry))),
                 "root_id": _root_id(self.root)}
 
@@ -1125,7 +1154,8 @@ class IsolatedStore:
         # Copy only operation fields; completion gets a fresh audit timestamp
         # and hash-chain link, retaining the original logical admission.
         fields = ("round_id", "admission_sha256", "event_key", "item_id", "content_sha256",
-                  "root_id", "subject_id", "evidence_as_of", "source_family", "admitted_before", "clock")
+                  "root_id", "subject_id", "evidence_as_of", "source_family", "admitted_before", "clock",
+                  "supersedes", "superseded_by")
         return {**{k: intent[k] for k in fields if k in intent}, "op": "admit", "result": "admitted",
                 "intent_receipt_seq": intent["seq"], "intent_receipt_sha256": _sha256_json(intent)}
 
@@ -1153,6 +1183,18 @@ class IsolatedStore:
             return "event_key_conflict"
         if (row.get("status") or "active") != "active":
             return "duplicate_retired"
+        if intent.get("supersedes"):
+            old = next((r for r in self._rows(eng) if r.get("id") == intent["supersedes"]), None)
+            old = old or self._archived_raw(eng, intent["supersedes"])
+            if (old is None or old.get("superseded_by") != item_id
+                    or old.get("status") != "retired" or row.get("supersedes") != old["id"]):
+                return "event_key_conflict"
+            original = next((r for r in self.receipts() if r.get("op") == "admit"
+                             and r.get("result") == "admitted" and r.get("item_id") == old["id"]), None)
+            if (original is None or not self._hash_ok(old, original)
+                    or _family_key(old.get("source_family")) != _family_key(row.get("source_family"))
+                    or any(old.get(k) != row.get(k) for k in ("subject_id", "source_decision_point"))):
+                return "event_key_conflict"
         return "repairable"
 
     def _event_retry(self, eng, entry: dict, base: dict) -> dict | None:
@@ -1177,7 +1219,8 @@ class IsolatedStore:
                     return {**base, "item_id": candidate["item_id"], "result": status}
                 intent = self._append(candidate)
             reply = {**base, "item_id": intent["item_id"]}
-            if content_hash(eng._repair_incoming_text(dict(entry))) != intent.get("content_sha256"):
+            if (not self._same_supersede_request(intent, base)
+                    or content_hash(eng._repair_incoming_text(dict(entry))) != intent.get("content_sha256")):
                 return {**reply, "result": "event_key_conflict"}
             status = self._event_intent_status(eng, intent)
             if status == "repairable":
@@ -1189,7 +1232,7 @@ class IsolatedStore:
         item_id = original["item_id"]
         reply = {**base, "item_id": item_id, "original_receipt_seq": original["seq"],
                  "original_receipt_sha256": _sha256_json(original)}
-        if len(originals) != 1:
+        if len(originals) != 1 or not self._same_supersede_request(original, base):
             return {**reply, "result": "event_key_conflict"}
         experience = self.mode == REPLAY_EXPERIENCE
         latest, vetoed = self._replay(receipts, None, experience=experience)
@@ -1214,6 +1257,90 @@ class IsolatedStore:
                     else item_id not in rows or (row.get("status") or "active") != "active")):
             return {**reply, "result": "duplicate_retired"}
         return {**reply, "result": "already_admitted", "content_sha256": original["content_sha256"]}
+
+    @staticmethod
+    def _same_supersede_request(original: dict, base: dict) -> bool:
+        if "supersedes" not in original and "supersedes" not in base:
+            return True  # preserve the existing keyed admission contract
+        return all(original.get(k) == base.get(k) for k in
+                   ("supersedes", "round_id", "admission_sha256", "admitted_before", "clock"))
+
+    def _check_supersede(self, eng, entry: dict, base: dict, card: dict) -> None:
+        """No-write preflight, including the reserved identity on a crash retry."""
+        from . import review_boundary, tombstones
+
+        if review_boundary.mcp_origin():
+            raise GuardRefused("isolated_event_parameters_not_supported")
+        receipts = self.receipts()
+        key, target = base["event_key"], base["supersedes"]
+        if card.get("source_decision_point") != entry["source_decision_point"]:
+            raise GuardRefused("supersedes_identity_mismatch")
+        prior = next((r for r in reversed(receipts) if r.get("event_key") == key
+                      and r.get("op") in ("admit", "admit_intent")
+                      and r.get("result") in ("admitted", "pending")), None)
+        pending = self._pending_event_intent(receipts, key)
+        if prior and (prior.get("result") == "admitted" or pending):
+            if (not self._same_supersede_request(prior, base)
+                    or prior.get("content_sha256") != content_hash(eng._repair_incoming_text(dict(entry)))):
+                raise GuardRefused("event_key_conflict")
+            return
+        self._check_pending_supersede(target, receipts)
+        latest, vetoed = self._replay(receipts, None, experience=self.mode == REPLAY_EXPERIENCE)
+        state = latest.get(target)
+        if state is None:
+            raise GuardRefused("supersedes_not_found")
+        old = next((r for r in self._rows(eng) if r.get("id") == target), None)
+        if (not state["active"] or target in vetoed or tombstones.by_id(self.root, target)
+                or old is None or old.get("status", "active") != "active"):
+            raise GuardRefused("supersedes_inactive")
+        if (_family_key(old.get("source_family")) != _family_key(entry["source_family"])
+                or old.get("subject_id") != entry["subject_id"]
+                or old.get("source_decision_point") != card.get("source_decision_point")):
+            raise GuardRefused("supersedes_identity_mismatch")
+        if not self._hash_ok(old, state["receipt"]):
+            raise GuardRefused("supersedes_content_mismatch")
+        candidate = {**base, "op": "admit", "result": "admitted",
+                     "item_id": _sha256_bytes(key.encode("utf-8")), "ts": utc_now_z(),
+                     "seq": receipts[-1]["seq"] + 1}
+        if self.mode == REPLAY_EXPERIENCE:
+            admission = state["receipt"].get("admitted_before", state["receipt"]["ts"])
+            if parse_utc_z(base["admitted_before"], "admitted_before") < parse_utc_z(admission, "admitted_before"):
+                raise GuardRefused("supersedes_before_admission")
+        if self._version_overlap(receipts + [candidate], target):
+            raise GuardRefused("superseded_active")
+
+    @staticmethod
+    def _version_family(receipts: list[dict], item_id: str) -> set[str]:
+        members = {item_id}
+        edges = [(r["item_id"], r["supersedes"]) for r in receipts
+                 if r.get("op") == "admit" and r.get("result") == "admitted" and r.get("supersedes")]
+        while True:
+            expanded = members | {v for edge in edges if members.intersection(edge) for v in edge}
+            if expanded == members:
+                return members
+            members = expanded
+
+    def _check_pending_supersede(self, item_id: str, receipts: list[dict]) -> None:
+        members = self._version_family(receipts, item_id)
+        if any(r.get("supersedes") in members or r.get("item_id") in members
+               for r in self._pending_event_intents(receipts) if r.get("supersedes")):
+            raise GuardRefused("supersede_pending")
+
+    def _version_overlap(self, receipts: list[dict], item_id: str) -> bool:
+        """Check all historical intervals, including later logical lifecycle events."""
+        members = self._version_family(receipts, item_id)
+        if len(members) < 2:
+            return False
+        experience = self.mode == REPLAY_EXPERIENCE
+        relevant = [r for r in receipts if r.get("item_id") in members]
+        cuts = {parse_utc_z(r.get("effective_at", r.get("admitted_before", r["ts"]))
+                            if experience else r["ts"], "event_time") + timedelta(microseconds=1)
+                for r in relevant}
+        for cut in [None, *cuts]:
+            state, vetoed = self._replay(relevant, cut, experience=experience)
+            if sum(bool(st["active"]) and key not in vetoed for key, st in state.items()) > 1:
+                return True
+        return False
 
     def _verified_budget_full(self, eng) -> bool:
         """At the hard cap the library would quietly park a new verified row in staging;
@@ -1296,6 +1423,7 @@ class IsolatedStore:
         base["admission_sha256"] = _sha256_json(admission)
         with self.serial():
             self._recheck_before_write()
+            self._check_pending_supersede(item_id, self.receipts())
             try:
                 base.update(self._lifecycle_time(item_id, effective_at, now))
             except GuardRefused as exc:
@@ -1332,10 +1460,15 @@ class IsolatedStore:
 
         with self.serial():
             self._recheck_before_write()
+            receipts = self.receipts()
+            self._check_pending_supersede(item_id, receipts)
             try:
                 base.update(self._lifecycle_time(item_id, effective_at, now))
             except GuardRefused as exc:
                 return self._append({**base, "result": exc.code})
+            candidate = {**base, "result": "restored", "ts": utc_now_z(), "seq": receipts[-1]["seq"] + 1}
+            if self._version_overlap(receipts + [candidate], item_id):
+                raise GuardRefused("superseded_active")
             if _tombstones.by_id(self.root, item_id) is not None:
                 return self._append({**base, "result": "rejected_before"})
             if any(r.get("item_id") == item_id and r.get("op") in ("veto_retire", "veto_reject")
@@ -1478,6 +1611,13 @@ class IsolatedStore:
             logical_ids = {r.get("item_id") for r in receipts if r.get("effective_at")
                            and r.get("op") in ("retire", "restore")
                            and r.get("result") in ("retired", "restored")}
+            version_groups = {}
+            for r in receipts:
+                if r.get("op") == "admit" and r.get("result") == "admitted" and r.get("supersedes"):
+                    members = IsolatedStore._version_family(receipts, r["item_id"])
+                    logical_ids.update(members)
+                    for member in members:
+                        version_groups[member] = min(members)
             slots: dict[str, list[int]] = {}
             for index, r in enumerate(ordered):
                 logical_admit = (r.get("op") == "admit" and r.get("result") == "admitted"
@@ -1485,7 +1625,7 @@ class IsolatedStore:
                 logical_op = (r.get("op") in ("retire", "restore") and r.get("effective_at")
                               and r.get("result") in ("retired", "restored"))
                 if r.get("item_id") in logical_ids and (logical_admit or logical_op):
-                    slots.setdefault(r["item_id"], []).append(index)
+                    slots.setdefault(version_groups.get(r["item_id"], r["item_id"]), []).append(index)
             for indices in slots.values():
                 logical = sorted((ordered[i] for i in indices),
                                  key=lambda r: (parse_utc_z(event_time(r), "event_time"), r.get("seq", 0)))
@@ -1499,6 +1639,9 @@ class IsolatedStore:
                 continue
             if op == "admit" and result == "admitted":
                 state[item_id] = {"active": True, "receipt": r}
+                if r.get("supersedes") in state:
+                    state[r["supersedes"]]["active"] = False
+                    state[r["supersedes"]]["superseded_by"] = item_id
             elif op in ("retire", "veto_retire") and result == "retired" and item_id in state:
                 state[item_id]["active"] = False
             elif op == "restore" and result == "restored" and item_id in state:
@@ -1515,6 +1658,16 @@ class IsolatedStore:
         from . import tombstones as _tombstones
 
         lib_active = (row.get("status") or "active") == "active" and item_id in rows
+        if not lib_active and row.get("superseded_by"):
+            # Before the completion exists the ledger still exposes the old
+            # version. Only a fully matched pending atomic library write may
+            # explain this temporary physical retirement.
+            for intent in self._pending_event_intents(self.receipts()):
+                if intent.get("supersedes") == item_id and intent.get("item_id") == row["superseded_by"]:
+                    eng = self._engram(read_only=True)
+                    if self._event_intent_status(eng, intent) == "repairable":
+                        lib_active = True
+                        break
         return bool(latest.get(item_id, {}).get("active")) and (
             not lib_active or _tombstones.by_id(self.root, item_id) is not None)
 
@@ -1647,7 +1800,7 @@ class IsolatedStore:
                  "admitted_round": row.get("admitted_round")}
                 for _ev, item_id, row in picked[:effective_limit]
             ]
-            receipt = self._append({
+            record = {
                 "op": "recall", "round_id": str(round_id), "result": "recalled",
                 "decision_point_id": decision_point_id, "decision_point_kind": dp.get("kind"),
                 "decision_point_mode": dp["mode"], "query_sha256": _sha256_bytes(str(query or "").encode("utf-8")),
@@ -1663,12 +1816,26 @@ class IsolatedStore:
                 "excluded_families": sorted(exclude),
                 "subject_ids": sorted(wanted_subjects) if wanted_subjects is not None else None,
                 "omitted": omitted,
-            })
+            }
+            record["result_sha256"] = self._recall_result_hash(record)
+            receipt = self._append(record)
         return {"items": items, "excluded": excluded, "mode": dp["mode"], "receipt": receipt,
+                "result_sha256": receipt["result_sha256"],
                 **({"store_mode": self.mode} if experience else {}),
                 "excluded_families": sorted(exclude),
                 "effective_evidence_before": ev_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 "effective_admitted_before": adm_before.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+
+    @staticmethod
+    def _recall_result_hash(receipt: dict) -> str:
+        payload = {
+            "effective_cuts": {"evidence_before": receipt["effective_evidence_before"],
+                               "admitted_before": receipt["effective_admitted_before"]},
+            "excluded": receipt["excluded"],
+            "items": list(zip(receipt["returned_ids"], receipt["returned_content_sha256"])),
+        }
+        return _sha256_bytes(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":")).encode("utf-8"))
 
     def verify_recall_receipt(self, receipt: dict) -> dict:
         """Verify the sealed ledger copy and current item disposition, without bodies.
@@ -1696,6 +1863,13 @@ class IsolatedStore:
                     or not all(isinstance(item_id, str) for item_id in ids)
                     or not all(isinstance(digest, str) for digest in hashes)):
                 return {"result": "recall_receipt_invalid", "unchanged": False, "changes": []}
+            if "result_sha256" in sealed:
+                try:
+                    valid = sealed["result_sha256"] == self._recall_result_hash(sealed)
+                except (KeyError, TypeError, ValueError):
+                    valid = False
+                if not valid:
+                    return {"result": "recall_receipt_invalid", "unchanged": False, "changes": []}
             experience = self.mode == REPLAY_EXPERIENCE
             latest, vetoed = self._replay(receipts, None, experience=experience)
             physical, _ = self._replay(receipts, None)
@@ -1739,10 +1913,45 @@ class IsolatedStore:
         admitted = {r["item_id"]: r["content_sha256"] for r in receipts
                     if r.get("op") == "admit" and r.get("result") == "admitted"}
         moved = {r["item_id"] for r in receipts if r.get("result") in ("retired", "archived")}
+        moved.update(r["supersedes"] for r in receipts if r.get("op") == "admit"
+                     and r.get("result") == "admitted" and r.get("supersedes"))
         vetoed = {r["item_id"] for r in receipts if r.get("op") == "veto_reject" and r.get("result") == "tombstoned"}
         eng = self._engram(read_only=True)
         successful_admissions = [r for r in receipts if r.get("op") == "admit" and r.get("result") == "admitted"]
         event_receipts = {r["item_id"]: r for r in successful_admissions}
+        # Check committed version edges against current rows (archive copies
+        # may retain older edges after a later restore and append).
+        current_rows = {r.get("id"): r for r in self._rows(eng)}
+        expected_by = {}
+        version_members = set()
+        for receipt in successful_admissions:
+            target, item_id = receipt.get("supersedes"), receipt["item_id"]
+            row = current_rows.get(item_id) or self._archived_raw(eng, item_id)
+            if row and row.get("supersedes") != target:
+                problems.append(f"supersede_link_mismatch:{item_id}")
+            if not target:
+                continue
+            if (not isinstance(target, str) or IDENTIFIER_RE.fullmatch(target) is None
+                    or receipt.get("superseded_by") != item_id or target not in admitted):
+                problems.append(f"supersede_receipt_invalid:{item_id}")
+                continue
+            expected_by[target] = item_id
+            version_members.update((target, item_id))
+            old = current_rows.get(target) or self._archived_raw(eng, target)
+            if old and row and (_family_key(old.get("source_family")) != _family_key(row.get("source_family"))
+                                or any(old.get(k) != row.get(k) for k in ("subject_id", "source_decision_point"))):
+                problems.append(f"supersede_identity_mismatch:{item_id}")
+        for target, successor in expected_by.items():
+            old = current_rows.get(target) or self._archived_raw(eng, target)
+            if old is None or old.get("superseded_by") != successor:
+                problems.append(f"supersede_link_mismatch:{target}")
+        if version_members:
+            physical, _ = self._replay(receipts, None)
+            for item_id in version_members:
+                row = current_rows.get(item_id) or self._archived_raw(eng, item_id)
+                active = item_id in current_rows and row.get("status", "active") == "active"
+                if active != bool(physical.get(item_id, {}).get("active")):
+                    problems.append(f"supersede_state_mismatch:{item_id}")
         receipt_keys: dict[str, str] = {}
         for r in successful_admissions:
             key = r.get("event_key")

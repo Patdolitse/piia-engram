@@ -2334,6 +2334,7 @@ class Engram(
         *,
         _replay_admission: bool = False,
         _isolated_event_key: str | None = None,
+        _isolated_supersedes: str | None = None,
         **extra: Any,
     ) -> dict:
         """Add a lesson learned.
@@ -2343,13 +2344,17 @@ class Engram(
         Isolated replay admission may keep similar new summaries in the related
         tier; this internal option is unavailable to production roots or MCP.
         """
-        if _isolated_event_key is not None:
+        if _isolated_event_key is not None or _isolated_supersedes is not None:
             from .isolated_store import GuardRefused, MARKER, root_mode, validate_event_key
 
             if _review_boundary.mcp_origin() or not (self.root / MARKER).is_file():
                 raise GuardRefused("isolated_event_parameters_not_supported")
             root_mode(self.root, self._store_mode)
             validate_event_key(_isolated_event_key)
+            if _isolated_supersedes is not None:
+                from .isolated_store import _identifier
+
+                _identifier(_isolated_supersedes, "supersedes")
         if _replay_admission:
             from .isolated_store import GuardRefused, REPLAY_EXPERIENCE
 
@@ -2547,6 +2552,22 @@ class Engram(
                     self._hold_for_owner(new_lesson, "supersede_proposal")
                     new_lesson["pending_supersedes"] = supersede_target
                     lesson_ctx.supersede_target = supersede_target
+            if _isolated_supersedes is not None:
+                from .isolated_store import GuardRefused, _family_key
+
+                target = next((r for r in lessons if r.get("id") == _isolated_supersedes), None)
+                if target is None or target.get("status", "active") != "active":
+                    raise GuardRefused("supersedes_inactive")
+                if (_family_key(target.get("source_family")) != _family_key(new_lesson.get("source_family"))
+                        or any(target.get(k) != new_lesson.get(k) for k in ("subject_id", "source_decision_point"))):
+                    raise GuardRefused("supersedes_identity_mismatch")
+                if new_lesson.get("tier") != "verified":
+                    raise GuardRefused("not_verified_after_write")
+                # Both rows are committed by the SAME atomic lessons.json replace.
+                # No Owner-proposal edge or separate archive/retire write is used.
+                target["status"] = "retired"
+                target["superseded_by"] = new_lesson["id"]
+                new_lesson["supersedes"] = target["id"]
             self._redirect_when_verified_full(new_lesson, lessons)
             # A queued capture already in the archive is not placed there again.
             if _isolated_event_key is None and _capacity.pool_of(new_lesson) != _capacity.POOL_V:

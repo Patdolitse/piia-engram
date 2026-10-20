@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+
+- Isolated store contract v1 with `CONTRACT_VERSION` and `require_contract("1")` for automated evaluation callers; incompatible changes require a new version with continued support or a stable refusal.
+- Atomic `admit(..., supersedes=item_id)` in both isolated modes, binding family, subject and exact source decision identity, with crash recovery and restore conflict checks. Rollback appends a new version.
+- Deterministic recall `result_sha256` over effective cuts, exclusion counts and ordered content references, checked by receipt verification when present. Existing ledger records remain readable without rewriting.
+
 ### Fixed
 
 - Only complete 64-character hexadecimal digests in known digest metadata fields skip phone detection; free text and all other sensitive-data detectors retain their existing checks.

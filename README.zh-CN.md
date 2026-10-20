@@ -266,7 +266,9 @@ python demos/cross_tool_continuity_demo.py --json
 
 ### 回放经验模式
 
-自动化离线与在线评估调用方可在两种隔离模式中使用 `IsolatedStore.admit(..., event_key="source:event:record:v1")`，区分文本相同的事件并安全重试。同键内容冲突时应先退役，再用新键准入；不传键时保留既有去重行为。召回返回账本中的 `receipt`，包含快照标识、有序 ID、内容哈希和实际筛选条件；`verify_recall_receipt` 不返回正文，只报告后续变化。回放退役/恢复还可提供 `effective_at` 与 `now`，使操作在历史时点生效。Owner 否决覆盖所有时刻。
+自动化离线与在线评估调用方可在两种隔离模式中使用 `IsolatedStore.admit(..., event_key="source:event:record:v1")`，区分文本相同的事件并安全重试。召回返回账本中的 `receipt`，包含快照标识、有序 ID、内容哈希和实际筛选条件；`verify_recall_receipt` 不返回正文，只报告后续变化。回放退役/恢复还可提供 `effective_at` 与 `now`，使操作在历史时点生效。Owner 否决覆盖所有时刻。
+
+自动化评估调用方可在打开存储前执行 `from piia_engram.isolated_store import require_contract; require_contract("1")` 固定接口契约。v1 的 `admit(..., supersedes=item_id)` 在同一条完成收据中准入新版本并使旧版本失活，两种模式均支持中断重试；族、主体与不透明字符串 `source_decision_point` 必须匹配，其中决策点要求逐字相等。已有活动版本时拒绝恢复另一版本，回滚通过追加新版本完成。召回新增 `result_sha256`，封存有效截止、排除计数和有序内容引用的确定性哈希。不兼容变更必须采用新契约版本，旧版继续支持或以 `contract_version_unsupported` 明确拒绝；已有账本保持可读。
 
 按时间顺序重新输入历史材料的离线回放与评估，可在启动配置中设置 `"mode": "replay_experience"`，初始化独立的隔离根。根模式初始化后不可变。准入必须提供带时区的 `admitted_before` 和 `now`，召回也必须提供 `now`；历史准入采用调用方时间，收据仍保留真实时间，并关闭自动同族排除。证据仍受决策点 `as_of` 截断。回放准入中，归一化摘要不完全相同的卡片即使模板相似度很高也保持 verified；精确重复与既有 tombstone、退役、归档副本规则仍生效。不传事件键时生产去重行为保持原样，所有容量限制仍生效。回放根可固定最高 10,000 的 `hard_cap`（例如 1,400），普通根默认仍为 1,000。原生备份与返回条目携带 `store_mode: replay_experience`，普通根拒绝加载回放根或导入带标记的材料。
 
