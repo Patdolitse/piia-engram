@@ -24,15 +24,18 @@ KNOWLEDGE_FILES = (
     "knowledge/overflow_archive/lessons.jsonl",
     "knowledge/overflow_archive/decisions.jsonl",
 )
+MAX_MARKED_ROWS = 5
+MAX_MARKED_PERCENT = 10
+REPAIR_HINT = ("Run engram doctor. A mostly replay-marked store is a damaged replay root; "
+               "restore its metadata from a known-good backup instead of quarantining its knowledge.")
 
 
 def _ordinary_only(root: Path) -> None:
-    """Reject all recognized isolation evidence, including custom sibling ledgers.
+    """Reject recorded, launcher-configured and recognized ledger evidence.
 
-    A lost external locator cannot be reconstructed globally. In addition to
-    configured and conventional ledgers, inspect sibling ledger directories;
-    bind evidence by directory identity, never by a guessed directory name.
-    Row provenance itself always blocks normal use, regardless of ledger layout.
+    Discovery is only a veto, never proof that a root was ordinary: an external
+    locator may be lost. The independent whole-store minority rule is required
+    even when none of these locations contains a recognized ledger.
     """
     from .review_boundary import mcp_origin
 
@@ -69,8 +72,9 @@ def _local_path(root: Path, relative: str) -> Path:
     return path
 
 
-def _plan(root: Path) -> list[tuple[str, bytes, bytes, list]]:
+def _plan(root: Path) -> tuple[list[tuple[str, bytes, bytes, list]], dict[str, int]]:
     plan = []
+    counts = {}
     # Parse every file before making any change, even an unmarked file.
     for relative in KNOWLEDGE_FILES:
         path = _local_path(root, relative)
@@ -78,6 +82,7 @@ def _plan(root: Path) -> list[tuple[str, bytes, bytes, list]]:
             continue
         raw = path.read_bytes()
         text = raw.decode("utf-8-sig")
+        count = 0
         if path.suffix == ".jsonl":
             kept, marked = [], []
             for line in text.splitlines(keepends=True):
@@ -85,6 +90,7 @@ def _plan(root: Path) -> list[tuple[str, bytes, bytes, list]]:
                     row = json.loads(line)
                     if not isinstance(row, dict):
                         raise ValueError("expected knowledge object")
+                    count += 1
                     if carries_replay_marker(row):
                         marked.append(row)
                         continue
@@ -94,12 +100,45 @@ def _plan(root: Path) -> list[tuple[str, bytes, bytes, list]]:
             rows = json.loads(text)
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise ValueError("expected knowledge list")
+            count = len(rows)
             marked = [row for row in rows if carries_replay_marker(row)]
             kept = [row for row in rows if not carries_replay_marker(row)]
             replacement = (json.dumps(kept, ensure_ascii=False, indent=2) + "\r\n").encode("utf-8")
         if marked:
             plan.append((relative, raw, replacement, marked))
-    return plan
+        counts[relative] = count
+    return plan, counts
+
+
+def _inspection(root: Path) -> tuple[list, dict]:
+    plan, counts = _plan(root)
+    files = {relative: len(rows) for relative, _, _, rows in plan}
+    marked, total = sum(files.values()), sum(counts.values())
+    refusal = None
+    rules = []
+    try:
+        _ordinary_only(root)
+    except GuardRefused as exc:
+        refusal = exc.code
+        rules.append(exc.code)
+    if marked > MAX_MARKED_ROWS:
+        rules.append("marked_rows_over_5")
+    if marked * 100 > total * MAX_MARKED_PERCENT:
+        rules.append("marked_rows_over_10_percent")
+    if refusal is None and rules:
+        refusal = "repair_replay_dominant"
+    return plan, {"files": files, "knowledge_rows": counts, "total_rows": total,
+                  "marked_rows": marked, "max_marked_rows": MAX_MARKED_ROWS,
+                  "max_marked_percent": MAX_MARKED_PERCENT, "would_refuse": refusal,
+                  "refusal_rules": rules,
+                  "hint": REPAIR_HINT if refusal else ""}
+
+
+def _require_eligible(preview: dict) -> None:
+    if preview["would_refuse"]:
+        exc = GuardRefused(preview["would_refuse"], REPAIR_HINT)
+        exc.repair_preview = preview
+        raise exc
 
 
 def _write_new(path: Path, data: bytes) -> None:
@@ -111,8 +150,11 @@ def _write_new(path: Path, data: bytes) -> None:
 
 
 def _derived(root: Path) -> list[Path]:
-    # Only rebuildable, store-owned artifacts. Portable exports deliberately
-    # written outside the store are Owner-managed copies, not searched here.
+    # Legacy artifacts predate the generated-artifacts manifest. Recorded
+    # destinations (including external files) are invalidated separately.
+    from .generated_artifacts import recorded_targets
+
+    registered = set(recorded_targets(root))
     paths = [root / name for name in (
         "quick_context.md", "search_index.db", "search_index.db-wal", "search_index.db-shm",
     )]
@@ -120,24 +162,29 @@ def _derived(root: Path) -> list[Path]:
     for pattern in ("identity_card.md", "knowledge_report_*.md", "review_*.html"):
         paths.extend(exports.glob(pattern))
     # refresh_quick_context(target=...) can use another store-local name.
-    for path in root.rglob("*.md"):
+    for path in root.rglob("*"):
+        if not path.is_file() or path.name.startswith(".") or path in registered:
+            continue
         if path.relative_to(root).parts[0] in {"recovery", "knowledge", "backups"}:
             continue
         _local_path(root, path.relative_to(root).as_posix())
         with path.open("rb") as source:
             if source.read(160).startswith(b"<!-- Engram quick_context snapshot"):
                 paths.append(path)
-    return sorted({p for p in paths if p.exists()})
+    return sorted({p for p in paths if p.exists()} - registered)
 
 
 def repair(root: Path, *, apply: bool = False) -> dict:
     """Dry-run is zero-write; apply is explicitly local and preserves provenance."""
     root = Path(root).absolute()
-    _ordinary_only(root)
-    plan = _plan(root)
-    files = {relative: len(rows) for relative, _, _, rows in plan}
+    from .review_boundary import mcp_origin
+
+    if mcp_origin():
+        raise GuardRefused("local_repair_only")
+    plan, preview = _inspection(root)
     if not apply:
-        return {"files": files, "read_only": True, "changed": False}
+        return {**preview, "read_only": True, "changed": False}
+    _require_eligible(preview)
     if not plan and not (root / PENDING).exists():
         return {"files": {}, "changed": False}
     # Preflight generated paths and all recovery destinations before writing.
@@ -149,13 +196,17 @@ def repair(root: Path, *, apply: bool = False) -> dict:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex[:8]
     recovery = _local_path(root, f"recovery/replay-rows/{stamp}")
     with ExitStack() as stack:
+        stack.enter_context(hold_directory_lock(root))
         for directory in sorted({(root / relative).parent for relative in KNOWLEDGE_FILES
                                  if (root / relative).parent.exists()}):
             stack.enter_context(hold_directory_lock(directory))
-        _ordinary_only(root)
         # Re-read under the same directory locks used by normal knowledge writes.
-        plan = _plan(root)
-        files = {relative: len(rows) for relative, _, _, rows in plan}
+        plan, preview = _inspection(root)
+        _require_eligible(preview)
+        files = preview["files"]
+        artifacts = _derived(root)
+        from .generated_artifacts import recorded_targets, invalidate_generated
+        recorded_targets(root)  # validate the manifest before any recovery write
         for relative, raw, _, _ in plan:
             _write_new(recovery / (relative + ".bak"), raw)
         quarantined = [json.dumps({"file": relative, "row": row}, ensure_ascii=False)
@@ -166,6 +217,11 @@ def repair(root: Path, *, apply: bool = False) -> dict:
             _write_new(root / PENDING, b'{"repair":"replay-rows"}\r\n')
         for path in artifacts:
             path.unlink(missing_ok=True)
+        invalidation = invalidate_generated(root)
+        if any(not item["outside_store"] for item in invalidation["invalidation_failures"]):
+            exc = GuardRefused("repair_artifact_invalidation_failed", "Run engram doctor; retry local invalidation")
+            exc.repair_preview = {**preview, **invalidation}
+            raise exc
         for relative, _, replacement, _ in plan:
             path = root / relative
             temp = path.with_name(path.name + ".repair-" + uuid.uuid4().hex + ".tmp")
@@ -175,13 +231,18 @@ def repair(root: Path, *, apply: bool = False) -> dict:
             finally:
                 temp.unlink(missing_ok=True)
         event = {"action": "replay_rows_repaired", "ts": stamp, "files": files,
-                 "quarantined": sum(files.values()), "invalidated": len(artifacts)}
+                 "quarantined": sum(files.values()),
+                 "invalidated": len(artifacts) + len(invalidation["invalidated_targets"]),
+                 "invalidation_failed": len(invalidation["invalidation_failures"])}
         with (root / "audit.log").open("a", encoding="utf-8") as audit:
             audit.write(json.dumps(event, ensure_ascii=False) + "\n")
             audit.flush()
             os.fsync(audit.fileno())
         (root / PENDING).unlink()
-    return {"files": files, "changed": True, "quarantined": sum(files.values())}
+    result = {**preview, "changed": True, "quarantined": sum(files.values()), **invalidation}
+    if invalidation["invalidation_failures"]:
+        result["hint"] = "Remove or regenerate the listed external targets locally before consuming them."
+    return result
 
 
 def run_cli(args: list[str]) -> int:
@@ -195,9 +256,12 @@ def run_cli(args: list[str]) -> int:
     try:
         result = repair(root, apply=options.apply)
     except (GuardRefused, OSError, ValueError) as exc:
-        result = {"error": exc.code if isinstance(exc, GuardRefused) else type(exc).__name__,
+        result = {**getattr(exc, "repair_preview", {}),
+                  "error": exc.code if isinstance(exc, GuardRefused) else type(exc).__name__,
                   "hint": "Run engram doctor; no unreadable knowledge file was rewritten.",
                   "stored_replay": stored_replay_findings(root)}
+        if getattr(exc, "repair_preview", {}).get("would_refuse"):
+            result["hint"] = REPAIR_HINT
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))

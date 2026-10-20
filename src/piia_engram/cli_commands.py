@@ -2336,7 +2336,9 @@ def _run_export_agents_md(args: list[str]) -> int:
             print(f"ERROR: refusing to overwrite an existing file: {dest}")
             return 2
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(block, encoding="utf-8")
+        from .generated_artifacts import write_generated_text
+
+        write_generated_text(root, dest, block)
         print(f"Wrote AGENTS.md export: {dest}")
         return 0
     print(block)
@@ -3575,7 +3577,9 @@ def _run_dock_portrait(args: list[str]) -> int:
     if want_html:
         try:
             page = eng.render_user_portrait_html(portrait, growth)
-            Path(output).write_text(page, encoding="utf-8")
+            from .generated_artifacts import write_generated_text
+
+            write_generated_text(root, Path(output), page)
         except Exception as exc:
             return _err(f"could not write portrait HTML: {exc}", 1)
         if want_json:

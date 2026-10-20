@@ -530,7 +530,9 @@ function copyResult() {{
         export_dir.mkdir(parents=True, exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
         out_path = export_dir / f"review_{date_str}.html"
-        out_path.write_text(html, encoding="utf-8")
+        from .generated_artifacts import write_generated_text
+
+        write_generated_text(self.root, out_path, html)
         return out_path
 
     def promote_knowledge(

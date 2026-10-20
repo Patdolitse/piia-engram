@@ -417,6 +417,13 @@ class RetrievalMixin:
         # by another process, permission error), refuse to pretend the purge
         # succeeded — raise so the caller stops instead of silently leaving a
         # plaintext index in place (Codex a5 round-3 O2).
+        from .generated_artifacts import invalidate_generated
+
+        generated = invalidate_generated(self.root)
+        removed = bool(generated["invalidated_targets"]) or removed
+        if generated["invalidation_failures"]:
+            targets = ", ".join(item["target"] for item in generated["invalidation_failures"])
+            raise RuntimeError(f"generated_artifact_invalidation_failed: {targets}")
         if self._corpus_encrypted() and (self.root / "search_index.db").exists():
             raise RuntimeError(
                 f"search_index.db in {self.root} could not be removed while "
