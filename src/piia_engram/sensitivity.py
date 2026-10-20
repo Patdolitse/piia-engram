@@ -443,36 +443,13 @@ def _has_formatted_pii(s: str, *, phones: bool = True) -> bool:
     return False
 
 
-# Phone-shaped substrings of mixed alphanumeric tokens are identifiers,
-# not standalone numbers. Only the PHONE scanner uses this view: credential,
-# email, payment-card and resident-ID checks still inspect the original text.
-_PHONE_IDENTIFIER_RE = re.compile(
-    r"[A-Za-z0-9_]+(?:[+/][A-Za-z0-9_]+)+(?:={1,2})?"
-    r"|[vV][0-9]+(?:\.[0-9]+)+"
-    r"|[A-Za-z0-9_]+"
-)
-
-
-def _phone_scan_text(s: str) -> str:
-    def mask(match):
-        token = match.group()
-        if ("/" in token or "+" in token) and len(token) < 24:
-            return token  # short prose such as call/13800138000 is not base64
-        if any(c.isdigit() for c in token) and any(c.isalpha() or c == "_" for c in token):
-            return " " * len(token)
-        return token
-    return _PHONE_IDENTIFIER_RE.sub(mask, s)
-
-
-def _has_pii_pattern(s: str) -> bool:
-    phone_text = _phone_scan_text(s)
+def _has_pii_pattern(s: str, *, phones: bool = True) -> bool:
     return bool(
         _EMAIL_RE.search(s)
-        or _CN_PHONE_RE.search(phone_text)
+        or (phones and _CN_PHONE_RE.search(s))
         or _scan_cn_id(s)
         or any(_luhn_ok(m.group()) for m in _CARD_RE.finditer(s))
-        or _has_formatted_pii(s, phones=False)
-        or _has_formatted_pii(phone_text)
+        or _has_formatted_pii(s, phones=phones)
     )
 
 
@@ -488,7 +465,7 @@ def _normalize_visible_text(s: str) -> str:
     return s.strip()
 
 
-def classify_value(value) -> str:
+def classify_value(value, *, _phones: bool = True) -> str:
     """Sensitivity FLOOR implied by a field VALUE, independent of its name and
     of human language: high-confidence credential shapes -> ``secret``, PII
     shapes -> ``private``, otherwise ``public`` (no constraint).
@@ -517,7 +494,7 @@ def classify_value(value) -> str:
         return "secret"
     # PII: a whole-value email of any length, or any PII pattern inside a short
     # ("field-like") value. Long free text is treated as content, not floored.
-    if _EMAIL_RE.fullmatch(s) or (len(s) <= _PII_SHORT_MAXLEN and _has_pii_pattern(s)):
+    if _EMAIL_RE.fullmatch(s) or (len(s) <= _PII_SHORT_MAXLEN and _has_pii_pattern(s, phones=_phones)):
         return "private"
     return "public"
 
@@ -533,33 +510,32 @@ def _field_floor(name: str, restricted_fields: Iterable[str] = ()) -> str:
 def _walk_item(obj, *, max_nodes: int = 10000) -> tuple[set[str], list, bool]:
     """Walk ``obj`` (dicts/lists/tuples) iteratively (no recursion-limit risk),
     collecting BOTH dict keys (field names) AND scalar leaf VALUES. Returns
-    ``(names, values, truncated)``. ``values`` holds ``str``/``int`` leaves
-    (the only types ``classify_value`` inspects), excluding ``bool``.
+    ``(names, values, truncated)``. ``values`` holds (scalar, scan_phones)
+    pairs for ``str``/``int`` leaves, excluding ``bool``.
     ``truncated`` is True if the node budget was hit — the caller should fail
     closed, since an unscanned region might hide a sensitive field or value
     (e.g. metadata.api_key, or a key buried deep in a payload)."""
     names: set[str] = set()
     values: list = []
-    stack = [obj]
+    stack = [(obj, True)]
     count = 0
     while stack:
-        cur = stack.pop()
+        cur, phones = stack.pop()
         count += 1
         if count > max_nodes:
             return names, values, True
         if isinstance(cur, dict):
             for k, v in cur.items():
                 names.add(str(k))
-                # Exact, validated digest metadata is not free text. Keep
-                # scanning its NAME, and never skip malformed values/containers.
-                if (k in {"fingerprint", "sha256", "content_sha256", "content_hash", "query_digest"}
-                        and isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{64}", v)):
-                    continue
-                stack.append(v)
+                digest = (k in {"fingerprint", "sha256", "content_sha256", "content_hash", "query_digest"}
+                          and isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{64}", v) is not None)
+                # Validate the raw scalar, before Unicode normalization. Only
+                # phone detection is exempt; every other value check still runs.
+                stack.append((v, not digest))
         elif isinstance(cur, (list, tuple)):
-            stack.extend(cur)
+            stack.extend((v, True) for v in cur)
         elif isinstance(cur, str) or (isinstance(cur, int) and not isinstance(cur, bool)):
-            values.append(cur)
+            values.append((cur, phones))
     return names, values, False
 
 
@@ -582,7 +558,7 @@ def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
     * **value floor** — a sensitive field VALUE at any depth (a credential
       shape -> secret, a PII shape -> private) regardless of how benign its
       field name is. Exact SHA-256 values in known digest metadata fields
-      are excluded; sensitive field-name floors still apply. This closes the
+      skip only phone detection; all other floors still apply. This closes the
       benign-name / sensitive-value gap a name list can never cover.
 
     Codex round-10 P1: a dict KEY is also visible text returned to the agent,
@@ -610,8 +586,8 @@ def classify_item(item: dict, restricted_fields: Iterable[str] = ()) -> str:
         if floor == "secret":
             break
     if floor != "secret":
-        for v in values:
-            vf = classify_value(v)
+        for v, phones in values:
+            vf = classify_value(v, _phones=phones)
             if SENSITIVITY_ORDER[vf] > SENSITIVITY_ORDER[floor]:
                 floor = vf
             if floor == "secret":

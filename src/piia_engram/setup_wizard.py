@@ -3800,6 +3800,10 @@ def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
     _configure_utf8_stdio()
     args = sys.argv[1:]
+    if args and args[0] == "repair":
+        from piia_engram.replay_row_repair import run_cli
+
+        sys.exit(run_cli(args[1:]))
     # Scriptable setup must dispatch before notices, cache writes or pings.
     agent_options = {"--non-interactive", "--apply", "--clients", "--lang", "--json", "--help", "-h"}
     if args and args[0] == "setup" and any(
@@ -4034,6 +4038,7 @@ def main() -> None:
             "  engram feedback --dry-run  Preview payload without sending\n"
             "  engram reindex          Rebuild the hybrid search index from JSON\n"
             "  engram repair-encoding  Dry-run mojibake scan (use --apply to fix)\n"
+            "  engram repair replay-rows [--dry-run | --apply]  Back up and quarantine pasted replay rows locally\n"
             "  engram recover-json <dataset>  Dry-run metadata scan for corrupt JSON backups\n"
             "  engram backup-plan      Metadata-only local backup plan (--json for raw)\n"
             "  engram import <backup.json>  Metadata-only import preview (--apply --yes to write)\n"

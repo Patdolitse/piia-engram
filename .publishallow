@@ -213,3 +213,6 @@ worker/**
 requirements.lock
 .github/dependabot.yml
 .github/workflows/plugin-scanner.yml
+
+# Owner-local repair command (CLI only)
+src/piia_engram/replay_row_repair.py
