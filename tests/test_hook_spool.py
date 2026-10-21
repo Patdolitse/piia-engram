@@ -87,8 +87,9 @@ def test_atomic_concurrent_publish(tmp_path, monkeypatch):
     attempts = [event_id for output, _ in results for event_id in json.loads(output)]
     published = {event_id for event_id in attempts if event_id}
     assert len(attempts) == 90
-    # Plaintext contenders must refuse when the nonblocking policy gate is busy.
-    assert 0 < len(published) <= 90
+    # Plaintext contenders wait a bounded slice for the brief policy gate, so
+    # ordinary unencrypted concurrent capture is not dropped.
+    assert len(published) == 90
     files = list((store / "hooks" / "spool").glob("*.jsonl"))
     assert len(files) == len(published)
     events = [json.loads(p.read_text(encoding="utf-8")) for p in files]
@@ -96,8 +97,6 @@ def test_atomic_concurrent_publish(tmp_path, monkeypatch):
     assert {e["event_id"] for e in events} == published
     assert backlog(store)["pending"] == len(published)
     assert not list((store / "hooks" / "spool").glob("*.partial"))
-    if len(published) < 90:
-        assert "crypto-secret-missing" in (store / "logs/hooks.log").read_text(encoding="utf-8")
 
 
 def test_drain_duplicate_event_once(tmp_path):

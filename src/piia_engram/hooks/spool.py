@@ -21,6 +21,7 @@ MAX_PENDING_EVENTS = 1000
 MAX_PENDING_BYTES = 16 * 1024 * 1024
 MAX_EVENT_BYTES = 128 * 1024
 MAX_MISSING_TRANSCRIPT_ATTEMPTS = 3
+PLAINTEXT_GATE_WAIT = 0.25
 MAX_MISSING_TRANSCRIPT_AGE_SECONDS = 7 * 86400
 CLEANUP_CANDIDATE_AGE_SECONDS = 7 * 86400
 BACKLOG_HINT_AGE_SECONDS = 86400
@@ -308,7 +309,11 @@ def _publish_encoded(path: Path, event: dict, data: bytes, protected: bool,
         try:
             # The check and actual plaintext partial/replace form one critical section.
             # Every marker/salt creator takes this same gate before enabling encryption.
-            with policy_gate(codec.root):
+            # Plaintext writers hold the gate only briefly, so wait a bounded slice of
+            # the remaining budget instead of dropping concurrent unencrypted captures.
+            wait = PLAINTEXT_GATE_WAIT if deadline is None else min(
+                PLAINTEXT_GATE_WAIT, max(0.0, deadline - time.monotonic()))
+            with policy_gate(codec.root, timeout=wait):
                 needs_protection = (required(codec.root) if deadline is None else
                                     required_with_budget(codec.root, deadline))
                 if not needs_protection:
