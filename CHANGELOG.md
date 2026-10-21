@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Added
 
-- Hook queue body protection when store encryption is enabled, with authenticated event binding, bounded capture and read-only recovery diagnostics. Existing plaintext queues remain readable; downstream archives, digests and other generated outputs remain outside this protection. See the [scope and recovery guide](docs/hook-queue-protection.md).
+- Hook queue body protection on the encryption-enabled root, with authenticated event binding, a shared plaintext-publication/enablement gate, bounded intent discovery and encoding, and read-only recovery diagnostics. This is root-local opt-in; copies must preserve policy and original salt. Existing plaintext queues remain readable; downstream archives, digests and other generated outputs remain outside this protection. See the [scope and recovery guide](docs/hook-queue-protection.md).
 
 ### Fixed
 

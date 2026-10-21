@@ -361,18 +361,36 @@ def test_crypto_timeout_cannot_publish_late_or_write_policy(protected, monkeypat
 
 
 def test_input_and_crypto_share_deadline(protected, monkeypatch):
-    monkeypatch.setattr(_producer, "INPUT_BUDGET_SECONDS", 0.08)
+    from piia_engram import crypto
+    monkeypatch.setattr(_producer, "INPUT_BUDGET_SECONDS", 0.16)
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original = crypto.EncryptionEngine.derive_corpus_key
+    def slow_crypto(*args):
+        entered.set()
+        release.wait(3)
+        try:
+            return original(*args)
+        finally:
+            finished.set()
+    monkeypatch.setattr(crypto.EncryptionEngine, "derive_corpus_key", slow_crypto)
     class Delayed(io.StringIO):
         def fileno(self):
             raise OSError("synthetic")
         def read(self, *a):
-            time.sleep(0.065)
+            time.sleep(0.04)
             return super().read(*a)
     monkeypatch.setattr(sys, "stdin", Delayed(json.dumps({"summary": SUMMARY})))
     start = time.monotonic()
     assert _producer.cursor_event("cursor_writeback") == 0
     assert time.monotonic() - start < 0.3
+    assert entered.is_set()  # input completed; the remaining budget reached crypto
     assert not files(protected)
+    before = snapshot(protected)
+    release.set()
+    assert finished.wait(3)
+    time.sleep(0.03)
+    assert snapshot(protected) == before
+    assert "crypto-timeout" in (protected / "logs/hooks.log").read_text(encoding="utf-8")
     scan(protected)
 
 
@@ -748,6 +766,8 @@ def test_core_guard_finds_ciphertext_beyond_header_in_damaged_queue(protected):
     directory.mkdir(parents=True)
     (directory / "damaged.jsonl").write_bytes(b" " * 5000 + b"enc:v2c:synthetic-damaged")
     (protected / ".corpus_salt").unlink()
+    with module().policy_gate(protected):
+        pass  # gate metadata is now part of writable initialization
     before = snapshot(protected)
     with pytest.raises(RuntimeError):
         Engram(root=protected)
@@ -869,3 +889,314 @@ def test_near_limit_retry_records_oversize_without_replacing_source(protected, m
     assert path.read_bytes() == before
     assert status(path) == "event-oversize"
     scan(protected)
+
+
+def enable_in_other_process(root):
+    """The enabler has a secret; the paused writer need not have one."""
+    env = dict(os.environ, ENGRAM_DIR=str(root), ENGRAM_SECRET=SECRET)
+    result = subprocess.run([sys.executable, "-c",
+        "from piia_engram.core import Engram; Engram()"], env=env,
+        capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    assert module().policy_path(root).is_file()
+    assert (root / ".corpus_salt").is_file()
+
+
+@pytest.mark.parametrize("keys_arrive", [False, True])
+def test_enqueue_enablement_interleaving_never_publishes_plaintext(tmp_path, monkeypatch, keys_arrive):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    # Isolate the publication race from subprocess startup/KDF latency.
+    monkeypatch.setattr(module(), "CRYPTO_BUDGET_SECONDS", 20)
+    original = spool.seal_with_budget
+    publications = []
+    replace = spool.replace_with_retry
+    def inspect(source, target):
+        if target.suffix == ".jsonl":
+            publications.append(source.read_bytes())
+        return replace(source, target)
+    def seal_then_enable(*args, **kwargs):
+        data, protected = original(*args, **kwargs)
+        if not protected:
+            assert MARKER.encode("utf-8") in data
+            enable_in_other_process(tmp_path)
+            if keys_arrive:
+                monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+        return data, protected
+    monkeypatch.setattr(spool, "seal_with_budget", seal_then_enable)
+    monkeypatch.setattr(spool, "replace_with_retry", inspect)
+    result = spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
+                           root=tmp_path, deadline=time.monotonic() + 25)
+    assert bool(result) is keys_arrive
+    if keys_arrive:
+        assert wire(files(tmp_path)[0])["schema"] == 2
+        assert publications and all(MARKER.encode("utf-8") not in data for data in publications)
+    else:
+        assert not files(tmp_path) and not publications
+        assert "crypto-secret-missing" in (tmp_path / "logs/hooks.log").read_text(encoding="utf-8")
+    scan(tmp_path)
+
+
+@pytest.mark.parametrize("keys_arrive", [False, True])
+def test_replacement_enablement_interleaving_retains_or_reseals(tmp_path, monkeypatch, keys_arrive):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    path = spool.spool_dir(tmp_path) / "legacy.jsonl"
+    path.parent.mkdir(parents=True)
+    event = working()
+    write_wire(path, event)
+    before = path.read_bytes()
+    original = module().QueueCodec.encode
+    publications = []
+    replace = spool.replace_with_retry
+    def inspect(source, target):
+        if target == path:
+            publications.append(source.read_bytes())
+        return replace(source, target)
+    def encode_then_enable(codec, value):
+        data = original(codec, value)
+        if json.loads(data)["schema"] == 1:
+            enable_in_other_process(tmp_path)
+            if keys_arrive:
+                monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+        return data
+    monkeypatch.setattr(module().QueueCodec, "encode", encode_then_enable)
+    monkeypatch.setattr(spool, "replace_with_retry", inspect)
+    monkeypatch.setattr(_processor, "process", lambda *args: (_ for _ in ()).throw(RuntimeError("synthetic stop")))
+    result = spool.drain(tmp_path)
+    assert result["failed"] == 1 and result["processed"] == 0
+    assert not list(path.parent.glob("receipts/*.json"))
+    if keys_arrive:
+        assert wire(path)["schema"] == 2 and publications
+        scan(tmp_path)
+    else:
+        assert path.read_bytes() == before and not publications
+        assert status(path) == "crypto-secret-missing"
+    assert all(MARKER.encode("utf-8") not in data for data in publications)
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_busy_policy_gate_refuses_plaintext_without_waiting(tmp_path, monkeypatch, replacement):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    event = working()
+    path = spool.spool_dir(tmp_path) / "legacy.jsonl"
+    if replacement:
+        path.parent.mkdir()
+        write_wire(path, event)
+        before = path.read_bytes()
+    with portalocker.Lock(hooks / ".spool-policy.lock", "a", timeout=0):
+        start = time.monotonic()
+        if replacement:
+            with pytest.raises(module().ProtectionError):
+                spool._publish_event(path, event, module().QueueCodec(tmp_path))
+            assert path.read_bytes() == before
+        else:
+            assert not enqueue(tmp_path)
+            assert not files(tmp_path)
+        assert time.monotonic() - start < 0.25
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_slow_policy_read_is_inside_remaining_budget(tmp_path, monkeypatch, encrypted):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    if encrypted:
+        (tmp_path / ".corpus_salt").write_bytes(SALT)
+        module().ensure_required(tmp_path)
+        monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original = Path.lstat
+    marker = module().policy_path(tmp_path)
+    def delayed(path, *args, **kwargs):
+        if path == marker:
+            started.set()
+            release.wait(3)
+            try:
+                return original(path, *args, **kwargs)
+            finally:
+                finished.set()
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "lstat", delayed)
+    start = time.monotonic()
+    try:
+        assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
+                                 root=tmp_path, deadline=start + 0.1)
+        assert time.monotonic() - start < 0.25
+        assert started.is_set()
+        before = snapshot(tmp_path)
+    finally:
+        release.set()
+        assert finished.wait(3)
+    time.sleep(0.03)
+    assert snapshot(tmp_path) == before
+    assert not files(tmp_path)
+    assert "crypto-timeout" in (tmp_path / "logs/hooks.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("phase", ["expired", "policy", "encoding", "completed"])
+def test_expired_plaintext_never_starts_publication(tmp_path, monkeypatch, phase):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    seal = spool.seal_with_budget
+    if phase in {"policy", "encoding"}:
+        target = "required" if phase == "policy" else "json_bytes"
+        function = getattr(module(), target)
+        def slow(*args, **kwargs):
+            time.sleep(0.14)
+            return function(*args, **kwargs)
+        monkeypatch.setattr(module(), target, slow)
+    elif phase == "completed":
+        def delayed_result(*args, **kwargs):
+            result = seal(*args, **kwargs)
+            time.sleep(0.14)
+            return result
+        monkeypatch.setattr(spool, "seal_with_budget", delayed_result)
+    published = []
+    publish = spool._publish
+    def inspect(path, data):
+        if path.suffix == ".jsonl":
+            published.append(data)
+        return publish(path, data)
+    monkeypatch.setattr(spool, "_publish", inspect)
+    deadline = time.monotonic() + (-1 if phase == "expired" else 0.1)
+    assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
+                             root=tmp_path, deadline=deadline)
+    assert not published and not files(tmp_path)
+    assert "crypto-timeout" in (tmp_path / "logs/hooks.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("salt_state", ["missing", "invalid", "valid"])
+def test_enablement_commits_marker_before_salt_under_gate(tmp_path, monkeypatch, salt_state):
+    from piia_engram.core import Engram
+    monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    salt_path = tmp_path / ".corpus_salt"
+    if salt_state != "missing":
+        salt_path.write_bytes(SALT if salt_state == "valid" else b"bad")
+    original = Engram._atomic_write_bytes
+    writes = []
+    def inspect(path, data):
+        if path == salt_path:
+            assert wire(module().policy_path(tmp_path)) == module().POLICY
+            with pytest.raises(module().PolicyGateBusy):
+                with module().policy_gate(tmp_path):
+                    pytest.fail("salt publication escaped the policy gate")
+            writes.append(path)
+        return original(path, data)
+    monkeypatch.setattr(Engram, "_atomic_write_bytes", staticmethod(inspect))
+    Engram(root=tmp_path)
+    assert bool(writes) is (salt_state != "valid")
+    assert wire(module().policy_path(tmp_path)) == module().POLICY
+    # No lock leaked by nested failed acquisitions or successful enablement.
+    with module().policy_gate(tmp_path):
+        pass
+
+
+@pytest.mark.parametrize("action", ["enable", "marker"])
+def test_enablement_gate_wait_is_bounded_and_creates_no_intent(tmp_path, monkeypatch, action):
+    from piia_engram.core import Engram
+    monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    monkeypatch.setattr(module(), "POLICY_GATE_WAIT_SECONDS", 0.05)
+    with module().policy_gate(tmp_path):
+        start = time.monotonic()
+        with pytest.raises(module().PolicyGateBusy):
+            if action == "enable":
+                Engram(root=tmp_path)
+            else:
+                module().ensure_required(tmp_path)
+        assert time.monotonic() - start < 0.25
+        assert not module().policy_path(tmp_path).exists()
+        assert not (tmp_path / ".corpus_salt").exists()
+    with module().policy_gate(tmp_path):
+        pass
+
+
+def test_plaintext_publication_holds_gate_against_real_enabler(tmp_path, monkeypatch):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    ready = tmp_path / "enabler-ready"
+    original = spool._publish
+    children = []
+    def publish(path, data):
+        if path.suffix == ".jsonl":
+            code = ("from pathlib import Path; from piia_engram.core import Engram; "
+                    "import os; Path(os.environ['SYNTHETIC_READY']).write_text('ready', encoding='utf-8'); Engram()")
+            child = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, env=dict(os.environ, ENGRAM_DIR=str(tmp_path),
+                ENGRAM_SECRET=SECRET, SYNTHETIC_READY=str(ready)))
+            children.append(child)
+            end = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < end:
+                time.sleep(0.01)
+            assert ready.exists()
+            time.sleep(0.05)
+            assert child.poll() is None
+            assert not module().policy_path(tmp_path).exists()
+            assert not (tmp_path / ".corpus_salt").exists()
+        return original(path, data)
+    monkeypatch.setattr(spool, "_publish", publish)
+    try:
+        event_id = enqueue(tmp_path)
+    finally:
+        for child in children:
+            _, stderr = child.communicate(timeout=30)
+            assert child.returncode == 0, stderr.decode("utf-8", errors="replace")
+    assert event_id and wire(files(tmp_path)[0])["schema"] == 1
+    assert module().policy_path(tmp_path).is_file()
+    monkeypatch.setattr(spool, "_publish", original)
+    # Published before enablement completed: disclosed legacy, sealed on normal drain.
+    monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    monkeypatch.setattr(_processor, "process", lambda *a: (_ for _ in ()).throw(RuntimeError("synthetic stop")))
+    assert spool.drain(tmp_path)["failed"] == 1
+    assert wire(files(tmp_path)[0])["schema"] == 2
+    scan(tmp_path)
+
+
+def test_slow_marker_read_probe_and_no_late_publication(tmp_path, monkeypatch):
+    (tmp_path / ".corpus_salt").write_bytes(SALT)
+    module().ensure_required(tmp_path)
+    monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    original = Path.open
+    finished = threading.Event()
+    class SlowReader:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.handle.close()
+            finished.set()
+        def read(self, size=-1):
+            time.sleep(0.25)
+            return self.handle.read(size)
+    def delayed(path, *args, **kwargs):
+        handle = original(path, *args, **kwargs)
+        return SlowReader(handle) if path == module().policy_path(tmp_path) else handle
+    monkeypatch.setattr(Path, "open", delayed)
+    start = time.monotonic()
+    assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
+                             root=tmp_path, deadline=start + 0.1)
+    assert time.monotonic() - start < 0.2
+    before = snapshot(tmp_path)
+    assert finished.wait(3)
+    time.sleep(0.03)
+    assert snapshot(tmp_path) == before
+    assert not files(tmp_path)
+
+
+def test_final_policy_recheck_is_bounded_and_releases_gate(tmp_path, monkeypatch):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    original = module().required
+    calls = []
+    finished = threading.Event()
+    def slow_recheck(root):
+        calls.append(root)
+        if len(calls) == 2:
+            time.sleep(0.25)
+            finished.set()
+        return original(root)
+    monkeypatch.setattr(module(), "required", slow_recheck)
+    start = time.monotonic()
+    assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
+                             root=tmp_path, deadline=start + 0.1)
+    assert time.monotonic() - start < 0.2
+    with module().policy_gate(tmp_path):
+        pass
+    assert finished.wait(3)
+    assert not files(tmp_path)

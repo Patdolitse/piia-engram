@@ -9,10 +9,12 @@ import re
 import stat
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 CRYPTO_BUDGET_SECONDS = 0.5
 DIAGNOSTIC_RESERVE_SECONDS = 0.025
+POLICY_GATE_WAIT_SECONDS = 1.0
 HEADER_BYTES = 2048
 DOMAIN = "engram-hook-spool-v2"
 POLICY = {"schema": 1, "mode": "required"}
@@ -62,6 +64,11 @@ def _present(path: Path) -> bool:
 
 def required(root: Path) -> bool:
     """Encryption is opt-in; any persistent signal prevents silent downgrade."""
+    return (_required_marker(root) or bool(os.environ.get("ENGRAM_SECRET", "").strip())
+            or _present(root / ".corpus_salt"))
+
+
+def _required_marker(root: Path) -> bool:
     marker = policy_path(root)
     if _present(marker):
         try:
@@ -75,21 +82,93 @@ def required(root: Path) -> bool:
         except (OSError, ValueError, TypeError, AttributeError):
             raise ProtectionError("protection-unavailable") from None
         return True
-    return bool(os.environ.get("ENGRAM_SECRET", "").strip()) or _present(root / ".corpus_salt")
+    return False
 
 
-def ensure_required(root: Path) -> None:
-    """Calling thread only, after sealing and before any protected publication."""
+class PolicyGateBusy(ProtectionError):
+    def __init__(self):
+        super().__init__("protection-unavailable")
+
+
+@contextmanager
+def policy_gate(root: Path, *, timeout: float = 0):
+    """Root-local cross-process gate; plaintext publishers never wait for it."""
+    import portalocker
+    handle = None
+    locked = False
+    end = time.monotonic() + max(0, timeout)
     try:
-        marker = policy_path(root)
-        if _present(marker):
-            required(root)  # unknown/corrupt policy is never overwritten
+        directory = root / "hooks"
+        directory.mkdir(parents=True, exist_ok=True)
+        handle = (directory / ".spool-policy.lock").open("ab")
+        while True:
+            if timeout > 0 and time.monotonic() >= end:
+                raise PolicyGateBusy()
+            try:
+                portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                locked = True
+                break
+            except portalocker.LockException:
+                remaining = end - time.monotonic()
+                if remaining <= 0:
+                    raise PolicyGateBusy() from None
+                time.sleep(min(0.01, remaining))
+    except Exception as exc:
+        if handle is not None:
+            handle.close()
+        if isinstance(exc, ProtectionError):
+            raise
+        raise ProtectionError("protection-unavailable") from None
+    try:
+        yield
+    finally:
+        if handle is not None:
+            try:
+                if locked:
+                    portalocker.unlock(handle)
+            finally:
+                handle.close()
+
+
+def check_deadline(deadline: float) -> None:
+    if time.monotonic() >= deadline - DIAGNOSTIC_RESERVE_SECONDS:
+        raise ProtectionError("crypto-timeout")
+
+
+def capture_deadline(deadline: float) -> float:
+    """One sealing/policy allowance, including transition reseals and checks."""
+    return min(deadline, time.monotonic() + CRYPTO_BUDGET_SECONDS + DIAGNOSTIC_RESERVE_SECONDS)
+
+
+def _ensure_required_locked(root: Path, deadline: float | None = None) -> None:
+    """Caller owns the policy gate; all writes stay on the calling thread."""
+    try:
+        present = (_required_marker(root) if deadline is None else
+                   _with_budget(lambda: _required_marker(root), deadline))
+        if present:
             return
         from .spool import _publish
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        _publish(marker, json_bytes(POLICY))
+        if deadline is not None:
+            check_deadline(deadline)
+        _publish(policy_path(root), json_bytes(POLICY))
+    except ProtectionError:
+        raise
     except Exception:
         raise ProtectionError("protection-unavailable") from None
+
+
+def ensure_required(root: Path, *, deadline: float | None = None) -> None:
+    """Bounded writable enablement; marker creation shares the publication gate."""
+    if deadline is not None:
+        check_deadline(deadline)
+    wait = POLICY_GATE_WAIT_SECONDS if deadline is None else max(
+        0, deadline - DIAGNOSTIC_RESERVE_SECONDS - time.monotonic())
+    with policy_gate(root, timeout=wait):
+        _ensure_required_locked(root, deadline)
+
+
+def required_with_budget(root: Path, deadline: float) -> bool:
+    return _with_budget(lambda: required(root), deadline)
 
 
 def read_salt(root: Path) -> bytes:
@@ -226,30 +305,32 @@ class QueueCodec:
 
 def seal_with_budget(root: Path, event: dict, deadline: float) -> tuple[bytes, bool]:
     """Abandoned workers can only finish in memory; no filesystem write capability."""
-    if not required(root):
-        return QueueCodec(root).encode(event), False
-    end = min(deadline - DIAGNOSTIC_RESERVE_SECONDS,
-              time.monotonic() + CRYPTO_BUDGET_SECONDS)
-    if end <= time.monotonic():
-        raise ProtectionError("crypto-timeout")
+    value = _with_budget(lambda: QueueCodec(root).encode(event), capture_deadline(deadline))
+    return value, loads(value.decode("utf-8"))["schema"] == 2
+
+
+def _with_budget(operation, deadline: float):
+    """Policy reads and both encoders run inside the same read-only wait."""
+    check_deadline(deadline)
+    end = deadline - DIAGNOSTIC_RESERVE_SECONDS
     result = []
     finished = threading.Event()
     def seal():
         try:
-            result.append(QueueCodec(root).encode(event))
+            result.append((True, operation()))
         except ProtectionError as exc:
-            result.append(exc.code)
+            result.append((False, exc.code))
         except Exception:
-            result.append("crypto-unavailable")
+            result.append((False, "crypto-unavailable"))
         finally:
             finished.set()
     threading.Thread(target=seal, name="engram-hook-seal", daemon=True).start()
     if not finished.wait(max(0, end - time.monotonic())) or time.monotonic() > end:
         raise ProtectionError("crypto-timeout")
-    value = result[0]
-    if not isinstance(value, bytes):
+    ok, value = result[0]
+    if not ok:
         raise ProtectionError(value)
-    return value, True
+    return value
 
 
 def queue_needs_original_salt(root: Path) -> bool:

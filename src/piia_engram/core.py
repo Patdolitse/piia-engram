@@ -8,6 +8,7 @@ import logging
 import os
 import re
 from copy import deepcopy
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -207,41 +208,46 @@ class Engram(
         # Corpus encryption key (derived once, reused for all entry I/O)
         self._corpus_key: bytes = b""
         if self._crypto.enabled:
-            salt_path = self.root / ".corpus_salt"
-            salt = b""
-            if salt_path.is_file() and not salt_path.is_symlink():
-                with salt_path.open("rb") as handle:
-                    salt = handle.read(17)
-                if len(salt) != 16:
+            from .hooks._spool_protection import policy_gate, _ensure_required_locked, POLICY_GATE_WAIT_SECONDS
+            # Read-only opens never create a gate, marker or salt. Writable
+            # enablement shares the plaintext publication gate, before any salt write.
+            with (nullcontext() if read_only else
+                  policy_gate(self.root, timeout=POLICY_GATE_WAIT_SECONDS)):
+                salt_path = self.root / ".corpus_salt"
+                salt = b""
+                if salt_path.is_file() and not salt_path.is_symlink():
+                    with salt_path.open("rb") as handle:
+                        salt = handle.read(17)
+                    if len(salt) != 16:
+                        if self._has_existing_ciphertext():
+                            raise RuntimeError(
+                                f".corpus_salt in {self.root} is corrupted "
+                                f"({len(salt)} bytes, expected 16). Encrypted "
+                                "corpus data (enc:v2c:) exists — restore the "
+                                "original .corpus_salt from backup."
+                            )
+                        if not read_only:
+                            salt = os.urandom(16)
+                            _ensure_required_locked(self.root)
+                            self._atomic_write_bytes(salt_path, salt)
+                        else:
+                            salt = b""
+                else:
                     if self._has_existing_ciphertext():
                         raise RuntimeError(
-                            f".corpus_salt in {self.root} is corrupted "
-                            f"({len(salt)} bytes, expected 16). Encrypted "
-                            "corpus data (enc:v2c:) exists — restore the "
-                            "original .corpus_salt from backup."
+                            f".corpus_salt is missing from {self.root} but encrypted "
+                            "corpus data (enc:v2c:) exists. Restore the original "
+                            ".corpus_salt file to recover your data. Creating a new "
+                            "salt would make existing data permanently unreadable."
                         )
                     if not read_only:
                         salt = os.urandom(16)
+                        _ensure_required_locked(self.root)
                         self._atomic_write_bytes(salt_path, salt)
-                    else:
-                        salt = b""
-            else:
-                if self._has_existing_ciphertext():
-                    raise RuntimeError(
-                        f".corpus_salt is missing from {self.root} but encrypted "
-                        "corpus data (enc:v2c:) exists. Restore the original "
-                        ".corpus_salt file to recover your data. Creating a new "
-                        "salt would make existing data permanently unreadable."
-                    )
-                if not read_only:
-                    salt = os.urandom(16)
-                    self.root.mkdir(parents=True, exist_ok=True)
-                    self._atomic_write_bytes(salt_path, salt)
+                if salt and not read_only:
+                    _ensure_required_locked(self.root)
             if salt:
                 self._corpus_key = self._crypto.derive_corpus_key(salt)
-                if not read_only:
-                    from .hooks._spool_protection import ensure_required
-                    ensure_required(self.root)
             # A plaintext hybrid search index left over from a pre-encryption
             # run would keep the decrypted bodies readable on disk even though
             # all new writes are encrypted. Purge it on init so enabling
