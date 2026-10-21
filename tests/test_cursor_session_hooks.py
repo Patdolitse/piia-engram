@@ -289,13 +289,13 @@ def test_debug_log_only_when_enabled(monkeypatch):
 
     record = json.loads(log_file.read_text(encoding="utf-8").splitlines()[0])
     assert record["event"] == "stop"
-    assert sorted(record["keys"]) == ["n", "obj", "summary"]
-    assert len(record["previews"]["summary"]) <= 200  # preview is capped
+    assert record["field_count"] == 3
+    assert record["text_fields"] == 1
+    assert not {"keys", "previews", "argv", "cwd", "env_keys"} & set(record)
 
 
 def test_debug_log_probes_argv_cwd_and_env_names_without_values(monkeypatch):
-    """Probe v2: empty-stdin sessions need argv/cwd/env-name evidence —
-    env *values* must never reach the log (they can carry secrets)."""
+    """Debug output records only fixed shape/count metadata."""
     monkeypatch.setenv("ENGRAM_HOOK_DEBUG", "1")
     monkeypatch.setenv("CURSOR_FAKE_PROBE", "SECRETVALUE123")
     monkeypatch.setattr(sys, "argv", ["hook", "--event", "stop", "--env", "A=1"])
@@ -306,10 +306,8 @@ def test_debug_log_probes_argv_cwd_and_env_names_without_values(monkeypatch):
         encoding="utf-8"
     ).splitlines()[0]
     record = json.loads(raw)
-    assert record["argv"] == ["--event", "stop", "--env", "A=1"]
-    assert record["cwd"]  # process cwd captured
-    assert "CURSOR_FAKE_PROBE" in record["env_keys"]
-    assert not any(k.startswith("ENGRAM_") for k in record["env_keys"])
+    assert record["field_count"] == record["text_fields"] == 0
+    assert not {"argv", "cwd", "env_keys", "keys", "previews"} & set(record)
     assert "SECRETVALUE123" not in raw  # names only, never values
 
 

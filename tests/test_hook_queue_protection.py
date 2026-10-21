@@ -1,0 +1,698 @@
+"""Queue body protection contract; every store, key and marker is synthetic."""
+import errno
+import hashlib
+import importlib
+import io
+import json
+import os
+import sys
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+
+import portalocker
+import pytest
+
+from piia_engram.hooks import _cursor_payload, _processor, _producer, spool
+
+SECRET = "synthetic-queue-key"
+SALT = b"0123456789abcdef"
+MARKER = "SYNTHETIC_QUEUE_BODY_8df61"
+SUMMARY = "Remember to validate path containment before reading transcripts because it prevents accidental disclosure. " + MARKER
+
+
+def module():
+    return importlib.import_module("piia_engram.hooks._spool_protection")
+
+
+def snapshot(root):
+    return {str(p.relative_to(root)): (p.read_bytes(), p.stat().st_mtime_ns)
+            for p in root.rglob("*") if p.is_file()}
+
+
+def files(root):
+    return list(spool.spool_dir(root).glob("*.jsonl"))
+
+
+def wire(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_wire(path, value):
+    path.write_bytes(spool._json_bytes(value))
+
+
+def working(summary=SUMMARY):
+    return {"schema": 1, "event_id": uuid.uuid4().hex, "kind": "cursor_writeback",
+            "client": "cursor", "created_at": "2026-10-21T00:00:00+00:00",
+            "payload": {"summary": summary}}
+
+
+def enqueue(root, summary=SUMMARY, **payload):
+    return spool.enqueue("cursor_writeback", "cursor", dict(summary=summary, **payload), root=root)
+
+
+def status(path):
+    return wire(path.with_name(path.name + ".status.json"))["code"]
+
+
+def scan(root, *extra):
+    """Include queue partials/evidence and diagnostic logs, exclude disclosed outputs."""
+    candidates = list((root / "hooks").rglob("*")) + list((root / "logs").rglob("*"))
+    candidates += [root / "audit.log", root / "audit.log.1", root.with_name(root.name + ".hooks.log")]
+    for p in candidates:
+        if p.is_file():
+            assert MARKER.encode("utf-8") not in p.read_bytes(), str(p.relative_to(root.parent))
+    assert all(MARKER not in value for value in extra)
+
+
+@pytest.fixture
+def protected(tmp_path, monkeypatch):
+    root = tmp_path / "store"
+    root.mkdir()
+    (root / ".corpus_salt").write_bytes(SALT)
+    monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    return root
+
+
+def test_no_encryption_signals_preserves_plaintext_capture(tmp_path, monkeypatch):
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
+    assert enqueue(tmp_path)
+    assert wire(files(tmp_path)[0])["schema"] == 1
+    assert not (tmp_path / "hooks" / "spool-protection.json").exists()
+
+
+@pytest.mark.parametrize("fault,code", [
+    ("secret", "crypto-secret-missing"), ("blank-secret", "crypto-secret-missing"),
+    ("salt", "crypto-salt-missing"), ("short-salt", "crypto-salt-invalid"),
+    ("long-salt", "crypto-salt-invalid"), ("directory-salt", "crypto-salt-invalid"),
+    ("unreadable-salt", "crypto-salt-invalid"), ("dependency", "crypto-unavailable"),
+    ("disabled", "crypto-unavailable"), ("short-key", "crypto-unavailable"),
+    ("passthrough", "crypto-unavailable"), ("policy", "protection-unavailable"),
+])
+def test_required_refusal_never_writes_body_or_marks_debounce(protected, monkeypatch, fault, code, capsys):
+    from piia_engram import crypto
+    salt = protected / ".corpus_salt"
+    if fault in {"secret", "blank-secret"}:
+        monkeypatch.setenv("ENGRAM_SECRET", " " if fault == "blank-secret" else "")
+    elif fault == "salt":
+        salt.unlink()
+    elif fault in {"short-salt", "long-salt"}:
+        salt.write_bytes(b"x" * (15 if fault == "short-salt" else 17))
+    elif fault == "directory-salt":
+        salt.unlink()
+        salt.mkdir()
+    elif fault == "unreadable-salt":
+        original = Path.open
+        def denied(path, *args, **kwargs):
+            if path == salt:
+                raise PermissionError(MARKER)
+            return original(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "open", denied)
+    elif fault == "dependency":
+        monkeypatch.setattr(crypto, "HAS_CRYPTO", False)
+    elif fault == "disabled":
+        monkeypatch.setattr(crypto.EncryptionEngine, "__init__", lambda self, secret: setattr(self, "enabled", False))
+    elif fault == "short-key":
+        monkeypatch.setattr(crypto.EncryptionEngine, "derive_corpus_key", lambda *a: b"bad")
+    elif fault == "passthrough":
+        monkeypatch.setattr(crypto.EncryptionEngine, "corpus_encrypt", lambda self, value, key: value)
+    elif fault == "policy":
+        (protected / "hooks").mkdir()
+        (protected / "hooks" / "spool-protection.json").write_text(MARKER, encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"summary": SUMMARY, "session_id": MARKER})))
+    _producer.cursor_event("cursor_save", debounce_minutes=10)
+    assert not files(protected)
+    assert not (protected / "logs" / "cursor_save_state.json").exists()
+    assert code in (protected / "logs" / "hooks.log").read_text(encoding="utf-8")
+    if fault == "policy":  # existing corrupt evidence is retained, never copied
+        (protected / "hooks" / "spool-protection.json").unlink()
+    output = capsys.readouterr()
+    scan(protected, output.out, output.err)
+
+
+def test_all_body_fields_sealed_and_header_is_closed(protected):
+    payload = {key: MARKER + key for key in ("summary", "transcript_path", "project_folder", "session_id", "event", "hook_cwd")}
+    payload["roots"] = [MARKER + "root"]
+    assert spool.enqueue("cursor_save", "cursor", payload, root=protected)
+    event = wire(files(protected)[0])
+    assert set(event) == {"schema", "event_id", "kind", "client", "created_at", "protection", "salt_id", "body"}
+    assert event["schema"] == 2 and event["protection"] == "enc:v2c"
+    assert event["body"].startswith("enc:v2c:")
+    assert event["salt_id"] == hashlib.sha256(SALT).hexdigest()
+    assert files(protected)[0].read_bytes().index(b'"body"') < 2048
+    decoded = module().QueueCodec(protected).decode(event)
+    assert decoded["payload"] == payload
+    assert wire(protected / "hooks" / "spool-protection.json") == {"schema": 1, "mode": "required"}
+    scan(protected)
+
+
+def test_literal_cipher_prefix_input_is_still_encrypted(protected):
+    assert enqueue(protected, "enc:v2c:" + MARKER)
+    assert module().QueueCodec(protected).decode(wire(files(protected)[0]))["payload"]["summary"] == "enc:v2c:" + MARKER
+    scan(protected)
+
+
+@pytest.mark.parametrize("fault,code", [
+    ("wrong-key", "crypto-decrypt-failed"), ("rotation", "crypto-salt-mismatch"),
+    ("missing-secret", "crypto-secret-missing"), ("missing-salt", "crypto-salt-missing"),
+    ("dependency", "crypto-unavailable"), ("disabled", "crypto-unavailable"),
+    ("base64", "crypto-decrypt-failed"), ("tag", "crypto-decrypt-failed"),
+    ("header", "crypto-decrypt-failed"), ("body-swap", "crypto-decrypt-failed"),
+    ("domain", "crypto-decrypt-failed"), ("unknown-field", "crypto-decrypt-failed"),
+])
+def test_unreadable_preserves_bytes_before_fake_receipt_and_effects(protected, monkeypatch, fault, code):
+    from piia_engram import crypto
+    assert enqueue(protected)
+    path = files(protected)[0]
+    event = wire(path)
+    if fault == "wrong-key":
+        monkeypatch.setenv("ENGRAM_SECRET", "synthetic-wrong-key")
+    elif fault == "rotation":
+        (protected / ".corpus_salt").write_bytes(b"fedcba9876543210")
+    elif fault == "missing-secret":
+        monkeypatch.delenv("ENGRAM_SECRET")
+    elif fault == "missing-salt":
+        (protected / ".corpus_salt").unlink()
+    elif fault == "dependency":
+        monkeypatch.setattr(crypto, "HAS_CRYPTO", False)
+    elif fault == "disabled":
+        monkeypatch.setattr(crypto.EncryptionEngine, "__init__", lambda self, secret: setattr(self, "enabled", False))
+    elif fault == "base64":
+        event["body"] = "enc:v2c:%%%"
+    elif fault == "tag":
+        event["body"] = event["body"][:-12] + "A" * 12
+    elif fault == "header":
+        event["event_id"] = uuid.uuid4().hex
+    elif fault == "body-swap":
+        assert enqueue(protected, SUMMARY + " other")
+        other = next(p for p in files(protected) if p != path)
+        event["body"] = wire(other)["body"]
+        other.unlink()
+    elif fault == "unknown-field":
+        event["prepared"] = {"summary": "forged"}
+    elif fault == "domain":
+        engine = crypto.EncryptionEngine(SECRET)
+        key = engine.derive_corpus_key(SALT)
+        body = json.loads(engine.corpus_decrypt(event["body"], key, strict=True))
+        body["domain"] = "other-domain"
+        event["body"] = engine.corpus_encrypt(json.dumps(body), key)
+    write_wire(path, event)
+    before = path.read_bytes()
+    receipts = path.parent / "receipts"
+    receipts.mkdir()
+    fake = receipts / (event["event_id"] + ".json")
+    write_wire(fake, {"event_id": event["event_id"], "reason": "processed", "processed_at": event["created_at"]})
+    monkeypatch.setattr(_processor, "prepare", lambda *a: pytest.fail("prepare before authentication"))
+    monkeypatch.setattr(_processor, "process", lambda *a: pytest.fail("process before authentication"))
+    result = spool.drain(protected)
+    assert result["failed"] == 1 and result["duplicates"] == result["processed"] == 0
+    assert path.read_bytes() == before
+    assert status(path) == code
+    assert "transcript_missing_attempts" not in wire(path)
+    assert fake.exists() and len(list(receipts.glob("*.json"))) == 1
+    assert code in json.dumps(spool.backlog(protected)["recent_results"])
+    scan(protected)
+
+
+def test_unreadable_event_does_not_block_healthy_progress_and_restores(protected, monkeypatch):
+    assert enqueue(protected)
+    bad = files(protected)[0]
+    broken = wire(bad)
+    original_body = broken["body"]
+    broken["body"] = "enc:v2c:broken"
+    write_wire(bad, broken)
+    before = bad.read_bytes()
+    assert enqueue(protected, SUMMARY + " second")
+    calls = []
+    monkeypatch.setattr(_processor, "process", lambda event, *a: calls.append(event["event_id"]))
+    result = spool.drain(protected)
+    assert result["failed"] == result["processed"] == len(calls) == 1
+    assert bad.read_bytes() == before
+    assert spool.backlog(protected)["status_records"] == 1
+    broken["body"] = original_body
+    write_wire(bad, broken)
+    assert spool.drain(protected)["processed"] == 1
+    # Failure evidence is retained after eventual success.
+    assert bad.with_name(bad.name + ".status.json").exists()
+    scan(protected)
+
+
+@pytest.mark.parametrize("populated", [False, True])
+@pytest.mark.parametrize("fault", ["secret", "salt", "dependency", "policy"])
+def test_diagnostics_zero_write_without_crypto(protected, monkeypatch, capsys, populated, fault):
+    from piia_engram import crypto, setup_wizard
+    from piia_engram.doctor import run_doctor_json
+    root = protected if populated else protected.parent / "absent"
+    if populated:
+        assert enqueue(root)
+    if fault == "secret":
+        monkeypatch.delenv("ENGRAM_SECRET")
+    elif fault == "salt":
+        (protected / ".corpus_salt").write_bytes(b"bad")
+    elif fault == "dependency":
+        monkeypatch.setattr(crypto, "HAS_CRYPTO", False)
+    else:
+        (protected / "hooks").mkdir(exist_ok=True)
+        (protected / "hooks" / "spool-protection.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("ENGRAM_DIR", str(root))
+    monkeypatch.setattr(crypto.EncryptionEngine, "derive_corpus_key", lambda *a: pytest.fail("diagnostic KDF"))
+    before = snapshot(root)
+    assert spool.drain(root, dry_run=True)["read_only"]
+    spool.backlog(root)
+    run_doctor_json()
+    report = json.loads(capsys.readouterr().out)
+    assert report["hook_spool"]["pending"] == int(populated)
+    assert report["hook_spool"]["protected_pending"] == int(populated)
+    assert "clients" in report  # unrelated connection diagnostics survive store failure
+    assert MARKER not in json.dumps(report)
+    assert snapshot(root) == before
+    if not populated:
+        assert not root.exists()
+
+
+def test_policy_is_sticky_and_core_never_rekeys_queue_only_store(protected, monkeypatch):
+    from piia_engram.core import Engram
+    assert enqueue(protected)
+    for fault in ("missing", "corrupt"):
+        salt = protected / ".corpus_salt"
+        if salt.exists():
+            salt.unlink()
+        if fault == "corrupt":
+            salt.write_bytes(b"bad")
+        before = snapshot(protected)
+        with pytest.raises(RuntimeError):
+            Engram(root=protected)
+        assert snapshot(protected) == before
+    (protected / ".corpus_salt").unlink()
+    monkeypatch.delenv("ENGRAM_SECRET")
+    assert enqueue(protected) == ""
+    assert "crypto-secret-missing" in (protected / "logs" / "hooks.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("surface", ["pending", "partial", "quarantine", "marker"])
+def test_core_salt_guard_with_marker_or_only_queue_ciphertext(protected, surface):
+    from piia_engram.core import Engram
+    assert enqueue(protected)
+    path = files(protected)[0]
+    if surface != "marker":
+        (protected / "hooks" / "spool-protection.json").unlink()
+    if surface == "partial":
+        path.rename(path.with_suffix(".partial"))
+    elif surface == "quarantine":
+        spool._quarantine(path, "pending-cap")
+    elif surface == "marker":
+        path.unlink()
+    (protected / ".corpus_salt").unlink()
+    before = snapshot(protected)
+    with pytest.raises(RuntimeError):
+        Engram(root=protected)
+    assert snapshot(protected) == before
+
+
+def test_writable_enablement_creates_marker_but_read_only_does_not(tmp_path, monkeypatch):
+    from piia_engram.core import Engram
+    monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    root = tmp_path / "new"
+    Engram(root=root, read_only=True)
+    assert not root.exists()
+    Engram(root=root)
+    assert wire(root / "hooks" / "spool-protection.json") == {"schema": 1, "mode": "required"}
+
+
+def test_crypto_timeout_cannot_publish_late_or_write_policy(protected, monkeypatch):
+    from piia_engram import crypto
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original = crypto.EncryptionEngine.derive_corpus_key
+    def slow(*args):
+        started.set()
+        release.wait(5)
+        try:
+            return original(*args)
+        finally:
+            finished.set()
+    monkeypatch.setattr(crypto.EncryptionEngine, "derive_corpus_key", slow)
+    monkeypatch.setattr(module(), "CRYPTO_BUDGET_SECONDS", 0.04)
+    start = time.monotonic()
+    assert enqueue(protected) == ""
+    assert time.monotonic() - start < 0.25
+    assert started.is_set()
+    before = snapshot(protected)
+    release.set()
+    assert finished.wait(3)
+    time.sleep(0.03)
+    assert snapshot(protected) == before
+    assert not files(protected)
+    assert not (protected / "hooks" / "spool-protection.json").exists()
+    assert "crypto-timeout" in (protected / "logs" / "hooks.log").read_text(encoding="utf-8")
+    scan(protected)
+
+
+def test_input_and_crypto_share_deadline(protected, monkeypatch):
+    monkeypatch.setattr(_producer, "INPUT_BUDGET_SECONDS", 0.08)
+    class Delayed(io.StringIO):
+        def fileno(self):
+            raise OSError("synthetic")
+        def read(self, *a):
+            time.sleep(0.065)
+            return super().read(*a)
+    monkeypatch.setattr(sys, "stdin", Delayed(json.dumps({"summary": SUMMARY})))
+    start = time.monotonic()
+    assert _producer.cursor_event("cursor_writeback") == 0
+    assert time.monotonic() - start < 0.3
+    assert not files(protected)
+    scan(protected)
+
+
+def test_exact_final_jsonl_limit_and_one_byte_over(protected, monkeypatch):
+    codec = module().QueueCodec(protected)
+    event = working("x")
+    # Ciphertext lengths advance by four bytes. The mutable bounded retry
+    # counter contributes single-byte adjustments to reach exactly 128 KiB.
+    event["transcript_missing_attempts"] = 0
+    low, high = 0, 100_000
+    while low < high:
+        middle = (low + high + 1) // 2
+        event["payload"]["summary"] = "x" * middle
+        try:
+            codec.encode(event)
+            low = middle
+        except module().ProtectionError as exc:
+            assert exc.code == "event-oversize"
+            high = middle - 1
+    event["payload"]["summary"] = "x" * low
+    data = codec.encode(event)
+    # Adjust the valid ISO timestamp fractional precision for an exact wire
+    # boundary rather than lowering the production limit for this check.
+    for precision in range(1, 10):
+        event["created_at"] = "2026-10-21T00:00:00." + "1" * precision + "+00:00"
+        for length in range(max(0, low - 20), low + 10):
+            event["payload"]["summary"] = "x" * length
+            try:
+                candidate = codec.encode(event)
+            except module().ProtectionError:
+                continue
+            if len(candidate) == 128 * 1024:
+                data = candidate
+                break
+        else:
+            continue
+        break
+    assert len(data) == spool.MAX_EVENT_BYTES == 128 * 1024
+    assert data.endswith(b"\n")
+    path = spool.spool_dir(protected) / "boundary.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(data)
+    assert spool._read_event(path)["event_id"] == event["event_id"]
+    path.write_bytes(data + b" ")
+    with pytest.raises(spool.PoisonEvent):
+        spool._read_event(path)
+    monkeypatch.setattr(spool, "MAX_EVENT_BYTES", len(data) - 1)
+    with pytest.raises(module().ProtectionError, match="event-oversize"):
+        codec.encode(event)
+
+
+def test_multibyte_preparation_expansion_preserves_original_on_oversize(protected, monkeypatch):
+    assert enqueue(protected, "🧠" * 20_000)
+    path = files(protected)[0]
+    before = path.read_bytes()
+    monkeypatch.setattr(_processor, "prepare", lambda *a: {"summary": "🧠" * 25_000})
+    monkeypatch.setattr(_processor, "process", lambda *a: pytest.fail("oversize processing"))
+    assert spool.drain(protected)["failed"] == 1
+    assert path.read_bytes() == before and status(path) == "event-oversize"
+    scan(protected)
+
+
+def test_encrypted_count_and_actual_byte_caps_with_busy_maintenance(protected, monkeypatch):
+    directory = spool.spool_dir(protected)
+    directory.mkdir(parents=True)
+    monkeypatch.setattr(spool, "MAX_PENDING_EVENTS", 2)
+    with spool._lock(directory):
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            assert all(pool.map(lambda _: enqueue(protected), range(3)))
+        assert len(files(protected)) == 3
+        assert spool.drain(protected)["busy"]
+    first = min(files(protected), key=lambda p: p.name)
+    spool._record_result(first, None, "crypto-decrypt-failed")
+    old_bytes = first.read_bytes()
+    with spool._lock(directory):
+        assert spool._trim(directory) == 1
+    assert len(files(protected)) == 2
+    quarantined = directory / "quarantine" / first.name
+    assert quarantined.read_bytes() == old_bytes
+    assert status(quarantined) == "crypto-decrypt-failed"
+    size = files(protected)[0].stat().st_size
+    monkeypatch.setattr(spool, "MAX_PENDING_EVENTS", 1000)
+    monkeypatch.setattr(spool, "MAX_PENDING_BYTES", size)
+    with spool._lock(directory):
+        spool._trim(directory)
+    assert spool.backlog(protected)["pending_bytes"] <= size
+    assert spool.backlog(protected)["pending_bytes"] == sum(p.stat().st_size for p in files(protected))
+    scan(protected)
+
+
+@pytest.mark.parametrize("point", ["prepare", "before-replace", "after-replace", "short-write", "disk-full", "receipt", "store-lock"])
+def test_failure_points_only_leave_ciphertext_or_metadata(protected, monkeypatch, point, capsys):
+    assert enqueue(protected, transcript_path=MARKER, session_id=MARKER, roots=[MARKER])
+    path = files(protected)[0]
+    original = path.read_bytes()
+    publish, replace = spool._publish, spool.replace_with_retry
+    calls = []
+    def process(event, *args):
+        calls.append(event["prepared"]["summary"])
+        if point == "store-lock":
+            raise portalocker.LockException(MARKER)
+    monkeypatch.setattr(_processor, "process", process)
+    def failure(target, data):
+        if (point == "receipt" and target.parent.name == "receipts") or (
+                point in {"short-write", "disk-full"} and target.suffix == ".jsonl"):
+            # Interrupted binary publication leaves precisely the encrypted prefix.
+            target.with_name(target.name + ".synthetic.partial").write_bytes(data[:len(data) // 2])
+            raise OSError(errno.ENOSPC, MARKER)
+        return publish(target, data)
+    def interrupted_replace(source, target):
+        if target.suffix == ".jsonl":
+            if point == "before-replace":
+                raise OSError(MARKER)
+            replace(source, target)
+            if point == "after-replace":
+                raise OSError(MARKER)
+        else:
+            replace(source, target)
+    monkeypatch.setattr(spool, "_publish", failure)
+    monkeypatch.setattr(spool, "replace_with_retry", interrupted_replace)
+    if point == "prepare":
+        monkeypatch.setattr(_processor, "prepare", lambda *a: (_ for _ in ()).throw(RuntimeError(MARKER)))
+    assert spool.drain(protected)["failed"] == 1
+    assert path.exists()
+    if point in {"prepare", "before-replace", "short-write", "disk-full"}:
+        assert path.read_bytes() == original
+    assert not list((path.parent / "receipts").glob("*.json"))
+    assert len(calls) == int(point in {"receipt", "store-lock"})
+    output = capsys.readouterr()
+    scan(protected, output.out, output.err, json.dumps(spool.backlog(protected)))
+
+
+def test_mixed_legacy_seals_only_on_authorized_drain_and_key_failure_retains(protected, monkeypatch):
+    codec = module().QueueCodec(protected)
+    directory = spool.spool_dir(protected)
+    directory.mkdir(parents=True)
+    legacy = working()
+    path = directory / "legacy.jsonl"
+    write_wire(path, legacy)
+    assert enqueue(protected, SUMMARY + " protected")
+    before = snapshot(protected)
+    spool.drain(protected, dry_run=True)
+    assert snapshot(protected) == before
+    monkeypatch.delenv("ENGRAM_SECRET")
+    assert spool.drain(protected)["failed"] == 2
+    assert path.read_bytes() == before[str(path.relative_to(protected))][0]
+    monkeypatch.setenv("ENGRAM_SECRET", SECRET)
+    seen = []
+    def process(event, *a):
+        source = next(p for p in files(protected) if wire(p)["event_id"] == event["event_id"])
+        assert wire(source)["schema"] == 2
+        assert codec.decode(wire(source))["prepared"] == event["prepared"]
+        seen.append(event["event_id"])
+    monkeypatch.setattr(_processor, "process", process)
+    assert spool.drain(protected)["processed"] == 2
+    assert legacy["event_id"] in seen
+    assert not files(protected)
+    scan(protected)
+
+
+def test_real_cursor_extraction_audit_rotation_and_downstream_inventory(protected, monkeypatch, capsys):
+    from piia_engram.core import Engram
+    from piia_engram import audit
+    monkeypatch.setenv("ENGRAM_AUDIT", "1")
+    eng = Engram(root=protected)
+    # Force rotation through the real logger, not a mocked extraction path.
+    monkeypatch.setattr(audit, "AUDIT_MAX_BYTES", 1)
+    assert enqueue(protected)
+    assert spool.enqueue("cursor_save", "cursor", {"summary": SUMMARY, "session_id": MARKER}, root=protected)
+    assert spool.drain(protected, engram=eng)["processed"] == 2
+    rows = eng.get_lessons(limit=None, _update_access=False)
+    assert len(rows) == 1 and rows[0]["tier"] == "staging"
+    assert MARKER in rows[0]["summary"]
+    assert MARKER not in (protected / "knowledge" / "lessons.json").read_text(encoding="utf-8").split('"extraction"', 1)[0]
+    # Archives/digests and non-digest extraction evidence remain plaintext.
+    downstream = [p for p in (protected / "contexts").rglob("*") if p.is_file()]
+    assert any(MARKER.encode() in p.read_bytes() for p in downstream)
+    assert MARKER in (protected / "knowledge" / "lessons.json").read_text(encoding="utf-8")
+    assert (protected / "audit.log.1").exists()
+    eng._audit.log("probe", "metadata")
+    output = capsys.readouterr()
+    scan(protected, output.out, output.err)
+
+
+@pytest.mark.parametrize("kind", ["lesson", "decision"])
+def test_event_writer_forces_metadata_audit_even_if_caller_opts_out(tmp_path, monkeypatch, kind):
+    from piia_engram.core import Engram
+    eng = Engram(root=tmp_path)
+    received = []
+    monkeypatch.setattr(eng, "add_" + kind, lambda payload, **kw: received.append(kw))
+    _processor._EventWriter(eng, working())._add(kind, {"summary": MARKER, "title": MARKER}, _audit_metadata_only=False)
+    assert received == [{"_audit_metadata_only": True}]
+
+
+def test_debug_and_debounce_never_copy_arbitrary_fields(protected, monkeypatch):
+    monkeypatch.setenv("ENGRAM_HOOK_DEBUG", "1")
+    monkeypatch.setattr(sys, "argv", ["hook", MARKER])
+    monkeypatch.setattr(os, "getcwd", lambda: MARKER)
+    _cursor_payload.debug_log(MARKER, {MARKER: MARKER, "summary": MARKER})
+    directory = protected / "logs"
+    directory.mkdir(exist_ok=True)
+    (directory / "cursor_save_state.json").write_text(json.dumps({MARKER: datetime.now().isoformat()}), encoding="utf-8")
+    _cursor_payload.mark_saved(MARKER + "new")
+    assert _cursor_payload.recently_saved(MARKER + "new", 10)
+    state = wire(directory / "cursor_save_state.json")
+    assert all(len(key) == 64 and all(c in "0123456789abcdef" for c in key) for key in state)
+    scan(protected)
+
+
+def test_salt_read_is_bounded_and_symlink_refused(protected, monkeypatch):
+    original = Path.open
+    sizes = []
+    class Reader:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            self.handle.close()
+        def read(self, size=-1):
+            sizes.append(size)
+            assert size == 17
+            return self.handle.read(size)
+    def spy(path, *a, **kw):
+        handle = original(path, *a, **kw)
+        return Reader(handle) if path.name == ".corpus_salt" else handle
+    monkeypatch.setattr(Path, "open", spy)
+    assert enqueue(protected)
+    assert sizes == [17]
+    monkeypatch.setattr(Path, "open", original)
+    target = protected / "original-salt"
+    (protected / ".corpus_salt").rename(target)
+    try:
+        (protected / ".corpus_salt").symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    assert enqueue(protected) == ""
+    assert "crypto-salt-invalid" in (protected / "logs" / "hooks.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("approval", ["default", "strict"])
+def test_encrypted_partial_commit_replay_keeps_owner_edit_and_staging(protected, monkeypatch, approval):
+    from piia_engram.core import Engram
+    monkeypatch.setenv("ENGRAM_APPROVAL", approval)
+    assert enqueue(protected)
+    original_add = Engram.add_lesson
+    def interrupted(self, *args, **kwargs):
+        original_add(self, *args, **kwargs)
+        raise RuntimeError(MARKER)
+    monkeypatch.setattr(Engram, "add_lesson", interrupted)
+    assert spool.drain(protected)["failed"] == 1
+    eng = Engram(root=protected)
+    rows = eng.get_lessons(limit=None, _update_access=False)
+    assert len(rows) == 1 and rows[0]["tier"] == "staging"
+    edited = "Owner edited this pending proposal; preserve this text on replay."
+    eng.update_lesson(rows[0]["id"], {"summary": edited})
+    monkeypatch.setattr(Engram, "add_lesson", original_add)
+    assert spool.drain(protected)["processed"] == 1
+    rows = eng.get_lessons(limit=None, _update_access=False)
+    assert len(rows) == 1 and rows[0]["summary"] == edited
+    scan(protected)
+
+
+@pytest.mark.parametrize("kind", ["cursor_save", "claude_compact"])
+def test_protected_frozen_input_survives_transcript_deletion_and_receipt_failure(protected, monkeypatch, kind):
+    transcript = protected.parent / "transcript.jsonl"
+    transcript.write_text(json.dumps({"content": MARKER * 12}) + "\n", encoding="utf-8")
+    payload = {"transcript_path": str(transcript)} if kind == "claude_compact" else {
+        "summary": SUMMARY, "session_id": "synthetic-session", "project_folder": str(protected.parent / "project")}
+    assert spool.enqueue(kind, "claude_code" if kind == "claude_compact" else "cursor", payload, root=protected)
+    publish = spool._publish
+    def fail_receipt(path, data):
+        if path.parent.name == "receipts":
+            raise OSError(errno.ENOSPC, MARKER)
+        return publish(path, data)
+    monkeypatch.setattr(spool, "_publish", fail_receipt)
+    assert spool.drain(protected)["failed"] == 1
+    prepared = module().QueueCodec(protected).decode(wire(files(protected)[0]))["prepared"]
+    transcript.unlink()
+    monkeypatch.setattr(_processor, "prepare", lambda *a: pytest.fail("frozen input reread"))
+    monkeypatch.setattr(spool, "_publish", publish)
+    assert spool.drain(protected)["processed"] == 1
+    area = protected / ("daily" if kind == "claude_compact" else "contexts")
+    archives = list(area.rglob("*.md"))
+    assert len(archives) == 1
+    assert archives[0].read_text(encoding="utf-8").count("<!-- hook-event:") == 1
+    if kind == "cursor_save":
+        assert "project_revision" in prepared and "project_revision_captured_at" in prepared
+    scan(protected)
+
+
+def test_encrypted_missing_transcript_retries_and_quarantine_stay_protected(protected):
+    assert spool.enqueue("claude_stop", "claude_code", {"transcript_path": str(protected.parent / MARKER)}, root=protected)
+    for attempt in range(1, 4):
+        assert spool.drain(protected)["failed"] == 1
+        pending = files(protected)
+        path = pending[0] if pending else next((spool.spool_dir(protected) / "quarantine").glob("*.jsonl"))
+        assert wire(path)["schema"] == 2
+        assert wire(path)["transcript_missing_attempts"] == attempt
+        scan(protected)
+    assert not files(protected)
+    assert status(path) == "transcript-missing"
+
+
+def test_malformed_protected_bytes_and_closed_diagnostics(protected):
+    assert enqueue(protected)
+    path = files(protected)[0]
+    data = wire(path)
+    data["body"] = "enc:v2c:truncated"
+    write_wire(path, data)
+    before = path.read_bytes()
+    assert spool.drain(protected)["failed"] == 1
+    assert path.read_bytes() == before
+    spool._quarantine(path, "invalid-event")
+    scan(protected)
+    report = spool.backlog(protected)
+    assert report["quarantined"] == report["status_records"] == 1
+    assert "crypto-decrypt-failed" in json.dumps(report)
+
+
+def test_required_policy_publication_failure_never_publishes_event(protected, monkeypatch):
+    publish = spool._publish
+    def deny_policy(path, data):
+        if path.name == "spool-protection.json":
+            raise PermissionError(MARKER)
+        return publish(path, data)
+    monkeypatch.setattr(spool, "_publish", deny_policy)
+    assert enqueue(protected) == ""
+    assert not files(protected)
+    assert "protection-unavailable" in (protected / "logs" / "hooks.log").read_text(encoding="utf-8")
+    scan(protected)
