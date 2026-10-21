@@ -208,11 +208,14 @@ class Engram(
         # Corpus encryption key (derived once, reused for all entry I/O)
         self._corpus_key: bytes = b""
         if self._crypto.enabled:
-            from .hooks._spool_protection import policy_gate, _ensure_required_locked, POLICY_GATE_WAIT_SECONDS
-            # Read-only opens never create a gate, marker or salt. Writable
-            # enablement shares the plaintext publication gate, before any salt write.
-            with (nullcontext() if read_only else
-                  policy_gate(self.root, timeout=POLICY_GATE_WAIT_SECONDS)):
+            from .hooks._spool_protection import (
+                POLICY_GATE_WAIT_SECONDS, ProtectionError, _ensure_required_locked,
+                _required_marker, policy_gate, read_salt,
+            )
+
+            def initialize_salt():
+                # Writable callers hold the enablement gate and recheck salt/marker
+                # after acquisition. Read-only callers never create either file.
                 salt_path = self.root / ".corpus_salt"
                 salt = b""
                 if salt_path.is_file() and not salt_path.is_symlink():
@@ -246,6 +249,20 @@ class Engram(
                         self._atomic_write_bytes(salt_path, salt)
                 if salt and not read_only:
                     _ensure_required_locked(self.root)
+                return salt
+
+            if read_only:
+                salt = initialize_salt()
+            else:
+                try:
+                    salt = read_salt(self.root)
+                except ProtectionError:
+                    salt = b""
+                # Normal encrypted opens are readers of these immutable signals.
+                # Only one-time creation/replacement needs the exclusive gate.
+                if not salt or not _required_marker(self.root):
+                    with policy_gate(self.root, timeout=POLICY_GATE_WAIT_SECONDS):
+                        salt = initialize_salt()
             if salt:
                 self._corpus_key = self._crypto.derive_corpus_key(salt)
             # A plaintext hybrid search index left over from a pre-encryption

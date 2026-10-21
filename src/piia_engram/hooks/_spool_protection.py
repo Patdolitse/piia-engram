@@ -14,7 +14,7 @@ from pathlib import Path
 
 CRYPTO_BUDGET_SECONDS = 0.5
 DIAGNOSTIC_RESERVE_SECONDS = 0.025
-POLICY_GATE_WAIT_SECONDS = 1.0
+POLICY_GATE_WAIT_SECONDS = 10.0
 HEADER_BYTES = 2048
 DOMAIN = "engram-hook-spool-v2"
 POLICY = {"schema": 1, "mode": "required"}
@@ -90,6 +90,32 @@ class PolicyGateBusy(ProtectionError):
         super().__init__("protection-unavailable")
 
 
+class _WindowsPolicyLocker:
+    """Use the same byte at offset zero for both modes, on every portalocker version."""
+    def __init__(self, handle):
+        import msvcrt
+        import pywintypes
+        self.handle = msvcrt.get_osfhandle(handle.fileno())
+        self.offset = pywintypes.OVERLAPPED()
+
+    def lock(self, shared: bool):
+        import portalocker
+        import pywintypes
+        import win32file
+        import winerror
+        try:
+            # FAIL_IMMEDIATELY, and EXCLUSIVE_LOCK only for the exclusive mode.
+            win32file.LockFileEx(self.handle, 1 if shared else 3, 0, 1, self.offset)
+        except pywintypes.error as exc:
+            if exc.winerror == winerror.ERROR_LOCK_VIOLATION:
+                raise portalocker.AlreadyLocked() from None
+            raise
+
+    def unlock(self):
+        import win32file
+        win32file.UnlockFileEx(self.handle, 0, 1, self.offset)
+
+
 @contextmanager
 def policy_gate(root: Path, *, timeout: float = 0, shared: bool = False):
     """Root-local cross-process gate.
@@ -100,17 +126,20 @@ def policy_gate(root: Path, *, timeout: float = 0, shared: bool = False):
     import portalocker
     handle = None
     locked = False
-    end = time.monotonic() + max(0, timeout)
     try:
         directory = root / "hooks"
         directory.mkdir(parents=True, exist_ok=True)
         handle = (directory / ".spool-policy.lock").open("ab")
+        # Select per handle: never change portalocker's process-global LOCKER.
+        locker = _WindowsPolicyLocker(handle) if os.name == "nt" else None
+        end = time.monotonic() + max(0, timeout)
         while True:
-            if timeout > 0 and time.monotonic() >= end:
-                raise PolicyGateBusy()
             try:
                 mode = portalocker.LOCK_SH if shared else portalocker.LOCK_EX
-                portalocker.lock(handle, mode | portalocker.LOCK_NB)
+                if locker is not None:
+                    locker.lock(shared)
+                else:
+                    portalocker.lock(handle, mode | portalocker.LOCK_NB)
                 locked = True
                 break
             except portalocker.LockException:
@@ -130,7 +159,10 @@ def policy_gate(root: Path, *, timeout: float = 0, shared: bool = False):
         if handle is not None:
             try:
                 if locked:
-                    portalocker.unlock(handle)
+                    if locker is not None:
+                        locker.unlock()
+                    else:
+                        portalocker.unlock(handle)
             finally:
                 handle.close()
 
@@ -166,6 +198,10 @@ def ensure_required(root: Path, *, deadline: float | None = None) -> None:
     """Bounded writable enablement; marker creation shares the publication gate."""
     if deadline is not None:
         check_deadline(deadline)
+    present = (_required_marker(root) if deadline is None else
+               _with_budget(lambda: _required_marker(root), deadline))
+    if present:
+        return
     wait = POLICY_GATE_WAIT_SECONDS if deadline is None else max(
         0, deadline - DIAGNOSTIC_RESERVE_SECONDS - time.monotonic())
     with policy_gate(root, timeout=wait):
