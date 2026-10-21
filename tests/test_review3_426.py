@@ -261,6 +261,8 @@ def test_purge_does_not_consume_corrupt_or_reused_target_records(tmp_path):
 def test_record_alias_resolves_to_reserved_source_and_is_only_reported(tmp_path):
     eng, path, rows = _ordinary(tmp_path / "store")
     source = eng.root / "identity/profile.json"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("{}", encoding="utf-8")
     alias = tmp_path / "source-alias.json"
     try:
         alias.symlink_to(source)
