@@ -94,9 +94,15 @@ to delete; preserve recovery evidence and any active write before manual handlin
 Nothing is automatically deleted by diagnostics. Receipts are kept by default to
 preserve deduplication, and never become cleanup candidates in this policy.
 
-When store encryption is enabled, new queue bodies and their queue publication
+When store encryption is enabled on the intended root, new queue bodies and their queue publication
 intermediates are protected. Legacy plaintext and downstream archives, digests,
 quick-context, project snapshots and some knowledge metadata remain outside this
 boundary. See [hook queue body protection](hook-queue-protection.md) for scope,
 failure recovery, byte limits and version compatibility. Host adoption still
 requires separate confirmation.
+
+This policy is root-local opt-in. Every writer must use that root; copies must
+preserve the policy and original salt, and each host needs the secret. Losing both
+local signals in an incomplete restore can select plaintext when the secret is
+unset. Quiesce writers during enablement or rely on the shared policy gate used
+by current writers and enablers; earlier plaintext remains legacy exposure.

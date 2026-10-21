@@ -7,7 +7,7 @@ before capturing hooks: producers only read its existing 16-byte `.corpus_salt`;
 they never initialize a store, create a salt, repair keys or acquire its knowledge
 lock. Keep the original secret **and salt** in your recovery plan.
 
-Encryption remains opt-in. Without a secret, salt file or required marker, hooks
+Encryption is a **root-local opt-in** policy. Without a secret, salt file or required marker, hooks
 keep their existing plaintext queue behavior. A nonblank secret, any salt-file
 presence, or `hooks/spool-protection.json` in required mode means protection is
 required. Writable encryption enablement and the first protected publication
@@ -16,6 +16,29 @@ does not permit a plaintext downgrade. An unknown or unreadable policy refuses
 capture. A missing or corrupt salt is never regenerated while that marker or
 queue ciphertext remains. Restore the original secret/salt; do not replace the
 salt to try to recover encrypted events.
+
+Every writer must use the intended store root. A second root or host without a
+propagated secret or local policy/salt signals selects plaintext; a writer missing
+only its secret against the same initialized root refuses safely. An incomplete
+backup/restore or a copy of selected directories can lose **both** marker and salt
+and select plaintext when the secret is unset, even if queue ciphertext survives.
+Copies must preserve the policy and original salt, and each host needs the original
+secret. Configuring a secret before initialization refuses capture without a salt,
+but that failed attempt creates no durable intent: losing the environment afterward
+leaves an uninitialized root with no local signal.
+
+Quiesce writers during enablement, or use writers and enablers that all honor the
+same root-local `hooks/.spool-policy.lock` gate on a filesystem supporting their
+shared file locks. A plaintext writer takes this gate without waiting, rechecks
+all signals while holding it, and keeps it through partial publication and replace.
+A busy gate or a new signal requires resealing within the remaining capture budget;
+without usable keys, capture is refused. Writable enablement waits at most one
+second for the gate and commits the required marker before creating/replacing the
+salt while holding it. Prepared legacy replacements follow the same publication
+rule; failure preserves the original bytes and records a closed reason. This gate
+does not coordinate separate roots/hosts with independent files or older writers.
+Plaintext published before enablement completed remains disclosed legacy exposure
+and is sealed on ordinary drain; enablement is not a bulk rewrite.
 
 ## Protected surface and limits
 
@@ -41,8 +64,11 @@ or processed without its frozen fields. Pending caps remain 1,000 events and
 16 MiB of actual event bytes. Quarantine, partials, status records and receipts
 are outside that pending-only cap.
 
-Input and sealing share a 1.0-second application deadline, with at most 0.5 seconds
-waiting for crypto and a 25 ms diagnostic reserve. Each new hook process derives
+Input, intent discovery (policy/salt/secret checks), and both plaintext and encrypted
+encoding share a 1.0-second application deadline. Policy checks, crypto readiness,
+sealing and transition resealing use at most 0.5 seconds of the remaining budget,
+with a 25 ms diagnostic reserve. Expired results cannot start event publication.
+Each new hook process derives
 its own memory-only key. Slow machines fail closed; an abandoned crypto worker
 cannot publish later. Interpreter/package startup and final filesystem
 publication/fsync/replace retries add time beyond that application budget.
@@ -70,7 +96,7 @@ fields, and new debounce keys are hashed. This does not erase existing logs.
 | `crypto-timeout` | Retry on a machine able to derive the unchanged key within the budget. |
 | `crypto-decrypt-failed` | Restore the original key or an intact event backup; no success is assumed. |
 | `crypto-salt-mismatch` | Restore the original salt; the fingerprint mismatch does not identify its cause. |
-| `protection-unavailable` | Restore access to a valid required policy; no automatic downgrade occurs. |
+| `protection-unavailable` | Restore policy/gate access or retry after a busy enablement gate; no automatic downgrade occurs. |
 | `event-oversize` | Inspect the capture size; the prior event is retained on preparation failure. |
 
 `engram doctor --json` and `engram hooks drain --dry-run --json` inspect only

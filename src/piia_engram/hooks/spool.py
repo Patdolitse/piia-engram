@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ._log import log_failure
-from ._spool_protection import (CRYPTO_CODES, ProtectionError, QueueCodec, ensure_required,
-                                loads, required, seal_with_budget)
+from ._spool_protection import (CRYPTO_CODES, ProtectionError, PolicyGateBusy, QueueCodec,
+                                capture_deadline, check_deadline, ensure_required, loads,
+                                policy_gate, required, required_with_budget, seal_with_budget)
 from ..atomic_replace import replace_with_retry
 
 MAX_PENDING_EVENTS = 1000
@@ -139,12 +140,13 @@ def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None,
         event_id = uuid.uuid4().hex
         event = {"schema": 1, "event_id": event_id, "kind": kind, "client": client,
                  "created_at": datetime.now(timezone.utc).isoformat(), "payload": payload}
+        deadline = capture_deadline(deadline)
         data, protected = seal_with_budget(root, event, deadline)
-        if protected:
-            ensure_required(root)
+        check_deadline(deadline)
         directory = spool_dir(root)
         directory.mkdir(parents=True, exist_ok=True)
-        _publish(directory / f"{time.time_ns():020d}-{event_id}.jsonl", data)
+        _publish_encoded(directory / f"{time.time_ns():020d}-{event_id}.jsonl",
+                         event, data, protected, QueueCodec(root), deadline)
         try:
             with _lock(directory):
                 _trim(directory)
@@ -297,8 +299,34 @@ def _retry_missing_transcript(path: Path, event: dict, codec: QueueCodec) -> boo
 
 def _publish_event(path: Path, event: dict, codec: QueueCodec) -> None:
     data = codec.encode(event)
-    if event.get("schema") == 2 or required(codec.root):
-        ensure_required(codec.root)
+    _publish_encoded(path, event, data, loads(data.decode("utf-8"))["schema"] == 2, codec)
+
+
+def _publish_encoded(path: Path, event: dict, data: bytes, protected: bool,
+                     codec: QueueCodec, deadline: float | None = None) -> None:
+    if not protected:
+        try:
+            # The check and actual plaintext partial/replace form one critical section.
+            # Every marker/salt creator takes this same gate before enabling encryption.
+            with policy_gate(codec.root):
+                needs_protection = (required(codec.root) if deadline is None else
+                                    required_with_budget(codec.root, deadline))
+                if not needs_protection:
+                    if deadline is not None:
+                        check_deadline(deadline)
+                    _publish(path, data)
+                    return
+        except PolicyGateBusy:
+            # A busy transition cannot authorize plaintext, even before its marker exists.
+            pass
+        sealed_event = dict(event, schema=2)
+        if deadline is None:
+            data = codec.encode(sealed_event)
+        else:
+            data, _ = seal_with_budget(codec.root, sealed_event, deadline)
+    ensure_required(codec.root, deadline=deadline)
+    if deadline is not None:
+        check_deadline(deadline)
     _publish(path, data)
 
 

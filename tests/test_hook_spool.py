@@ -71,20 +71,33 @@ def test_unreadable_store_returns_zero_and_logs(tmp_path, module):
     assert list(tmp_path.glob("*.hooks.log"))
 
 
-def test_atomic_concurrent_publish(tmp_path):
+def test_atomic_concurrent_publish(tmp_path, monkeypatch):
     from piia_engram.hooks.spool import backlog
+    monkeypatch.delenv("ENGRAM_SECRET", raising=False)
     store = tmp_path / "store"
-    code = "from piia_engram.hooks.spool import enqueue; [enqueue('cursor_writeback', 'cursor', {'summary': 'test'}) for _ in range(15)]"
+    code = ("import json; from piia_engram.hooks.spool import enqueue; "
+            "print(json.dumps([enqueue('cursor_writeback', 'cursor', {'summary': 'test'}) for _ in range(15)]))")
     children = [subprocess.Popen([sys.executable, "-c", code],
-                                env=child_env(tmp_path / f"profile-{n}", store))
+                                env=child_env(tmp_path / f"profile-{n}", store),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, encoding="utf-8")
                 for n in range(6)]
-    assert all(child.wait(timeout=15) == 0 for child in children)
+    results = [child.communicate(timeout=15) for child in children]
+    assert all(child.returncode == 0 for child in children), results
+    attempts = [event_id for output, _ in results for event_id in json.loads(output)]
+    published = {event_id for event_id in attempts if event_id}
+    assert len(attempts) == 90
+    # Plaintext contenders must refuse when the nonblocking policy gate is busy.
+    assert 0 < len(published) <= 90
     files = list((store / "hooks" / "spool").glob("*.jsonl"))
-    assert len(files) == 90
+    assert len(files) == len(published)
     events = [json.loads(p.read_text(encoding="utf-8")) for p in files]
     assert all(len(p.read_text(encoding="utf-8").splitlines()) == 1 for p in files)
-    assert len({e["event_id"] for e in events}) == 90
-    assert backlog(store)["pending"] == 90
+    assert {e["event_id"] for e in events} == published
+    assert backlog(store)["pending"] == len(published)
+    assert not list((store / "hooks" / "spool").glob("*.partial"))
+    if len(published) < 90:
+        assert "crypto-secret-missing" in (store / "logs/hooks.log").read_text(encoding="utf-8")
 
 
 def test_drain_duplicate_event_once(tmp_path):
