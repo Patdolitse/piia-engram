@@ -974,7 +974,7 @@ def test_replacement_enablement_interleaving_retains_or_reseals(tmp_path, monkey
 
 
 @pytest.mark.parametrize("replacement", [False, True])
-def test_busy_policy_gate_refuses_plaintext_without_waiting(tmp_path, monkeypatch, replacement):
+def test_busy_policy_gate_refuses_plaintext_after_bounded_wait(tmp_path, monkeypatch, replacement):
     monkeypatch.delenv("ENGRAM_SECRET", raising=False)
     hooks = tmp_path / "hooks"
     hooks.mkdir()
@@ -993,7 +993,7 @@ def test_busy_policy_gate_refuses_plaintext_without_waiting(tmp_path, monkeypatc
         else:
             assert not enqueue(tmp_path)
             assert not files(tmp_path)
-        assert time.monotonic() - start < 0.25
+        assert time.monotonic() - start < spool.PLAINTEXT_GATE_WAIT + 0.5
 
 
 @pytest.mark.parametrize("encrypted", [False, True])

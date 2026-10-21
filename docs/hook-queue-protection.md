@@ -29,10 +29,11 @@ leaves an uninitialized root with no local signal.
 
 Quiesce writers during enablement, or use writers and enablers that all honor the
 same root-local `hooks/.spool-policy.lock` gate on a filesystem supporting their
-shared file locks. A plaintext writer takes this gate without waiting, rechecks
-all signals while holding it, and keeps it through partial publication and replace.
-A busy gate or a new signal requires resealing within the remaining capture budget;
-without usable keys, capture is refused. Writable enablement waits at most one
+shared file locks. A plaintext writer waits at most 0.25 seconds of its remaining
+capture budget for this gate, rechecks all signals while holding it, and keeps it
+through partial publication and replace. A gate that stays busy or a new signal
+requires resealing within the remaining capture budget; without usable keys,
+capture is refused. Writable enablement waits at most one
 second for the gate and commits the required marker before creating/replacing the
 salt while holding it. Prepared legacy replacements follow the same publication
 rule; failure preserves the original bytes and records a closed reason. This gate

@@ -92,7 +92,7 @@ class PolicyGateBusy(ProtectionError):
 
 @contextmanager
 def policy_gate(root: Path, *, timeout: float = 0):
-    """Root-local cross-process gate; plaintext publishers never wait for it."""
+    """Root-local cross-process gate; plaintext publishers wait only a bounded slice."""
     import portalocker
     handle = None
     locked = False
