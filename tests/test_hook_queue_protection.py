@@ -13,6 +13,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import portalocker
 import pytest
@@ -75,6 +76,15 @@ def scan(root, *extra):
 
 @pytest.fixture
 def protected(tmp_path, monkeypatch):
+    # These are correctness tests. KDF speed is covered separately by controlled
+    # deadline tests, and must not prevent an injected failure from being reached.
+    monkeypatch.setattr(module(), "CRYPTO_BUDGET_SECONDS", 30)
+    monkeypatch.setattr(_producer, "INPUT_BUDGET_SECONDS", 35)
+    original = spool.enqueue
+    def patient_enqueue(*args, **kwargs):
+        kwargs.setdefault("deadline", spool.time.monotonic() + 35)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(spool, "enqueue", patient_enqueue)
     root = tmp_path / "store"
     root.mkdir()
     (root / ".corpus_salt").write_bytes(SALT)
@@ -82,6 +92,58 @@ def protected(tmp_path, monkeypatch):
     monkeypatch.setenv("ENGRAM_DIR", str(root))
     monkeypatch.setenv("ENGRAM_AUDIT", "1")
     return root
+
+
+@pytest.fixture
+def fault_keys(monkeypatch):
+    # Fault-injection tests exercise the closed reason codes and real AES-GCM
+    # authentication, not PBKDF2 cost. Integration/crypto tests retain the real KDF.
+    from piia_engram import crypto
+    monkeypatch.setattr(crypto, "_derive_key", lambda secret, salt, iterations:
+        hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt, 1))
+
+
+@pytest.fixture
+def budget_clock(monkeypatch):
+    now = [1000.0]
+    def advance(seconds):
+        now[0] += seconds
+    clock = SimpleNamespace(monotonic=lambda: now[0], advance=advance,
+                           time=time.time, time_ns=time.time_ns, sleep=advance)
+    for target in (module(), spool, _producer):
+        monkeypatch.setattr(target, "time", clock)
+    monkeypatch.setattr(module(), "CRYPTO_BUDGET_SECONDS", 300)
+    return clock
+
+
+def expire_worker_wait(monkeypatch, clock, started, *, wait_number=1):
+    """Expire a chosen wait only after its worker reached the injected stall."""
+    waits, workers = [], []
+    class Completion:
+        def __init__(self):
+            self.event = threading.Event()
+        def set(self):
+            self.event.set()
+        def wait(self, timeout):
+            waits.append(timeout)
+            if len(waits) == wait_number:
+                assert started.wait(30), "worker never reached the injected stall"
+                clock.advance(timeout)
+                return False
+            assert self.event.wait(30), "worker never completed"
+            return True
+    def worker(*args, **kwargs):
+        thread = threading.Thread(*args, **kwargs)
+        workers.append(thread)
+        return thread
+    monkeypatch.setattr(module(), "threading", SimpleNamespace(Event=Completion, Thread=worker))
+    return waits, workers
+
+
+def finish_workers(workers):
+    for worker in workers:
+        worker.join(timeout=30)
+        assert not worker.is_alive(), "synthetic crypto worker did not finish"
 
 
 def test_no_encryption_signals_preserves_plaintext_capture(tmp_path, monkeypatch):
@@ -99,7 +161,7 @@ def test_no_encryption_signals_preserves_plaintext_capture(tmp_path, monkeypatch
     ("disabled", "crypto-unavailable"), ("short-key", "crypto-unavailable"),
     ("passthrough", "crypto-unavailable"), ("policy", "protection-unavailable"),
 ])
-def test_required_refusal_never_writes_body_or_marks_debounce(protected, monkeypatch, fault, code, capsys):
+def test_required_refusal_never_writes_body_or_marks_debounce(protected, monkeypatch, fault_keys, fault, code, capsys):
     from piia_engram import crypto
     salt = protected / ".corpus_salt"
     if fault in {"secret", "blank-secret"}:
@@ -170,7 +232,7 @@ def test_literal_cipher_prefix_input_is_still_encrypted(protected):
     ("header", "crypto-decrypt-failed"), ("body-swap", "crypto-decrypt-failed"),
     ("domain", "crypto-decrypt-failed"), ("unknown-field", "crypto-decrypt-failed"),
 ])
-def test_unreadable_preserves_bytes_before_fake_receipt_and_effects(protected, monkeypatch, fault, code):
+def test_unreadable_preserves_bytes_before_fake_receipt_and_effects(protected, monkeypatch, fault_keys, fault, code):
     from piia_engram import crypto
     assert enqueue(protected)
     path = files(protected)[0]
@@ -332,27 +394,28 @@ def test_writable_enablement_creates_marker_but_read_only_does_not(tmp_path, mon
     assert wire(root / "hooks" / "spool-protection.json") == {"schema": 1, "mode": "required"}
 
 
-def test_crypto_timeout_cannot_publish_late_or_write_policy(protected, monkeypatch):
+def test_crypto_timeout_cannot_publish_late_or_write_policy(protected, monkeypatch, budget_clock):
     from piia_engram import crypto
     started, release, finished = threading.Event(), threading.Event(), threading.Event()
     original = crypto.EncryptionEngine.derive_corpus_key
     def slow(*args):
         started.set()
-        release.wait(5)
+        release.wait(30)
         try:
             return original(*args)
         finally:
             finished.set()
     monkeypatch.setattr(crypto.EncryptionEngine, "derive_corpus_key", slow)
     monkeypatch.setattr(module(), "CRYPTO_BUDGET_SECONDS", 0.04)
-    start = time.monotonic()
-    assert enqueue(protected) == ""
-    assert time.monotonic() - start < 0.25
-    assert started.is_set()
-    before = snapshot(protected)
-    release.set()
-    assert finished.wait(3)
-    time.sleep(0.03)
+    waits, workers = expire_worker_wait(monkeypatch, budget_clock, started)
+    try:
+        assert enqueue(protected) == ""
+        assert waits == [pytest.approx(0.04)]
+        before = snapshot(protected)
+    finally:
+        release.set()
+        finish_workers(workers)
+    assert finished.is_set()
     assert snapshot(protected) == before
     assert not files(protected)
     assert not (protected / "hooks" / "spool-protection.json").exists()
@@ -360,14 +423,14 @@ def test_crypto_timeout_cannot_publish_late_or_write_policy(protected, monkeypat
     scan(protected)
 
 
-def test_input_and_crypto_share_deadline(protected, monkeypatch):
+def test_input_and_crypto_share_deadline(protected, monkeypatch, budget_clock):
     from piia_engram import crypto
-    monkeypatch.setattr(_producer, "INPUT_BUDGET_SECONDS", 0.16)
+    monkeypatch.setattr(_producer, "INPUT_BUDGET_SECONDS", 16)
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     original = crypto.EncryptionEngine.derive_corpus_key
     def slow_crypto(*args):
         entered.set()
-        release.wait(3)
+        release.wait(30)
         try:
             return original(*args)
         finally:
@@ -377,18 +440,19 @@ def test_input_and_crypto_share_deadline(protected, monkeypatch):
         def fileno(self):
             raise OSError("synthetic")
         def read(self, *a):
-            time.sleep(0.04)
+            budget_clock.advance(4)
             return super().read(*a)
     monkeypatch.setattr(sys, "stdin", Delayed(json.dumps({"summary": SUMMARY})))
-    start = time.monotonic()
-    assert _producer.cursor_event("cursor_writeback") == 0
-    assert time.monotonic() - start < 0.3
-    assert entered.is_set()  # input completed; the remaining budget reached crypto
-    assert not files(protected)
-    before = snapshot(protected)
-    release.set()
-    assert finished.wait(3)
-    time.sleep(0.03)
+    waits, workers = expire_worker_wait(monkeypatch, budget_clock, entered)
+    try:
+        assert _producer.cursor_event("cursor_writeback") == 0
+        assert waits == [pytest.approx(12 - module().DIAGNOSTIC_RESERVE_SECONDS)]
+        assert not files(protected)
+        before = snapshot(protected)
+    finally:
+        release.set()
+        finish_workers(workers)
+    assert finished.is_set()
     assert snapshot(protected) == before
     assert "crypto-timeout" in (protected / "logs/hooks.log").read_text(encoding="utf-8")
     scan(protected)
@@ -513,7 +577,7 @@ def test_encrypted_count_and_actual_byte_caps_with_busy_maintenance(protected, m
 
 
 @pytest.mark.parametrize("point", ["prepare", "before-replace", "after-replace", "short-write", "disk-full", "receipt", "store-lock"])
-def test_failure_points_only_leave_ciphertext_or_metadata(protected, monkeypatch, point, capsys):
+def test_failure_points_only_leave_ciphertext_or_metadata(protected, monkeypatch, fault_keys, point, capsys):
     assert enqueue(protected, transcript_path=MARKER, session_id=MARKER, roots=[MARKER])
     path = files(protected)[0]
     original = path.read_bytes()
@@ -550,6 +614,9 @@ def test_failure_points_only_leave_ciphertext_or_metadata(protected, monkeypatch
         assert path.read_bytes() == original
     assert not list((path.parent / "receipts").glob("*.json"))
     assert len(calls) == int(point in {"receipt", "store-lock"})
+    expected = ("storage-unavailable" if point in {"short-write", "disk-full", "store-lock", "receipt"}
+                else "processing-failed")
+    assert status(path) == expected
     output = capsys.readouterr()
     report = json.dumps(spool.drain(protected, dry_run=True))
     saved = protected.parent / "failure-diagnostic.json"
@@ -989,7 +1056,7 @@ def test_replacement_enablement_interleaving_retains_or_reseals(tmp_path, monkey
 
 
 @pytest.mark.parametrize("replacement", [False, True])
-def test_busy_policy_gate_refuses_plaintext_after_bounded_wait(tmp_path, monkeypatch, replacement):
+def test_busy_policy_gate_refuses_plaintext_after_bounded_wait(tmp_path, monkeypatch, replacement, budget_clock):
     monkeypatch.delenv("ENGRAM_SECRET", raising=False)
     hooks = tmp_path / "hooks"
     hooks.mkdir()
@@ -1000,7 +1067,7 @@ def test_busy_policy_gate_refuses_plaintext_after_bounded_wait(tmp_path, monkeyp
         write_wire(path, event)
         before = path.read_bytes()
     with portalocker.Lock(hooks / ".spool-policy.lock", "a", timeout=0):
-        start = time.monotonic()
+        start = budget_clock.monotonic()
         if replacement:
             with pytest.raises(module().ProtectionError):
                 spool._publish_event(path, event, module().QueueCodec(tmp_path))
@@ -1008,11 +1075,11 @@ def test_busy_policy_gate_refuses_plaintext_after_bounded_wait(tmp_path, monkeyp
         else:
             assert not enqueue(tmp_path)
             assert not files(tmp_path)
-        assert time.monotonic() - start < spool.PLAINTEXT_GATE_WAIT + 0.5
+        assert budget_clock.monotonic() - start == pytest.approx(spool.PLAINTEXT_GATE_WAIT)
 
 
 @pytest.mark.parametrize("encrypted", [False, True])
-def test_slow_policy_read_is_inside_remaining_budget(tmp_path, monkeypatch, encrypted):
+def test_slow_policy_read_is_inside_remaining_budget(tmp_path, monkeypatch, encrypted, budget_clock):
     monkeypatch.delenv("ENGRAM_SECRET", raising=False)
     if encrypted:
         (tmp_path / ".corpus_salt").write_bytes(SALT)
@@ -1024,44 +1091,44 @@ def test_slow_policy_read_is_inside_remaining_budget(tmp_path, monkeypatch, encr
     def delayed(path, *args, **kwargs):
         if path == marker:
             started.set()
-            release.wait(3)
+            release.wait(30)
             try:
                 return original(path, *args, **kwargs)
             finally:
                 finished.set()
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, "lstat", delayed)
-    start = time.monotonic()
+    waits, workers = expire_worker_wait(monkeypatch, budget_clock, started)
+    start = budget_clock.monotonic()
     try:
         assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
                                  root=tmp_path, deadline=start + 0.1)
-        assert time.monotonic() - start < 0.25
-        assert started.is_set()
+        assert waits == [pytest.approx(0.1 - module().DIAGNOSTIC_RESERVE_SECONDS)]
         before = snapshot(tmp_path)
     finally:
         release.set()
-        assert finished.wait(3)
-    time.sleep(0.03)
+        finish_workers(workers)
+    assert finished.is_set()
     assert snapshot(tmp_path) == before
     assert not files(tmp_path)
     assert "crypto-timeout" in (tmp_path / "logs/hooks.log").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("phase", ["expired", "policy", "encoding", "completed"])
-def test_expired_plaintext_never_starts_publication(tmp_path, monkeypatch, phase):
+def test_expired_plaintext_never_starts_publication(tmp_path, monkeypatch, phase, budget_clock):
     monkeypatch.delenv("ENGRAM_SECRET", raising=False)
     seal = spool.seal_with_budget
     if phase in {"policy", "encoding"}:
         target = "required" if phase == "policy" else "json_bytes"
         function = getattr(module(), target)
         def slow(*args, **kwargs):
-            time.sleep(0.14)
+            budget_clock.advance(101)
             return function(*args, **kwargs)
         monkeypatch.setattr(module(), target, slow)
     elif phase == "completed":
         def delayed_result(*args, **kwargs):
             result = seal(*args, **kwargs)
-            time.sleep(0.14)
+            budget_clock.advance(101)
             return result
         monkeypatch.setattr(spool, "seal_with_budget", delayed_result)
     published = []
@@ -1071,7 +1138,7 @@ def test_expired_plaintext_never_starts_publication(tmp_path, monkeypatch, phase
             published.append(data)
         return publish(path, data)
     monkeypatch.setattr(spool, "_publish", inspect)
-    deadline = time.monotonic() + (-1 if phase == "expired" else 0.1)
+    deadline = budget_clock.monotonic() + (-1 if phase == "expired" else 100)
     assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
                              root=tmp_path, deadline=deadline)
     assert not published and not files(tmp_path)
@@ -1105,18 +1172,18 @@ def test_enablement_commits_marker_before_salt_under_gate(tmp_path, monkeypatch,
 
 
 @pytest.mark.parametrize("action", ["enable", "marker"])
-def test_enablement_gate_wait_is_bounded_and_creates_no_intent(tmp_path, monkeypatch, action):
+def test_enablement_gate_wait_is_bounded_and_creates_no_intent(tmp_path, monkeypatch, action, budget_clock):
     from piia_engram.core import Engram
     monkeypatch.setenv("ENGRAM_SECRET", SECRET)
     monkeypatch.setattr(module(), "POLICY_GATE_WAIT_SECONDS", 0.05)
     with module().policy_gate(tmp_path):
-        start = time.monotonic()
+        start = budget_clock.monotonic()
         with pytest.raises(module().PolicyGateBusy):
             if action == "enable":
                 Engram(root=tmp_path)
             else:
                 module().ensure_required(tmp_path)
-        assert time.monotonic() - start < 0.25
+        assert budget_clock.monotonic() - start == pytest.approx(0.05)
         assert not module().policy_path(tmp_path).exists()
         assert not (tmp_path / ".corpus_salt").exists()
     with module().policy_gate(tmp_path):
@@ -1163,12 +1230,12 @@ def test_plaintext_publication_holds_gate_against_real_enabler(tmp_path, monkeyp
     scan(tmp_path)
 
 
-def test_slow_marker_read_probe_and_no_late_publication(tmp_path, monkeypatch):
+def test_slow_marker_read_probe_and_no_late_publication(tmp_path, monkeypatch, budget_clock):
     (tmp_path / ".corpus_salt").write_bytes(SALT)
     module().ensure_required(tmp_path)
     monkeypatch.setenv("ENGRAM_SECRET", SECRET)
     original = Path.open
-    finished = threading.Event()
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
     class SlowReader:
         def __init__(self, handle):
             self.handle = handle
@@ -1178,40 +1245,50 @@ def test_slow_marker_read_probe_and_no_late_publication(tmp_path, monkeypatch):
             self.handle.close()
             finished.set()
         def read(self, size=-1):
-            time.sleep(0.25)
+            started.set()
+            release.wait(30)
             return self.handle.read(size)
     def delayed(path, *args, **kwargs):
         handle = original(path, *args, **kwargs)
-        return SlowReader(handle) if path == module().policy_path(tmp_path) else handle
+        return (SlowReader(handle) if path == module().policy_path(tmp_path)
+                and threading.current_thread().name == "engram-hook-seal" else handle)
     monkeypatch.setattr(Path, "open", delayed)
-    start = time.monotonic()
-    assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
-                             root=tmp_path, deadline=start + 0.1)
-    assert time.monotonic() - start < 0.2
-    before = snapshot(tmp_path)
-    assert finished.wait(3)
-    time.sleep(0.03)
+    waits, workers = expire_worker_wait(monkeypatch, budget_clock, started)
+    try:
+        assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
+                                 root=tmp_path, deadline=budget_clock.monotonic() + 0.1)
+        assert waits == [pytest.approx(0.1 - module().DIAGNOSTIC_RESERVE_SECONDS)]
+        before = snapshot(tmp_path)
+    finally:
+        release.set()
+        finish_workers(workers)
+    assert finished.is_set()
     assert snapshot(tmp_path) == before
     assert not files(tmp_path)
 
 
-def test_final_policy_recheck_is_bounded_and_releases_gate(tmp_path, monkeypatch):
+def test_final_policy_recheck_is_bounded_and_releases_gate(tmp_path, monkeypatch, budget_clock):
     monkeypatch.delenv("ENGRAM_SECRET", raising=False)
     original = module().required
     calls = []
-    finished = threading.Event()
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
     def slow_recheck(root):
         calls.append(root)
         if len(calls) == 2:
-            time.sleep(0.25)
+            started.set()
+            release.wait(30)
             finished.set()
         return original(root)
     monkeypatch.setattr(module(), "required", slow_recheck)
-    start = time.monotonic()
-    assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
-                             root=tmp_path, deadline=start + 0.1)
-    assert time.monotonic() - start < 0.2
-    with module().policy_gate(tmp_path):
-        pass
-    assert finished.wait(3)
+    waits, workers = expire_worker_wait(monkeypatch, budget_clock, started, wait_number=2)
+    try:
+        assert not spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY},
+                                 root=tmp_path, deadline=budget_clock.monotonic() + 0.1)
+        assert waits == [pytest.approx(0.075), pytest.approx(0.075)]
+        with module().policy_gate(tmp_path):
+            pass
+    finally:
+        release.set()
+        finish_workers(workers)
+    assert finished.is_set()
     assert not files(tmp_path)
