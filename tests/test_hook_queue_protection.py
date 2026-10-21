@@ -394,6 +394,21 @@ def test_input_and_crypto_share_deadline(protected, monkeypatch):
     scan(protected)
 
 
+def _boundary_timestamps():
+    # Valid UTC spellings of different lengths, limited to forms the running
+    # Python can parse, so the wire size can be adjusted byte by byte.
+    stamps = []
+    for fraction in ("", ".123", ".123456"):
+        for offset in ("+00:00", "+00:00:00", "+00:00:00.000000"):
+            stamp = "2026-10-21T00:00:00" + fraction + offset
+            try:
+                datetime.fromisoformat(stamp)
+            except ValueError:
+                continue
+            stamps.append(stamp)
+    return stamps
+
+
 def test_exact_final_jsonl_limit_and_one_byte_over(protected, monkeypatch):
     codec = module().QueueCodec(protected)
     event = working("x")
@@ -414,8 +429,8 @@ def test_exact_final_jsonl_limit_and_one_byte_over(protected, monkeypatch):
     data = codec.encode(event)
     # Adjust the valid ISO timestamp fractional precision for an exact wire
     # boundary rather than lowering the production limit for this check.
-    for precision in range(1, 10):
-        event["created_at"] = "2026-10-21T00:00:00." + "1" * precision + "+00:00"
+    for stamp in _boundary_timestamps():
+        event["created_at"] = stamp
         for length in range(max(0, low - 20), low + 10):
             event["payload"]["summary"] = "x" * length
             try:
@@ -439,8 +454,8 @@ def test_exact_final_jsonl_limit_and_one_byte_over(protected, monkeypatch):
         spool._read_event(path)
     monkeypatch.setattr(spool, "MAX_EVENT_BYTES", 128 * 1024 + 16)
     over = None
-    for precision in range(1, 12):
-        event["created_at"] = "2026-10-21T00:00:00." + "1" * precision + "+00:00"
+    for stamp in _boundary_timestamps():
+        event["created_at"] = stamp
         for length in range(max(0, low - 25), low + 10):
             event["payload"]["summary"] = "x" * length
             try:
