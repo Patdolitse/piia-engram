@@ -32,6 +32,7 @@ tests/test_isolated_contract_v1.py
 tests/test_isolated_supersede.py
 tests/test_isolated_result_hash.py
 tests/test_isolated_contract_fields.py
+tests/test_hook_queue_protection.py
 
 # ── Public helper scripts (sanitize check, hook installer, etc.) ─────
 scripts/**
