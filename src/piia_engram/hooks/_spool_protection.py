@@ -91,8 +91,12 @@ class PolicyGateBusy(ProtectionError):
 
 
 @contextmanager
-def policy_gate(root: Path, *, timeout: float = 0):
-    """Root-local cross-process gate; plaintext publishers wait only a bounded slice."""
+def policy_gate(root: Path, *, timeout: float = 0, shared: bool = False):
+    """Root-local cross-process gate.
+
+    Plaintext publishers hold it shared, so they never exclude each other;
+    encryption enablement and marker/salt creation hold it exclusively.
+    """
     import portalocker
     handle = None
     locked = False
@@ -105,7 +109,8 @@ def policy_gate(root: Path, *, timeout: float = 0):
             if timeout > 0 and time.monotonic() >= end:
                 raise PolicyGateBusy()
             try:
-                portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                mode = portalocker.LOCK_SH if shared else portalocker.LOCK_EX
+                portalocker.lock(handle, mode | portalocker.LOCK_NB)
                 locked = True
                 break
             except portalocker.LockException:

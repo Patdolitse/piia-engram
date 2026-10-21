@@ -309,11 +309,11 @@ def _publish_encoded(path: Path, event: dict, data: bytes, protected: bool,
         try:
             # The check and actual plaintext partial/replace form one critical section.
             # Every marker/salt creator takes this same gate before enabling encryption.
-            # Plaintext writers hold the gate only briefly, so wait a bounded slice of
-            # the remaining budget instead of dropping concurrent unencrypted captures.
+            # Plaintext writers share the gate, so they only wait for an enablement
+            # in progress, and only for a bounded slice of the remaining budget.
             wait = PLAINTEXT_GATE_WAIT if deadline is None else min(
                 PLAINTEXT_GATE_WAIT, max(0.0, deadline - time.monotonic()))
-            with policy_gate(codec.root, timeout=wait):
+            with policy_gate(codec.root, timeout=wait, shared=True):
                 needs_protection = (required(codec.root) if deadline is None else
                                     required_with_budget(codec.root, deadline))
                 if not needs_protection:

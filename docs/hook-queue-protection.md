@@ -29,8 +29,9 @@ leaves an uninitialized root with no local signal.
 
 Quiesce writers during enablement, or use writers and enablers that all honor the
 same root-local `hooks/.spool-policy.lock` gate on a filesystem supporting their
-shared file locks. A plaintext writer waits at most 0.25 seconds of its remaining
-capture budget for this gate, rechecks all signals while holding it, and keeps it
+shared file locks. Plaintext writers hold this gate shared, so they do not block each
+other; a plaintext writer waits at most 0.25 seconds of its remaining capture
+budget for an enablement in progress, rechecks all signals while holding it, and keeps it
 through partial publication and replace. A gate that stays busy or a new signal
 requires resealing within the remaining capture budget; without usable keys,
 capture is refused. Writable enablement waits at most one
