@@ -6,6 +6,16 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Hook queue body protection when store encryption is enabled, with authenticated event binding, bounded capture and read-only recovery diagnostics. Existing plaintext queues remain readable; downstream archives, digests and other generated outputs remain outside this protection. See the [scope and recovery guide](docs/hook-queue-protection.md).
+
+### Fixed
+
+- Hook-origin knowledge audit writes always omit candidate text. Cursor debug output records fixed shape/count metadata, and new debounce keys are hashed.
+
 ## [4.26.0] - 2026-10-21
 
 ### Added

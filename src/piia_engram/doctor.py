@@ -966,6 +966,8 @@ def _print_connection_report(root, days: int | None = None) -> None:
                   f"{queue['partial']} partial ({queue['partial_bytes']} bytes), "
                   f"{queue['receipts']} receipts ({queue['receipt_bytes']} bytes)")
     W._safe_print(f"    Store: {queue['store']['display']} [{queue['store']['id']}]")
+    W._safe_print(f"    Queue bodies: {queue['protected_pending']} protected, "
+                  f"{queue['legacy_pending']} legacy plaintext; {queue['status_records']} status records")
     for name, meaning in queue["states"].items():
         W._safe_print(f"    {name}: {meaning}")
     W._safe_print(f"    Host consumption: {queue['host_consumption']}")
@@ -990,6 +992,19 @@ def _print_connection_report(root, days: int | None = None) -> None:
         W._safe_print(f"    {line}")
 
 
+def _encrypted_diagnostics(root: Path) -> bool:
+    """No engine, decryption, KDF, policy creation or store handle."""
+    from .hooks.spool import backlog
+    if (os.environ.get("ENGRAM_SECRET", "").strip() or
+            os.path.lexists(root / ".corpus_salt") or
+            os.path.lexists(root / "hooks" / "spool-protection.json")):
+        return True
+    try:
+        return backlog(root)["protected_pending"] > 0
+    except Exception:
+        return True  # unreadable intent cannot justify opening the store
+
+
 @non_quarantining_reads()
 def run_doctor_json(days: int | None = None) -> int:
     """``engram doctor --json``: the client connection report as JSON (read-only).
@@ -1001,22 +1016,35 @@ def run_doctor_json(days: int | None = None) -> int:
     from piia_engram.storage import _engram_root
 
     days = _connections.DEFAULT_DAYS if days is None else days
+    from piia_engram.hooks.spool import backlog
+    root = Path(_engram_root())
+    report = {"hook_spool": backlog(root), "read_only": True}
     try:
-        report = _connections.build_report(Path(_engram_root()), days=days)
-        from piia_engram.hooks.spool import backlog
-        report["hook_spool"] = backlog(Path(_engram_root()))
+        report.update(_connections.build_report(root, days=days))
+    except Exception as exc:
+        report["error"] = type(exc).__name__
+    try:
         from piia_engram.core import Engram
         stored = stored_replay_check(Path(_engram_root()))
         report["stored_replay"] = stored
         if stored["unreadable"] or stored["files"] or stored["repair_pending"]:
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 1
-        report["decision_consistency"] = decision_consistency_check(Engram(root=Path(_engram_root()), read_only=True))
+        # Queue diagnosis never needs a decryption key or PBKDF2, even when
+        # another encrypted-store check cannot be performed in this process.
+        if _encrypted_diagnostics(root):
+            report["decision_consistency"] = {
+                "name": "decision_consistency", "status": "SKIP", "reason": "encrypted-store",
+                "detail": "Encrypted-store check skipped; queue metadata needs no key.",
+                "hint": "", "read_only": True}
+        else:
+            report["decision_consistency"] = decision_consistency_check(Engram(root=root, read_only=True))
     except Exception as exc:  # the message may hold a private path: name the type only
-        print(json.dumps({"error": type(exc).__name__, "read_only": True}))
+        report["error"] = type(exc).__name__
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0
+    return 1 if "error" in report else 0
 
 
 def _run_governance_visibility_check(eng) -> int:
@@ -1093,6 +1121,11 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
         return problems  # 后续检查都依赖 core
 
     from .storage import _engram_root
+    root = Path(_engram_root())
+    if not fix and _encrypted_diagnostics(root):
+        print("    [--] Encrypted-store functional checks skipped; metadata diagnosis needs no key.")
+        _print_connection_report(root, days)
+        return problems
     stored = stored_replay_check(Path(_engram_root()))
     if stored["status"] == "WARN":
         print(f"    [!!] Stored replay rows (normal use refused): {sum(stored['files'].values())}")

@@ -208,6 +208,7 @@ class _EventWriter:
                 return {"status": "duplicate"}
             value = dict(payload, tier="staging", hook_event_id=self.event["event_id"],
                          hook_operation_id=operation)
+            kwargs["_audit_metadata_only"] = True
             return getattr(self.engram, "add_" + kind)(value, **kwargs)
 
     def add_lesson(self, payload, **kwargs):

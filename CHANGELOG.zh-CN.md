@@ -6,6 +6,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 新增
+
+- 启用存储加密时保护 hook 队列正文，提供认证事件绑定、有界捕获及只读恢复诊断。旧版明文队列继续可读；下游 archive、digest 和其它生成输出仍在保护范围之外。详见[范围与恢复说明](docs/hook-queue-protection.md)。
+
+### 修复
+
+- 所有 hook 来源的知识审计写入均省略候选正文。Cursor 调试输出仅记录固定形状与计数字段，新的防抖键使用哈希。
+
 ## [4.26.0] - 2026-10-21
 
 ### 新增

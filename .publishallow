@@ -22,6 +22,8 @@
 
 # ── Package source + test suite ─────────────────────────────────────
 src/**
+src/piia_engram/hooks/_spool_protection.py
+docs/hook-queue-protection.md
 tests/**
 tests/test_maint426_review.py
 tests/test_isolated_events.py

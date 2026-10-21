@@ -845,7 +845,9 @@ pip install piia-engram[secure]
 export ENGRAM_SECRET="选一个强口令"
 ```
 
-加密后的字段以 `enc:v2:...` 格式存储在 JSON 文件中；旧版 `enc:v1:...` 值仍可解密。不设置 `ENGRAM_SECRET` 时，piia-engram 照常以明文工作（向后兼容）。
+加密后的字段以 `enc:v2:...` 格式存储在 JSON 文件中；旧版 `enc:v1:...` 值仍可解密。未加密存储继续以明文正常工作（向后兼容）。
+
+启用存储加密时，hook 队列正文及其队列发布中间文件也受到保护。存在盐文件或 required 队列策略时，缺少密钥不会静默回退明文；恢复须保留原始口令与 `.corpus_salt`。下游 archive、digest、quick-context、项目快照和部分知识元数据仍是明文，这不是整库或端到端加密。详见[队列保护范围与恢复](docs/hook-queue-protection.md)。
 
 ### 审计日志（默认开启）
 

@@ -4,8 +4,7 @@ Cursor's hook payloads are only partially documented, so these helpers are
 deliberately defensive: every extractor tries several plausible field names,
 every filesystem touch is fail-silent, and an opt-in debug probe
 (``ENGRAM_HOOK_DEBUG=1``) records the *shape* of incoming payloads (top-level
-keys plus short value previews) to ``<ENGRAM_DIR>/logs/`` so the field mapping
-can be confirmed against one real session and tightened afterwards.
+counts only) to ``<ENGRAM_DIR>/logs/``.
 
 Nothing in this module writes to the knowledge store; the only writes are the
 debug log and the save-debounce state file, both under ``<ENGRAM_DIR>/logs/``.
@@ -15,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,7 +22,6 @@ from typing import Any
 
 _TRUTHY = {"1", "true", "on", "yes"}
 _MAX_TRANSCRIPT_BYTES = 512_000
-_PREVIEW_CHARS = 200
 _STATE_RETENTION_HOURS = 24
 
 #: Candidate payload keys for the workspace / project folder.
@@ -387,71 +386,16 @@ def debug_enabled() -> bool:
     return os.environ.get("ENGRAM_HOOK_DEBUG", "").strip().lower() in _TRUTHY
 
 
-#: Substrings (uppercased) marking env-var *names* plausibly set by the hook
-#: caller. Probe v2 evidence: Cursor passes an empty stdin payload on
-#: sessionStart/stop, so the protocol data — if any — must travel via argv,
-#: the process cwd, or environment variables instead.
-_PROBE_ENV_MARKERS = (
-    "CURSOR",
-    "COMPOSER",
-    "ANYSPHERE",
-    "CHAT",
-    "CONVERSATION",
-    "WORKSPACE",
-    "HOOK",
-    "SESSION",
-)
-
-
-def _probe_env_keys() -> list[str]:
-    """Env-var *names* (never values) that look caller-injected.
-
-    Values stay out of the log by design: environment blocks routinely carry
-    secrets (API keys, tokens), and a shape probe only needs names.
-    """
-    keys: list[str] = []
-    for name in os.environ:
-        upper = name.upper()
-        if upper.startswith("ENGRAM_"):
-            continue
-        if any(marker in upper for marker in _PROBE_ENV_MARKERS):
-            keys.append(name)
-    return sorted(keys)
-
-
 def debug_log(event: str, hook_input: dict[str, Any]) -> None:
-    """Append one JSON line describing the payload *shape* (opt-in, local only).
-
-    Records stdin top-level keys plus short value previews, and — since the
-    first real session showed Cursor sends an empty stdin payload — also the
-    hook's argv, process cwd, and caller-ish env-var names, so one more real
-    session can reveal where (if anywhere) Cursor actually puts session data.
-    Never raises.
-    """
+    """Opt-in fixed shape/count diagnostics; never input keys, previews or paths."""
     if not debug_enabled():
         return
     try:
-        previews: dict[str, str] = {}
-        for key, value in hook_input.items():
-            if isinstance(value, str):
-                previews[key] = value[:_PREVIEW_CHARS]
-            else:
-                try:
-                    previews[key] = json.dumps(value, ensure_ascii=True)[:_PREVIEW_CHARS]
-                except (TypeError, ValueError):
-                    previews[key] = repr(value)[:_PREVIEW_CHARS]
-        try:
-            cwd = os.getcwd()
-        except OSError:
-            cwd = ""
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
-            "event": event,
-            "keys": sorted(hook_input.keys()),
-            "previews": previews,
-            "argv": [str(a)[:_PREVIEW_CHARS] for a in sys.argv[1:]],
-            "cwd": cwd,
-            "env_keys": _probe_env_keys(),
+            "event": event if event in {"stop", "sessionEnd", "sessionStart"} else "other",
+            "field_count": len(hook_input),
+            "text_fields": sum(isinstance(value, str) for value in hook_input.values()),
         }
         directory = state_dir()
         directory.mkdir(parents=True, exist_ok=True)
@@ -483,7 +427,7 @@ def recently_saved(debounce_key: str, window_minutes: int) -> bool:
     """
     if window_minutes <= 0:
         return False
-    last = _load_state().get(debounce_key)
+    last = _load_state().get(_debounce_hash(debounce_key))
     if not last:
         return False
     try:
@@ -493,17 +437,23 @@ def recently_saved(debounce_key: str, window_minutes: int) -> bool:
     return datetime.now() - last_ts < timedelta(minutes=window_minutes)
 
 
+def _debounce_hash(key: str) -> str:
+    import hashlib
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
 def mark_saved(debounce_key: str) -> None:
     """Record a save timestamp; prunes stale entries. Never raises."""
     try:
         state = _load_state()
         now = datetime.now()
-        state[debounce_key] = now.isoformat(timespec="seconds")
+        state[_debounce_hash(debounce_key)] = now.isoformat(timespec="seconds")
         cutoff = now - timedelta(hours=_STATE_RETENTION_HOURS)
         pruned: dict[str, str] = {}
         for key, value in state.items():
             try:
-                if datetime.fromisoformat(value) >= cutoff:
+                if (re.fullmatch(r"[0-9a-f]{64}", key) and
+                        datetime.fromisoformat(value) >= cutoff):
                     pruned[key] = value
             except (TypeError, ValueError):
                 continue

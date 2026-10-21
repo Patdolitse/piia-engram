@@ -209,8 +209,9 @@ class Engram(
         if self._crypto.enabled:
             salt_path = self.root / ".corpus_salt"
             salt = b""
-            if salt_path.is_file():
-                salt = salt_path.read_bytes()
+            if salt_path.is_file() and not salt_path.is_symlink():
+                with salt_path.open("rb") as handle:
+                    salt = handle.read(17)
                 if len(salt) != 16:
                     if self._has_existing_ciphertext():
                         raise RuntimeError(
@@ -238,6 +239,9 @@ class Engram(
                     self._atomic_write_bytes(salt_path, salt)
             if salt:
                 self._corpus_key = self._crypto.derive_corpus_key(salt)
+                if not read_only:
+                    from .hooks._spool_protection import ensure_required
+                    ensure_required(self.root)
             # A plaintext hybrid search index left over from a pre-encryption
             # run would keep the decrypted bodies readable on disk even though
             # all new writes are encrypted. Purge it on init so enabling
@@ -733,6 +737,9 @@ class Engram(
         minting a fresh salt (Codex a5 round-3 O1).
         """
         from .crypto import ENC_PREFIX_V2C
+        from .hooks._spool_protection import queue_needs_original_salt
+        if queue_needs_original_salt(self.root):
+            return True
         marker = ENC_PREFIX_V2C.encode("ascii")
         for pattern in (
             "knowledge/*.json",

@@ -51,13 +51,15 @@ work; it identifies a local root, not an account or shared-store permission.
 `engram doctor` and `engram doctor --json` report capture metadata:
 
 - pending count/bytes and oldest age;
+- protected/legacy pending counts and retained failure status count/bytes;
 - quarantine count and bytes (including reason sidecars), partial count/bytes across
   the spool, quarantine and receipts directories, and receipt count/bytes;
 - up to 20 recent result codes from existing event envelopes, quarantine reasons and
   receipts: `processed`, `duplicate`, `invalid-event`, `invalid-prepared-event`,
   `pending-cap`, `transcript-missing`, `transcript-missing-age-limit`,
   `transcript-missing-retry-limit`, `storage-unavailable`, `processing-failed`,
-  `receipt-failed`, `transport-unavailable`, or `unknown`;
+  `receipt-failed`, `transport-unavailable`, `unknown`, and the closed crypto
+  failure codes in the [queue protection guide](hook-queue-protection.md);
 - read-only cleanup candidates older than seven days, summarized as counts and bytes.
 
 These diagnostics never echo summaries, transcript locations, exception text, event
@@ -92,5 +94,9 @@ to delete; preserve recovery evidence and any active write before manual handlin
 Nothing is automatically deleted by diagnostics. Receipts are kept by default to
 preserve deduplication, and never become cleanup candidates in this policy.
 
-Spool body encryption and real host adoption trials are separate work. This change
-does not extend corpus encryption to spool bodies, or claim an end-to-end task benefit.
+When store encryption is enabled, new queue bodies and their queue publication
+intermediates are protected. Legacy plaintext and downstream archives, digests,
+quick-context, project snapshots and some knowledge metadata remain outside this
+boundary. See [hook queue body protection](hook-queue-protection.md) for scope,
+failure recovery, byte limits and version compatibility. Host adoption still
+requires separate confirmation.
