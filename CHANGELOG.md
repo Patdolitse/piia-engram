@@ -6,7 +6,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.26.0] - 2026-10-21
 
 ### Added
 
@@ -17,8 +17,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ### Fixed
 
 - Only complete 64-character hexadecimal digests in known digest metadata fields skip phone detection; free text and all other sensitive-data detectors retain their existing checks.
-- Ordinary stores containing replay-marked knowledge refuse normal use. Read-only doctor and local `engram repair replay-rows` previews report counts. Apply requires no recognized isolation evidence and at most five marked rows, comprising at most 10% of all lesson, decision and archive rows; otherwise restore damaged replay metadata from backup. Repair backs up and quarantines eligible rows, then regenerates Engram's own fixed search index, quick-context, identity-card and existing fixed status/dashboard files from clean knowledge under the lock; failed regeneration keeps normal use refused until repair is retried. It reports stale generated files (including hidden legacy snapshots) for the Owner to regenerate or delete. Caller-chosen outputs record path, SHA-256 and generation time after publication; these informational records never authorize repair or index purges to delete or overwrite a target. Changed or missing targets remain unverified and untouched.
+- Ordinary stores containing replay-marked knowledge refuse normal use. Read-only doctor and local `engram repair replay-rows` previews report counts. Apply requires no recognized isolation evidence and at most five marked rows, comprising at most 10% of all lesson, decision and archive rows; otherwise restore damaged replay metadata from backup. Repair backs up and quarantines eligible rows, then regenerates Engram's own fixed search index, quick-context, identity-card and existing fixed status/dashboard files from clean knowledge under the lock and the store's encryption policy; failed regeneration keeps normal use refused until repair is retried. It reports stale generated files (including hidden legacy snapshots) for the Owner to regenerate or delete. Caller-chosen outputs record path, SHA-256 and generation time after publication; these informational records never authorize repair or index purges to delete or overwrite a target. Changed or missing targets remain unverified and untouched.
 - Isolated version activation checks physical activity across the entire supersede chain against receipts in both modes. Interrupted lifecycle writes refuse with `supersede_state_mismatch` before another activation; reconcile retains its diagnostics. Restore a consistent root and ledger backup before retrying.
+
+### Release Evidence
+
+See the [release evidence declarations](release-evidence/README.md) for the checks required before publication.
 
 ## [4.25.0] - 2026-10-19
 
