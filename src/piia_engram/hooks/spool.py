@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ._log import log_failure
+from ._spool_protection import (CRYPTO_CODES, ProtectionError, QueueCodec, ensure_required,
+                                loads, required, seal_with_budget)
 from ..atomic_replace import replace_with_retry
 
 MAX_PENDING_EVENTS = 1000
@@ -24,7 +26,7 @@ BACKLOG_HINT_AGE_SECONDS = 86400
 RESULT_CODES = frozenset({"processed", "duplicate", "invalid-event", "invalid-prepared-event",
     "pending-cap", "transcript-missing", "transcript-missing-age-limit",
     "transcript-missing-retry-limit", "storage-unavailable", "processing-failed",
-    "receipt-failed", "transport-unavailable", "unknown"})
+    "receipt-failed", "transport-unavailable", "unknown"}) | CRYPTO_CODES
 KINDS = {"claude_stop": "claude_code", "claude_compact": "claude_code",
          "cursor_save": "cursor", "cursor_writeback": "cursor"}
 _DRAINING = ContextVar("hook_spool_draining", default=False)
@@ -44,7 +46,12 @@ def _publish(path: Path, data: bytes) -> None:
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".partial")
     try:
         with temporary.open("xb") as handle:
-            handle.write(data)
+            offset = 0
+            while offset < len(data):
+                written = handle.write(data[offset:])
+                if not written or written < 0:
+                    raise OSError(errno.ENOSPC, "publication made no progress")
+                offset += written
             handle.flush()
             os.fsync(handle.fileno())
         replace_with_retry(temporary, path)
@@ -94,8 +101,12 @@ def _quarantine(path: Path, reason: str) -> None:
     destination = directory / path.name
     if destination.exists():
         destination = directory / (uuid.uuid4().hex + "-" + path.name)
-    _publish(destination.with_suffix(".reason.json"), _json_bytes({"reason": reason}))
+    _publish(destination.with_suffix(".reason.json"), _json_bytes({
+        "reason": reason if reason in RESULT_CODES else "unknown"}))
     replace_with_retry(path, destination)
+    status = path.with_name(path.name + ".status.json")
+    if status.is_file() and not status.is_symlink():
+        replace_with_retry(status, destination.with_name(destination.name + ".status.json"))
 
 
 def _trim(directory: Path) -> int:
@@ -117,17 +128,20 @@ def _lock(directory: Path):
                            fail_when_locked=True)
 
 
-def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None) -> str:
+def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None,
+            deadline: float | None = None) -> str:
     """Fail-soft producer. Returns the published event ID, or an empty string."""
     try:
-        if KINDS.get(kind) != client:
+        root = store_root(root).resolve()
+        deadline = deadline if deadline is not None else time.monotonic() + 1.0
+        if not isinstance(kind, str) or kind not in KINDS or KINDS[kind] != client:
             raise ValueError("unsupported hook kind")
         event_id = uuid.uuid4().hex
         event = {"schema": 1, "event_id": event_id, "kind": kind, "client": client,
                  "created_at": datetime.now(timezone.utc).isoformat(), "payload": payload}
-        data = _json_bytes(event)
-        if len(data) > MAX_EVENT_BYTES:
-            raise ValueError("hook event exceeds size limit")
+        data, protected = seal_with_budget(root, event, deadline)
+        if protected:
+            ensure_required(root)
         directory = spool_dir(root)
         directory.mkdir(parents=True, exist_ok=True)
         _publish(directory / f"{time.time_ns():020d}-{event_id}.jsonl", data)
@@ -140,6 +154,9 @@ def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None) 
             if not isinstance(exc, portalocker.LockException):
                 log_failure("hook_spool", "cap maintenance failed (" + type(exc).__name__ + ")")
         return event_id
+    except ProtectionError as exc:
+        log_failure("hook_spool", exc.code, root=root)
+        return ""
     except Exception as exc:
         log_failure("hook_spool", "event publish failed (" + type(exc).__name__ + ")", root=root)
         return ""
@@ -153,6 +170,8 @@ def backlog(root: Path | None = None) -> dict:
     result = {"pending": 0, "pending_bytes": 0, "oldest_age_seconds": None,
               "quarantined": 0, "partial": 0, "cap_events": MAX_PENDING_EVENTS,
               "quarantined_bytes": 0, "partial_bytes": 0, "receipts": 0, "receipt_bytes": 0,
+              "protected_pending": 0, "legacy_pending": 0, "unknown_pending": 0,
+              "status_records": 0, "status_bytes": 0,
               "cap_bytes": MAX_PENDING_BYTES, "cap_scope": "pending_only", "read_only": True,
               "store": store_identity(store_root(root)), "host_consumption": "unknown",
               "states": {"queued": "Queued locally; durable knowledge not confirmed.",
@@ -167,6 +186,14 @@ def backlog(root: Path | None = None) -> dict:
         files = _files(directory)
         result["pending"] = len(files)
         result["pending_bytes"] = sum(p.stat().st_size for p in files)
+        for path in files:
+            with path.open("rb") as handle:
+                header = handle.read(2048).decode("utf-8", errors="replace")
+            header = header.split('"payload"', 1)[0].split('"body"', 1)[0]
+            match = re.search(r'"schema"\s*:\s*([12])\b', header)
+            category = ("protected_pending" if match and match.group(1) == "2" else
+                        "legacy_pending" if match else "unknown_pending")
+            result[category] += 1
         if files:
             result["oldest_age_seconds"] = max(0, round(now - min(
                 _created_seconds(p) for p in files), 3))
@@ -181,6 +208,8 @@ def backlog(root: Path | None = None) -> dict:
         quarantined = regular(quarantine, "*.jsonl")
         quarantine_files = regular(quarantine, "*")
         receipt_files = regular(receipts, "*.json")
+        status_files = regular(directory, "*.status.json") + regular(quarantine, "*.status.json")
+        result.update(status_records=len(status_files), status_bytes=sum(p.stat().st_size for p in status_files))
         partials = [p for folder in (directory, quarantine, receipts) for p in regular(folder, "*.partial")]
         result.update(quarantined=len(quarantined),
                       quarantined_bytes=sum(p.stat().st_size for p in quarantine_files if not p.name.endswith(".partial")),
@@ -195,6 +224,7 @@ def backlog(root: Path | None = None) -> dict:
         candidates = [(p.stat().st_mtime, p, "processing_result") for p in files]
         candidates += [(p.stat().st_mtime, p, "reason") for p in regular(quarantine, "*.reason.json")]
         candidates += [(p.stat().st_mtime, p, "receipt") for p in receipt_files]
+        candidates += [(p.stat().st_mtime, p, "code") for p in status_files]
         for stamp, path, field in sorted(candidates, key=lambda item: item[0], reverse=True)[:20]:
             try:
                 with path.open("rb") as handle:
@@ -210,7 +240,7 @@ def backlog(root: Path | None = None) -> dict:
                     code = metadata.get("reason", "processed") if isinstance(metadata, dict) else "unknown"
                 else:
                     metadata = json.loads(header)
-                    code = metadata.get("reason", "unknown") if isinstance(metadata, dict) else "unknown"
+                    code = metadata.get(field, "unknown") if isinstance(metadata, dict) else "unknown"
                 code = code if isinstance(code, str) and code in RESULT_CODES else "unknown"
             except (OSError, ValueError):
                 code = "unknown"
@@ -224,15 +254,10 @@ def backlog(root: Path | None = None) -> dict:
 
 
 def _record_result(path: Path, event: dict | None, code: str) -> None:
-    """Reuse the pending envelope for a bounded, body-free processing outcome."""
-    if event is not None:
-        updated = {"processing_result": code if code in RESULT_CODES else "unknown", **event}
-        updated["processing_result"] = code if code in RESULT_CODES else "unknown"
-        event.clear()
-        event.update(updated)
-        data = _json_bytes(updated)
-        if len(data) <= MAX_EVENT_BYTES:
-            _publish(path, data)
+    """Preserve source bytes; outcomes never serialize a working event."""
+    _publish(path.with_name(path.name + ".status.json"), _json_bytes({
+        "schema": 1, "code": code if code in RESULT_CODES else "unknown",
+        "recorded_at": datetime.now(timezone.utc).isoformat()}))
 
 
 class PoisonEvent(ValueError):
@@ -256,9 +281,9 @@ def _shared_storage_failure(exc: Exception) -> bool:
     return False
 
 
-def _retry_missing_transcript(path: Path, event: dict) -> bool:
+def _retry_missing_transcript(path: Path, event: dict, codec: QueueCodec) -> bool:
     event["transcript_missing_attempts"] = event.get("transcript_missing_attempts", 0) + 1
-    _publish(path, _json_bytes(event))
+    _publish_event(path, event, codec)
     age = time.time() - _parse_created_at(event["created_at"]).timestamp()
     reason = ""
     if age >= MAX_MISSING_TRANSCRIPT_AGE_SECONDS:
@@ -270,13 +295,26 @@ def _retry_missing_transcript(path: Path, event: dict) -> bool:
     return bool(reason)
 
 
-def _read_event(path: Path) -> dict:
+def _publish_event(path: Path, event: dict, codec: QueueCodec) -> None:
+    data = codec.encode(event)
+    if event.get("schema") == 2 or required(codec.root):
+        ensure_required(codec.root)
+    _publish(path, data)
+
+
+def _read_event(path: Path, codec: QueueCodec | None = None) -> dict:
     try:
         if path.stat().st_size > MAX_EVENT_BYTES:
             raise ValueError("oversize")
-        event = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(event, dict) or type(event.get("schema")) is not int or event.get("schema") != 1:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_EVENT_BYTES + 1)
+        if len(raw) > MAX_EVENT_BYTES:
+            raise ValueError("oversize")
+        event = loads(raw.decode("utf-8"))
+        if not isinstance(event, dict) or type(event.get("schema")) is not int or event.get("schema") not in {1, 2}:
             raise ValueError("schema")
+        codec = codec or QueueCodec(path.parent.parent.parent)
+        event = codec.decode(event)
         if KINDS.get(event.get("kind")) != event.get("client") or event.get("kind") not in KINDS:
             raise ValueError("kind")
         event_id = event["event_id"]
@@ -288,8 +326,21 @@ def _read_event(path: Path) -> dict:
         from ._processor import validate_payload
         validate_payload(event)
         return event
+    except ProtectionError:
+        raise
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
         raise PoisonEvent(type(exc).__name__) from exc
+
+
+def _validate_receipt(receipt: Path, event_id: str) -> None:
+    with receipt.open("rb") as handle:
+        raw = handle.read(2049)
+    saved = loads(raw.decode("utf-8"))
+    if (len(raw) > 2048 or not isinstance(saved, dict) or
+            set(saved) != {"event_id", "reason", "processed_at"} or
+            saved["event_id"] != event_id or saved["reason"] != "processed" or
+            _parse_created_at(saved["processed_at"]).tzinfo is None):
+        raise ValueError("invalid receipt")
 
 
 def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> dict:
@@ -300,6 +351,7 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
         return report
     directory = spool_dir(root)
     token = _DRAINING.set(True)
+    codec = QueueCodec(root)
     try:
         with _lock(directory):
             report["quarantined_now"] += _trim(directory)
@@ -307,13 +359,11 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                 event = None
                 phase = "read"
                 try:
-                    event = _read_event(path)
+                    event = _read_event(path, codec)
                     receipt = directory / "receipts" / (event["event_id"] + ".json")
                     if receipt.exists():
                         # Validate receipts; corruption must fail closed, never discard work.
-                        saved = json.loads(receipt.read_text(encoding="utf-8"))
-                        if saved.get("event_id") != event["event_id"]:
-                            raise ValueError("invalid receipt")
+                        _validate_receipt(receipt, event["event_id"])
                         report["duplicates"] += 1
                     else:
                         from ._processor import prepare, process, validate_payload, freeze_checkpoint_provenance
@@ -328,15 +378,11 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                         phase = "provenance"
                         changed = freeze_checkpoint_provenance(event, root, engram) or changed
                         phase = "publish"
-                        if changed:
+                        if changed or (event["schema"] == 1 and required(root)):
                             # Frozen input replaces the inline source, avoiding a second
                             # copy of a maximum-size Unicode summary in the envelope.
                             event["payload"].pop("summary", None)
-                            data = _json_bytes(event)
-                            # Prepared data has the same capture limits; allow metadata overhead.
-                            if len(data) > MAX_EVENT_BYTES:
-                                raise PoisonEvent("prepared event oversize")
-                            _publish(path, data)
+                            _publish_event(path, event, codec)
                         phase = "process"
                         process(event, root, engram)
                         phase = "receipt"
@@ -346,6 +392,15 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                                                       "processed_at": datetime.now(timezone.utc).isoformat()}))
                         report["processed"] += 1
                     path.unlink()  # only after durable receipt
+                except ProtectionError as exc:
+                    report["failed"] += 1
+                    try:
+                        _record_result(path, None, exc.code)
+                    except Exception:
+                        pass
+                    log_failure("hook_spool", exc.code, root=root)
+                    if exc.code == "protection-unavailable" and _shared_storage_failure(exc):
+                        break
                 except PoisonEvent:
                     _quarantine(path, "invalid-event" if phase == "read" else "invalid-prepared-event")
                     report["quarantined_now"] += 1
@@ -369,11 +424,18 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> di
                         break
                     if phase == "prepare" and isinstance(exc, FileNotFoundError) and event is not None:
                         try:
-                            if _retry_missing_transcript(path, event):
+                            if _retry_missing_transcript(path, event, codec):
                                 report["quarantined_now"] += 1
                         except Exception as retry_exc:
-                            log_failure("hook_spool", "retry tracking failed (" +
-                                        type(retry_exc).__name__ + ")", root=root)
+                            if isinstance(retry_exc, ProtectionError):
+                                try:
+                                    _record_result(path, None, retry_exc.code)
+                                except Exception:
+                                    pass
+                                log_failure("hook_spool", retry_exc.code, root=root)
+                            else:
+                                log_failure("hook_spool", "retry tracking failed (" +
+                                            type(retry_exc).__name__ + ")", root=root)
                             if _shared_storage_failure(retry_exc):
                                 break
                     # Input and event-specific processing failures keep their file,

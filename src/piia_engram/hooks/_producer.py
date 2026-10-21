@@ -20,9 +20,9 @@ def _capture_failure(kind: str, exc: Exception) -> None:
     log_failure(kind, "capture failed (" + type(exc).__name__ + ")")
 
 
-def _read_input() -> dict:
+def _read_input(deadline: float | None = None) -> dict:
     """Bound bytes and elapsed time even if the writer never closes its pipe."""
-    deadline = time.monotonic() + INPUT_BUDGET_SECONDS
+    deadline = deadline if deadline is not None else time.monotonic() + INPUT_BUDGET_SECONDS
     finished = threading.Event()
     result = []
 
@@ -69,13 +69,14 @@ def _read_input() -> dict:
 
 def claude_event(kind: str, threshold: int = 10) -> int:
     try:
-        hook_input = _read_input()
+        deadline = time.monotonic() + INPUT_BUDGET_SECONDS
+        hook_input = _read_input(deadline)
         transcript = str(hook_input.get("transcript_path") or "")
         if not transcript:
             return 0
         enqueue(kind, "claude_code", {"transcript_path": transcript,
                                      "project_folder": str(hook_input.get("cwd") or ""),
-                                     "threshold": threshold})
+                                     "threshold": threshold}, deadline=deadline)
     except Exception as exc:
         _capture_failure(kind, exc)
     return 0
@@ -83,7 +84,8 @@ def claude_event(kind: str, threshold: int = 10) -> int:
 
 def cursor_event(kind: str, event: str = "stop", *, debounce_minutes: int = 0) -> int:
     try:
-        hook_input = _read_input()
+        deadline = time.monotonic() + INPUT_BUDGET_SECONDS
+        hook_input = _read_input(deadline)
         project = payload.extract_project_folder(hook_input)
         session = payload.extract_session_id(hook_input)
         if (kind == "cursor_save" and event.lower() not in {"sessionend", "session_end"}
@@ -105,7 +107,7 @@ def cursor_event(kind: str, event: str = "stop", *, debounce_minutes: int = 0) -
         event_id = enqueue(kind, "cursor", {"summary": text, "transcript_path": transcript,
                                  "project_folder": project, "session_id": session,
                                  "event": event, "roots": roots,
-                                 "hook_cwd": os.getcwd() if kind == "cursor_save" else ""})
+                                 "hook_cwd": os.getcwd() if kind == "cursor_save" else ""}, deadline=deadline)
         if event_id and kind == "cursor_save":
             payload.mark_saved(session or "_default")
     except Exception as exc:

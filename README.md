@@ -911,7 +911,9 @@ pip install piia-engram[secure]
 export ENGRAM_SECRET="your-strong-passphrase"
 ```
 
-Encrypted fields are stored as `enc:v2:...` in JSON files; legacy `enc:v1:...` values still decrypt. Without `ENGRAM_SECRET`, piia-engram works normally with plaintext (backward compatible).
+Encrypted fields are stored as `enc:v2:...` in JSON files; legacy `enc:v1:...` values still decrypt. Unencrypted stores work normally with plaintext (backward compatible).
+
+When store encryption is enabled, hook queue bodies and their queue publication intermediates are also protected. A salt or required queue policy prevents silent fallback to plaintext if the secret is missing. Preserve the original secret and `.corpus_salt` for recovery. Downstream archives, digests, quick-context, project snapshots and some knowledge metadata remain plaintext; this is not whole-store or end-to-end encryption. See [hook queue scope and recovery](docs/hook-queue-protection.md).
 
 ### Audit logging (on by default)
 

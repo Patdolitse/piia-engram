@@ -443,7 +443,9 @@ def test_json_reports_an_error_type_only(world, monkeypatch, capsys):
     code = doctor.run_doctor_json(days=14)
     out = capsys.readouterr().out
     assert code == 1
-    assert json.loads(out) == {"error": "PermissionError", "read_only": True}
+    result = json.loads(out)
+    assert result["error"] == "PermissionError" and result["read_only"] is True
+    assert result["hook_spool"]["read_only"] is True
     assert "private-dir-name" not in out
 
 
