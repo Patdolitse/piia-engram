@@ -105,7 +105,7 @@ class _WindowsPolicyLocker:
         import winerror
         try:
             # FAIL_IMMEDIATELY, and EXCLUSIVE_LOCK only for the exclusive mode.
-            win32file.LockFileEx(self.handle, 1 if shared else 3, 0, 1, self.offset)
+            win32file.LockFileEx(self.handle, 1 if shared else 3, 1, 0, self.offset)
         except pywintypes.error as exc:
             if exc.winerror == winerror.ERROR_LOCK_VIOLATION:
                 raise portalocker.AlreadyLocked() from None
@@ -113,7 +113,7 @@ class _WindowsPolicyLocker:
 
     def unlock(self):
         import win32file
-        win32file.UnlockFileEx(self.handle, 0, 1, self.offset)
+        win32file.UnlockFileEx(self.handle, 1, 0, self.offset)
 
 
 @contextmanager
