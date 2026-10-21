@@ -1,0 +1,112 @@
+{
+  "schema": "synthetic_continuity_cases.v1",
+  "required_fields": [
+    "goal",
+    "constraint",
+    "blocker",
+    "last_failure_reason",
+    "next_action",
+    "source"
+  ],
+  "cases": [
+    {
+      "id": "cold_start",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "restart_compaction",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "git_worktrees",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "same_name_isolation",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "duplicate_events",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "store_locked",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "store_unwritable",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "source_attribution",
+      "required": {
+        "goal": "Finish the sample parser.",
+        "constraint": "Preserve field ordering.",
+        "blocker": "Waiting for sample validation.",
+        "last_failure_reason": "The prior attempt used reversed fields.",
+        "next_action": "Check ordering then validate the sample.",
+        "source": "native sender provenance"
+      }
+    },
+    {
+      "id": "chinese_recall",
+      "required": {
+        "goal": "完成合成样例解析器。",
+        "constraint": "保留中文字段名称。",
+        "blocker": "等待样例校验通过。",
+        "last_failure_reason": "上次失败是字段顺序错误。",
+        "next_action": "先检查字段顺序再运行样例。",
+        "source": "native sender provenance"
+      }
+    }
+  ]
+}

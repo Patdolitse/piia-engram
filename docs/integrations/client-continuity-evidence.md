@@ -15,6 +15,11 @@ context; Engram is not being repositioned as a Hermes or OpenClaw plugin.
 | Hermes CLI via MCP | L4 | A controlled marker stored in a copied Engram store was recovered by Hermes through the Engram MCP bridge. The baseline without Engram did not recover it. Zero-pollution checks passed. | CLI surface only. This does not verify Hermes desktop behavior or broad benchmark superiority. |
 | OpenClaw-compatible static file bridge | L3 | Engram exported a verified marker into OpenClaw-compatible `MEMORY.md`; OpenClaw `oc-path` parsed it. An empty baseline had no marker. Zero-pollution checks passed. | Static snapshot only. This does not verify OpenClaw live agent/model behavior. |
 | OpenClaw live agent | Not verified | A live-agent probe was attempted in an isolated profile, but provider authentication was not configured. | Do not claim live OpenClaw agent continuity yet. |
+| Synthetic Client X / Client Y matrix | Synthetic entry-point evidence only | Offline task fields are checked through real MCP stdio and supported hook payloads in both directions, with default/strict and manual/automatic results kept separate. | No real host or model. Queue capture, explicit-drain recovery and automatic continuity are distinct; unmet field contracts remain visible. No real-client L-level is added. |
+
+The [synthetic continuity matrix](synthetic-continuity-matrix.md) provides the
+reusable fixture contracts, runnable command and interpretation. It does not
+upgrade any existing client verification claim or verify an untested client.
 
 ## Public Claim Language
 
@@ -51,6 +56,7 @@ runs should stay in isolated local folders until scrubbed.
 | Hermes CLI | L4 summary above | CLI bridge only. |
 | OpenClaw static bridge | L3 summary above | Static file bridge only. |
 | Raw logs / copied stores | Private | Never publish raw paths, markers, prompts, or local store contents. |
+| Synthetic dual-client matrix | Synthetic harness | Real Engram entry points with synthetic data only; no real host/model verification. |
 
 Before citing a client as "verified", use the L-level claim boundaries in
 [`docs/runbooks/agent-client-validation.md`](../runbooks/agent-client-validation.md).
@@ -64,6 +70,7 @@ Engram 的方向是继续做自己的本地优先、用户可治理的记忆核�
 | Hermes CLI via MCP | L4 | Hermes 能通过 Engram MCP bridge 找回复制数据里的受控 marker；断开 Engram 的 baseline 找不到；零污染校验通过。 | 只验证 CLI，不代表 Hermes desktop，也不代表全面 benchmark 胜出。 |
 | OpenClaw 静态文件桥 | L3 | Engram 导出的 `MEMORY.md` 能被 OpenClaw `oc-path` 解析到；空 baseline 没有 marker；零污染校验通过。 | 只验证静态快照桥，不代表 OpenClaw live agent / live model 行为。 |
 | OpenClaw live agent | 未验证 | 已尝试 isolated profile 探针，但 provider auth 未配置。 | 暂时不能声称 OpenClaw live agent 连续性已通过。 |
+| 模拟 Client X / Client Y 矩阵 | 仅合成入口证据 | 真实 MCP stdio 与受支持的 hook payload，双方向分别检查 default/strict、手动/自动模式。 | 无真实宿主或模型；排队、显式 drain 后恢复和自动接续分开计分，不新增真实客户端验证级别。 |
 
 ## 公开材料使用方式
 
