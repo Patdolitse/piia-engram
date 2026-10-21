@@ -99,7 +99,7 @@ idempotency. Compaction uses the supported PreCompact flush threshold and
 PostCompact archival entry for Client X and sessionEnd for Client Y.
 
 The JSON records every step's elapsed milliseconds, total elapsed time, queue
-outcomes, Owner review item count, zero model calls and zero model cost. Review
+outcomes, review queue item count, zero model calls and zero model cost. Review
 counts include the deliberately staged control plus any pending synthetic
 write. Latency is a local observation, including process startup, not a stable
 performance promise. UUIDs, timestamps and timings vary; field checks and case
