@@ -72,7 +72,8 @@ leading boundary record, and rejects candidate records over 64 KiB. A trailing
 incomplete record causes no capture. The validated `task_checkpoint.v1` object is
 at most 8 KiB including metadata. Normalization and composed secret/PII checks
 run before persistence, across complete values and field boundaries, and again
-during preparation. Sensitive or ambiguous candidates are dropped. Filters cannot
+during preparation. Sensitive fields become null with a `privacy` omission code;
+ambiguous cross-field candidates are dropped whole. Filters cannot
 recognize every kind of private prose: only opt in for content you authorize.
 
 The object travels in `payload.task_checkpoint` under `hooks/spool/`. Deferred
