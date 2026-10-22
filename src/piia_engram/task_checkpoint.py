@@ -55,7 +55,8 @@ def validate(value: object) -> dict:
     if not isinstance(value["captured_at"], str):
         raise ValueError("task_time")
     stamp = datetime.fromisoformat(value["captured_at"])
-    if stamp.tzinfo is None or stamp.utcoffset().total_seconds() != 0:
+    if (stamp.tzinfo is None or stamp.utcoffset().total_seconds() != 0
+            or stamp.isoformat() != value["captured_at"]):
         raise ValueError("task_time")
     omissions = value["omissions"]
     if (not isinstance(omissions, dict) or set(omissions) - set(FIELDS)
@@ -79,6 +80,8 @@ def validate(value: object) -> dict:
     raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(raw) > MAX_OBJECT_BYTES:
         raise ValueError("task_size")
+    if _private([raw.decode("utf-8")]):
+        raise ValueError("task_privacy")
     return json.loads(raw.decode("utf-8"))
 
 

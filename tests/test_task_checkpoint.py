@@ -380,6 +380,8 @@ def test_object_metadata_nulls_and_sizes_are_validated():
     task = api().parse_text(block())[0]
     for update in ({"unexpected": "value"}, {"goal": "长" * 241}, {"goal": None},
                    {"captured_at": "not-time"}, {"captured_at": "2026-01-01"},
+                   {"captured_at": "2026-01-01T00:00:00." + "138" + "00138000+00:00"},
+                   {"captured_at": "2026-01-01X00:00:00+00:00"},
                    {"capture_event": "PostCompact"}, {"omissions": {"goal": "private prose"}}):
         with pytest.raises((ValueError, TypeError)):
             api().validate(dict(task, **update))
