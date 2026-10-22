@@ -38,6 +38,8 @@ os.environ["ENGRAM_NO_UPDATE_CHECK"] = "1"
 # mcp_server reads some of them at import time. Tests that need one set it
 # themselves with monkeypatch.
 _MACHINE_BEHAVIOUR_ENV = (
+    "ENGRAM_HOOK_TASK_CHECKPOINT_V1",
+    "ENGRAM_HOOK_TRANSCRIPT_ROOTS",
     "ENGRAM_APPROVAL",
     "ENGRAM_RECONCILE",
     "ENGRAM_GOVERNANCE",

@@ -1,4 +1,4 @@
-"""Minimal lifecycle payloads: no transcript reads or store initialization."""
+"""Minimal lifecycle payloads, with explicitly opted-in bounded task snapshots."""
 from __future__ import annotations
 
 import os
@@ -67,6 +67,32 @@ def _read_input(deadline: float | None = None) -> dict:
     return value
 
 
+def _task_snapshot(transcript: str, deadline: float, capture_event: str = "Stop") -> tuple[dict | None, str]:
+    """Bound import + read + parse; an abandoned worker has no publisher."""
+    start = time.monotonic()
+    allowance = min(0.200, deadline - start - 0.525)
+    if allowance <= 0:
+        return None, "capture-timeout"
+    end = start + allowance
+    roots = os.environ.get("ENGRAM_HOOK_TRANSCRIPT_ROOTS", "")
+    if len(roots) > 65536:
+        return None, "path-refused"
+    result = []
+    finished = threading.Event()
+    def read():
+        try:
+            from ..task_checkpoint import _read_latest
+            result.append(_read_latest(transcript, roots, capture_event))
+        except Exception:
+            result.append((None, "capture-failed"))
+        finally:
+            finished.set()
+    threading.Thread(target=read, name="engram-task-capture", daemon=True).start()
+    if not finished.wait(max(0, end - time.monotonic())) or time.monotonic() > end:
+        return None, "capture-timeout"
+    return result[0]
+
+
 def claude_event(kind: str, threshold: int = 10) -> int:
     try:
         deadline = time.monotonic() + INPUT_BUDGET_SECONDS
@@ -74,9 +100,15 @@ def claude_event(kind: str, threshold: int = 10) -> int:
         transcript = str(hook_input.get("transcript_path") or "")
         if not transcript:
             return 0
-        enqueue(kind, "claude_code", {"transcript_path": transcript,
-                                     "project_folder": str(hook_input.get("cwd") or ""),
-                                     "threshold": threshold}, deadline=deadline)
+        event_payload = {"transcript_path": transcript,
+                         "project_folder": str(hook_input.get("cwd") or ""),
+                         "threshold": threshold}
+        if kind == "claude_stop" and os.environ.get("ENGRAM_HOOK_TASK_CHECKPOINT_V1") == "1":
+            task, outcome = _task_snapshot(transcript, deadline, hook_input.get("hook_event_name", "Stop"))
+            event_payload["task_checkpoint_capture"] = outcome
+            if task is not None:
+                event_payload["task_checkpoint"] = task
+        enqueue(kind, "claude_code", event_payload, deadline=deadline)
     except Exception as exc:
         _capture_failure(kind, exc)
     return 0

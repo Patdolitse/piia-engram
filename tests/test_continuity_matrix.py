@@ -137,7 +137,7 @@ def test_cursor_payload_recovers_after_explicit_processor_and_start_hook(cold_ro
 
 
 @pytest.mark.parametrize("approval", ["default", "strict"])
-@pytest.mark.xfail(strict=True, reason="Stop captures activity metadata, not the six-field task body; acceptance gap, no product fix in this change")
+@pytest.mark.xfail(strict=True, reason="Opted-out Stop retains the activity-only gap; explicit default-off negative witness")
 def test_claude_stop_preserves_required_task_fields(cold_rows, approval):
     row = next(row for row in cold_rows if row["integration"] == "automatic_hooks"
         and row["direction"].startswith("Client X") and row["approval"] == approval)
@@ -153,7 +153,6 @@ def enabled_rows(tmp_path_factory):
 
 
 @pytest.mark.parametrize("approval", ["default", "strict"])
-@pytest.mark.xfail(strict=True, reason="Enabled-cohort witness: remove only after measured XPASS")
 def test_enabled_claude_stop_preserves_required_task_fields(enabled_rows, approval):
     row = next(row for row in enabled_rows if row["integration"] == "automatic_hooks"
         and row["direction"].startswith("Client X") and row["approval"] == approval)

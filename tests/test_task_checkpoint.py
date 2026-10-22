@@ -12,6 +12,7 @@ import time
 import pytest
 
 from piia_engram.hooks import _producer, _processor, spool
+from piia_engram import mcp_server
 
 FIELDS = ("goal", "constraint", "blocker", "last_failure_reason", "next_action")
 VALUES = ("Finish sample task", "Keep sample invariant", "Await sample input",
@@ -222,6 +223,8 @@ def test_extraction_deadline_and_abandoned_reader_have_no_publication(tmp_path, 
     "ｔｏｋｅｎ：" + "sample" * 4, "to\u200bken: " + "sample" * 4,
     "Password: " + "sample" * 5, "Cookie: " + "sample" * 5,
     "AbCd" * 6 + "1234", "1234567890abcdef" * 3,
+    "138" + "00138000", "https://example.invalid?token=" + "sample" * 4,
+    "postgresql://sample:sample@example.invalid/db", "to\u2062ken: " + "sample" * 4,
 ])
 def test_privacy_before_size_and_across_every_persisted_surface(tmp_path, monkeypatch, secret):
     opt_in(monkeypatch, tmp_path)
@@ -240,6 +243,12 @@ def test_privacy_before_size_and_across_every_persisted_surface(tmp_path, monkey
 
 def test_cross_field_privacy_and_preparation_recheck(tmp_path, monkeypatch):
     assert api().parse_text(block(("token:", "samplecredentialvalue", *VALUES[2:])))[0] is None
+    assert api().parse_text(block(("person@", "example.invalid", *VALUES[2:])))[0] is None
+    assert api().parse_text(block(("to", "ken: samplecredentialvalue", *VALUES[2:])))[0] is None
+    reordered = "\n".join(("Next: token:", "Goal: samplecredentialvalue",
+                           "Constraint: Keep sample invariant", "Risk: Await sample input",
+                           "Last failure reason: Sample assertion failed"))
+    assert api().parse_text(reordered)[0] is None
     assert api().parse_text(block(("x" * 241 + " token: samplecredentialvalue", *VALUES[1:])))[0] is None
     opt_in(monkeypatch, tmp_path)
     queued = produce(monkeypatch, transcript(tmp_path), tmp_path)
@@ -258,3 +267,307 @@ def test_prepared_context_cannot_bypass_task_guard(tmp_path, monkeypatch):
     event["prepared"]["context"] += "\ntoken: samplecredentialvalue"
     with pytest.raises(ValueError):
         _processor.validate_payload(event)
+
+
+def test_incomplete_final_value_and_multiple_aliases_are_ambiguous():
+    for text in (block() + "\nexcept when the sample condition changes",
+                 "Example:\n" + block(), block() + "\n目标: Another task",
+                 block().replace("Constraint:", "Goal:"), block().replace("Goal:", "Go\u200bal:"),
+                 block().replace("Goal:", "Ｇｏａｌ:")):
+        assert api().parse_text(text)[0] is None
+
+
+@pytest.mark.parametrize("last", [
+    record(block(), message={"role": None, "content": []}),
+    {"type": None, "message": {"role": "assistant", "content": [{"type": "text", "text": block()}]}},
+    {"role": "assistant", "content": [{"type": "text", "text": block()}]},
+])
+def test_null_or_unsupported_roles_cannot_rescue_an_old_task(tmp_path, monkeypatch, last):
+    opt_in(monkeypatch, tmp_path)
+    path = transcript(tmp_path, [record(block()), last])
+    assert api().capture(str(path), time.monotonic() + 1)[0] is None
+
+
+def test_duplicate_json_keys_are_ambiguous(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    path = transcript(tmp_path)
+    raw = json.dumps(record(block(), "top"))
+    path.write_text(raw[:-1] + ', "type": "assistant"}\n', encoding="utf-8")
+    assert api().capture(str(path), time.monotonic() + 1)[0] is None
+
+
+def test_text_blocks_only_and_ignored_roles_do_not_reach_archive(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    canary = "token: " + "ignoredsample" * 3
+    entries = [{"type": "user", "content": [{"type": "text", "text": canary}]},
+               record(block())]
+    entries[-1]["message"]["content"] += [
+        {"type": "thinking", "thinking": canary},
+        {"type": "tool_use", "input": {"text": canary}},
+        {"type": "tool_result", "content": canary}]
+    path = transcript(tmp_path, entries)
+    produce(monkeypatch, path, tmp_path)
+    assert spool.drain()["processed"] == 1
+    for candidate in spool.store_root().rglob("*"):
+        if candidate.is_file() and not candidate.name.endswith(".lock"):
+            assert canary.encode("utf-8") not in candidate.read_bytes()
+    assert list((spool.store_root() / "contexts").rglob("*.digest.json"))
+
+
+def test_missing_source_legacy_event_keeps_retry_contract(tmp_path):
+    assert spool.enqueue("claude_stop", "claude_code", {"transcript_path": str(tmp_path / "missing.jsonl")})
+    result = spool.drain()
+    assert result["pending"] == result["failed"] == 1
+    assert result["processed"] == 0
+
+
+def test_replacement_truncation_and_opened_path_guard(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    path = transcript(tmp_path)
+    original = api()._opened_path
+    def truncate(fd, expected):
+        original(fd, expected)
+        path.write_bytes(b"\n")
+    monkeypatch.setattr(api(), "_opened_path", truncate)
+    assert api().capture(str(path), time.monotonic() + 1)[1] == "source-changed"
+    transcript(tmp_path)
+    def replace(fd, expected):
+        original(fd, expected)
+        replacement = tmp_path / "replacement.jsonl"
+        replacement.write_text(json.dumps(record(block())) + "\n", encoding="utf-8")
+        os.replace(replacement, path)
+    monkeypatch.setattr(api(), "_opened_path", replace)
+    assert api().capture(str(path), time.monotonic() + 1)[0] is None
+
+
+def test_symlink_or_junction_escape_is_refused(tmp_path, monkeypatch):
+    import subprocess
+    allowed, outside = tmp_path / "allowed", tmp_path / "outside"
+    allowed.mkdir()
+    outside.mkdir()
+    transcript(outside)
+    link = allowed / "link"
+    if os.name == "nt":
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+                                capture_output=True, text=True, encoding="utf-8")
+        assert result.returncode == 0
+    else:
+        link.symlink_to(outside, target_is_directory=True)
+    opt_in(monkeypatch, allowed)
+    assert api().capture(str(link / "transcript.jsonl"), time.monotonic() + 1)[0] is None
+
+
+def test_exact_tail_and_record_byte_boundaries(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    path = transcript(tmp_path)
+    latest = path.read_bytes()
+    # An incomplete leading record is discarded; a complete latest record survives.
+    for padding in (api().MAX_TAIL_BYTES - len(latest), api().MAX_TAIL_BYTES + 1):
+        path.write_bytes(b" " * padding + b"\n" + latest)
+        assert api().capture(str(path), time.monotonic() + 1)[0] is not None
+    value = record(block())
+    raw = json.dumps(value).encode("utf-8")
+    value["padding"] = " " * (api().MAX_RECORD_BYTES - len(raw) - len(', "padding": ""'))
+    raw = json.dumps(value).encode("utf-8")
+    assert len(raw) == api().MAX_RECORD_BYTES
+    path.write_bytes(raw + b"\n")
+    assert api().capture(str(path), time.monotonic() + 1)[0] is not None
+    path.write_bytes(raw[:-1] + b' }\n')
+    assert api().capture(str(path), time.monotonic() + 1)[1] == "record-too-large"
+
+
+def test_object_metadata_nulls_and_sizes_are_validated():
+    task = api().parse_text(block())[0]
+    for update in ({"unexpected": "value"}, {"goal": "长" * 241}, {"goal": None},
+                   {"captured_at": "not-time"}, {"captured_at": "2026-01-01"},
+                   {"capture_event": "PostCompact"}, {"omissions": {"goal": "private prose"}}):
+        with pytest.raises((ValueError, TypeError)):
+            api().validate(dict(task, **update))
+    assert len(json.dumps(task, ensure_ascii=False).encode("utf-8")) <= api().MAX_OBJECT_BYTES
+
+
+def test_content_digest_opt_in_remains_independent(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    path = transcript(tmp_path, [record(block())] * 12)
+    queued = produce(monkeypatch, path, tmp_path)
+    from piia_engram.core import Engram
+    engram = Engram(root=spool.store_root())
+    monkeypatch.setattr(engram, "get_preferences", lambda: {"hook_content_digest_v2": True})
+    event = spool._read_event(queued)
+    prepared = _processor.prepare(event, spool.store_root(), engram)
+    assert prepared["summary"] == "" and not prepared["digest"]
+    assert prepared["independent_content_digest"]
+    assert prepared["context"] == api().render(prepared["task_checkpoint"])
+    assert spool.drain(engram=engram)["processed"] == 1
+    # Independent input loss cannot gate processing the captured task.
+    queued.write_bytes(spool._json_bytes(dict(event, event_id="f" * 32)))
+    path.unlink()
+    assert spool.drain(engram=engram)["processed"] == 1
+
+
+def test_task_body_never_enters_heuristic_digest_or_knowledge(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    monkeypatch.setenv("ENGRAM_APPROVAL", "strict")
+    values = ("Complete the sample task", "Always validate because it prevents sample errors",
+              "Await sample approval", "A sample check failed", "Run the sample check")
+    produce(monkeypatch, transcript(tmp_path, [record(block(values))]), tmp_path)
+    from piia_engram.core import Engram
+    engram = Engram(root=spool.store_root())
+    builder = engram._build_checkpoint_digest
+    def check_empty(body, **kwargs):
+        assert body == ""
+        return builder(body, **kwargs)
+    monkeypatch.setattr(engram, "_build_checkpoint_digest", check_empty)
+    assert spool.drain(engram=engram)["processed"] == 1
+    digest = json.loads(next((spool.store_root() / "contexts").rglob("*.digest.json")).read_text(encoding="utf-8"))
+    assert digest["decisions"] == digest["lessons"] == digest["completed"] == []
+    for path in (spool.store_root() / "knowledge").glob("*.json"):
+        assert all(value not in path.read_text(encoding="utf-8") for value in values)
+    assert all(value not in engram.generate_context(level="full") for value in values)
+
+
+def test_task_revision_is_frozen_and_newer_canonical_state_wins(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    from piia_engram.core import Engram
+    engram = Engram(root=spool.store_root())
+    engram.save_project_snapshot(str(project), {"current_state": {"current_focus": "Initial sample state"}})
+    queued = produce(monkeypatch, transcript(tmp_path), project)
+    original = spool._publish
+    def interrupt(destination, data):
+        if destination.suffix == ".md":
+            raise OSError("synthetic interruption")
+        return original(destination, data)
+    monkeypatch.setattr(spool, "_publish", interrupt)
+    assert spool.drain(engram=engram)["failed"] == 1
+    frozen = spool._read_event(queued)["prepared"]
+    assert frozen["project_revision"] == 1
+    engram.save_project_snapshot(str(project), {"current_state": {"current_focus": "New canonical sample state"}})
+    monkeypatch.setattr(spool, "_publish", original)
+    assert spool.drain(engram=engram)["processed"] == 1
+    digest = json.loads(next((spool.store_root() / "contexts").rglob("*.digest.json")).read_text(encoding="utf-8"))
+    assert digest["source"]["project_revision"] == 1
+    assert digest["source"]["project_revision_captured_at"] == frozen["project_revision_captured_at"]
+    brief = engram.get_resume_brief(project_folder=str(project))
+    assert brief["freshness"]["authoritative_source"] == "project_checkpoint"
+    assert brief["handoff_meta"]["current_focus"] == "New canonical sample state"
+
+
+def test_existing_mcp_owner_gate_and_direct_hook_projection(tmp_path, monkeypatch):
+    import asyncio
+    opt_in(monkeypatch, tmp_path)
+    produce(monkeypatch, transcript(tmp_path), tmp_path)
+    assert spool.drain()["processed"] == 1
+    from piia_engram.core import Engram
+    engram = Engram(root=spool.store_root())
+    monkeypatch.setattr(mcp_server, "_get_engram", lambda: engram)
+    monkeypatch.setenv("ENGRAM_GOVERNANCE", "1")
+    monkeypatch.setenv("ENGRAM_CLIENT_TYPE", "web")
+    monkeypatch.setattr(mcp_server._gov_rt, "caller_is_owner", lambda root: False)
+    result = asyncio.run(mcp_server.get_resume_brief(project_folder=str(tmp_path)))
+    assert json.loads(result)["governance_withheld"] is True
+    assert all(value not in result for value in VALUES)
+    direct = engram.get_resume_brief(project_folder=str(tmp_path))
+    assert VALUES[0] in direct["markdown"]
+    assert "unreviewed; no approval or action authority" in direct["markdown"]
+
+
+@pytest.mark.parametrize("interruption", ["archive", "digest"])
+def test_interrupted_publications_keep_only_frozen_safe_content(tmp_path, monkeypatch, interruption):
+    opt_in(monkeypatch, tmp_path)
+    canary = "token: " + "ignoredsample" * 3
+    entry = record(block())
+    entry["message"]["content"].insert(0, {"type": "tool_result", "content": canary})
+    path = transcript(tmp_path, [entry])
+    queued = produce(monkeypatch, path, tmp_path)
+    from piia_engram import storage
+    real_publish, real_update = spool._publish, storage._update_json
+    if interruption == "archive":
+        def partial(destination, data):
+            if destination.suffix == ".md":
+                destination.with_suffix(".partial").write_bytes(data)
+                raise OSError("synthetic publication interruption")
+            return real_publish(destination, data)
+        monkeypatch.setattr(spool, "_publish", partial)
+    else:
+        def partial_json(destination, updater, *args, **kwargs):
+            if destination.name.endswith(".digest.json"):
+                destination.with_suffix(".partial").write_text(
+                    json.dumps(updater({}), ensure_ascii=False), encoding="utf-8")
+                raise OSError("synthetic digest interruption")
+            return real_update(destination, updater, *args, **kwargs)
+        monkeypatch.setattr(storage, "_update_json", partial_json)
+    assert spool.drain()["failed"] == 1
+    assert spool._read_event(queued)["prepared"]["task_checkpoint"]["goal"] == VALUES[0]
+    path.unlink()
+    monkeypatch.setattr(spool, "_publish", real_publish)
+    monkeypatch.setattr(storage, "_update_json", real_update)
+    assert spool.drain()["processed"] == 1
+    assert list(spool.store_root().rglob("*.partial"))
+    for candidate in spool.store_root().rglob("*"):
+        if candidate.is_file() and not candidate.name.endswith(".lock"):
+            assert canary.encode("utf-8") not in candidate.read_bytes()
+
+
+@pytest.fixture
+def protected_task(tmp_path, monkeypatch):
+    import hashlib
+    from piia_engram import crypto
+    from piia_engram.hooks import _spool_protection as protection
+    opt_in(monkeypatch, tmp_path)
+    root = spool.store_root()
+    root.mkdir(parents=True, exist_ok=True)
+    (root / ".corpus_salt").write_bytes(b"0123456789abcdef")
+    monkeypatch.setenv("ENGRAM_SECRET", "synthetic-checkpoint-key")
+    monkeypatch.setattr(crypto, "_derive_key", lambda secret, salt, iterations:
+                        hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt, 1))
+    monkeypatch.setattr(protection, "CRYPTO_BUDGET_SECONDS", 30)
+    monkeypatch.setattr(_producer, "INPUT_BUDGET_SECONDS", 35)
+    return root, protection
+
+
+@pytest.mark.parametrize("key", ["", "wrong-key"])
+def test_w2b_missing_or_wrong_key_preserves_ciphertext(protected_task, tmp_path, monkeypatch, key):
+    root, protection = protected_task
+    queued = produce(monkeypatch, transcript(tmp_path), tmp_path)
+    original = queued.read_bytes()
+    assert json.loads(original)["schema"] == 2
+    assert VALUES[0].encode("utf-8") not in original
+    monkeypatch.setenv("ENGRAM_SECRET", key)
+    result = spool.drain()
+    assert result["failed"] == result["pending"] == 1
+    assert queued.read_bytes() == original
+    assert not (root / "contexts").exists()
+    monkeypatch.setenv("ENGRAM_SECRET", "synthetic-checkpoint-key")
+    assert spool.drain()["processed"] == 1
+
+
+@pytest.mark.parametrize("fault", ["missing-key", "slow-kdf", "sealing-failure"])
+def test_w2b_failed_capture_has_no_plaintext_or_late_publication(protected_task, tmp_path, monkeypatch, fault):
+    from piia_engram import crypto
+    root, protection = protected_task
+    original = crypto.EncryptionEngine.derive_corpus_key
+    done = threading.Event()
+    if fault == "missing-key":
+        monkeypatch.setenv("ENGRAM_SECRET", "")
+    elif fault == "sealing-failure":
+        monkeypatch.setattr(crypto.EncryptionEngine, "corpus_encrypt", lambda *a: (_ for _ in ()).throw(ValueError("fault")))
+    else:
+        def slow(*args):
+            time.sleep(0.25)
+            try:
+                return original(*args)
+            finally:
+                done.set()
+        monkeypatch.setattr(crypto.EncryptionEngine, "derive_corpus_key", slow)
+        monkeypatch.setattr(protection, "CRYPTO_BUDGET_SECONDS", 0.08)
+    path = transcript(tmp_path)
+    monkeypatch.setattr(_producer, "_read_input", lambda deadline: {"transcript_path": str(path)})
+    assert _producer.claude_event("claude_stop") == 0
+    if fault == "slow-kdf":
+        assert done.wait(2)
+    assert not list(spool.spool_dir().glob("*.jsonl"))
+    for candidate in root.rglob("*"):
+        if candidate.is_file() and not candidate.name.endswith(".lock"):
+            assert VALUES[0].encode("utf-8") not in candidate.read_bytes()
