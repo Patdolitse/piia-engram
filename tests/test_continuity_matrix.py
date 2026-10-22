@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from task_checkpoint_harness import hook_command
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("continuity_matrix", ROOT / "scripts" / "continuity_matrix.py")
@@ -147,7 +148,9 @@ def test_claude_stop_preserves_required_task_fields(cold_rows, approval):
 @pytest.fixture(scope="module")
 def enabled_rows(tmp_path_factory):
     base = tmp_path_factory.mktemp("continuity-enabled") / "fresh"
-    result = asyncio.run(matrix.run_matrix(base, cases=[matrix.load_cases()[0]], task_checkpoint=True))
+    result = asyncio.run(matrix.run_matrix(base, cases=[matrix.load_cases()[0]], task_checkpoint=True,
+        capture_hook_command=hook_command(read_delay=0.25)))
+    assert result["capture_success_seam"]
     assert result["error_count"] == 0
     return result["rows"]
 

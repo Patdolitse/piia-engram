@@ -28,11 +28,19 @@ _LABEL = re.compile(r"^(" + "|".join(re.escape(label) for label in ALIASES) + r"
 _META = {"schema", "omissions", "capture_event", "captured_at"}
 _OMISSIONS = {"unknown", "oversized", "privacy"}
 _INLINE_SECRET_RE = re.compile(_SECRET_KEY_SUFFIX_RE.pattern.removesuffix("$") + r"\S")
+# Task snapshots omit fields rather than redact excerpts. Keep this stricter
+# path guard local so ordinary digest/export behavior does not change. Match
+# either drive separator, rooted/UNC backslashes and UNC forward slashes;
+# the colon exclusion keeps ordinary https://host/path links usable.
+_WINDOWS_PATH_RE = re.compile(r"(?<!\w)[A-Za-z]:[\\/]|\\[^\s\\/]+[\\/]|(?<![:/])//[^\s\\/]+[\\/]")
+_FENCE_LINE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
 def _private(values: list[str]) -> bool:
     """Scan complete normalized values and their boundaries before any cuts."""
     for value in [*values, "\n".join(values), " ".join(values), "".join(values)]:
+        if _WINDOWS_PATH_RE.search(normalize_text(value)):
+            return True
         sanitized, hit = sanitize_line(value)
         if hit or shape_scan(sanitized):
             return True
@@ -92,24 +100,28 @@ def parse_text(text: str, capture_event: str = "Stop") -> tuple[dict | None, str
     found = {}
     positions = []
     lines = text.splitlines()
-    fenced = False
-    fence = ""
+    fence_char = ""
+    fence_length = 0
     for index, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith(("```", "~~~")):
-            marker = stripped[:3]
-            if not fenced:
-                fenced, fence = True, marker
-            elif marker == fence:
-                fenced = False
+        marker = _FENCE_LINE.fullmatch(line)
+        if marker:
+            run, suffix = marker.groups()
+            if fence_char:
+                # CommonMark: info strings, shorter runs and other fence
+                # characters cannot close the current fenced code block.
+                if run[0] == fence_char and len(run) >= fence_length and not suffix.strip(" \t"):
+                    fence_char, fence_length = "", 0
+            elif run[0] != "`" or "`" not in suffix:
+                fence_char, fence_length = run[0], len(run)
             continue
         match = _LABEL.fullmatch(stripped)
         # Quoted/fenced labels make even a second valid group ambiguous.
         disguised = _LABEL.match(stripped.lstrip(">\"'` "))
-        if disguised and (fenced or line.startswith(("    ", "\t")) or stripped != disguised.group(0)):
+        if disguised and (fence_char or line.startswith(("    ", "\t")) or stripped != disguised.group(0)):
             return None, "ambiguous-labels"
         if match:
-            if fenced or line.startswith(("    ", "\t")):
+            if fence_char or line.startswith(("    ", "\t")):
                 return None, "ambiguous-labels"
             key = ALIASES[match[1]]
             if key in found:
