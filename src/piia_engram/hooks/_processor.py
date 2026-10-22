@@ -13,6 +13,11 @@ from . import _cursor_payload as cursor
 def validate_payload(event: dict) -> None:
     payload = event["payload"]
     kind = event["kind"]
+    if "task_checkpoint" in payload:
+        from ..task_checkpoint import validate
+        if kind != "claude_stop":
+            raise ValueError("task kind")
+        validate(payload["task_checkpoint"])
     for key in ("summary", "transcript_path", "project_folder", "session_id", "event", "hook_cwd"):
         if key in payload and not isinstance(payload[key], str):
             raise ValueError("payload text type")
@@ -26,6 +31,19 @@ def validate_payload(event: dict) -> None:
         raise ValueError("transcript retry count")
     if "prepared" in event:
         prepared = event["prepared"]
+        if "task_checkpoint" in prepared:
+            from ..task_checkpoint import render, validate
+            task = validate(prepared["task_checkpoint"])
+            if (kind != "claude_stop" or task != payload.get("task_checkpoint")
+                    or prepared.get("context") != render(task)
+                    or prepared.get("summary") != "" or prepared.get("digest") is not False
+                    or prepared.get("skip")):
+                raise ValueError("task preparation")
+            independent = prepared.get("independent_content_digest")
+            if independent is not None and (not isinstance(independent, str) or not independent.strip()):
+                raise ValueError("independent digest type")
+        elif "task_checkpoint" in payload:
+            raise ValueError("task preparation missing")
         if not isinstance(prepared, dict) or any(not isinstance(prepared.get(key, ""), str)
                                                for key in ("context", "summary", "session_id")):
             raise ValueError("prepared type")
@@ -122,6 +140,25 @@ def prepare(event: dict, root: Path, engram=None) -> dict:
     """Freeze input before any store write so crash retries see identical candidates."""
     kind, payload = event["kind"], event["payload"]
     if kind == "claude_stop":
+        if "task_checkpoint" in payload:
+            from ..task_checkpoint import render, validate
+            task = validate(payload["task_checkpoint"])
+            prepared = {"context": render(task), "summary": "", "digest": False,
+                        "task_checkpoint": task}
+            # The existing excerpt opt-in remains independent. It reads its own
+            # input, never the frozen task, and cannot gate checkpoint archival.
+            from ..hook_digest import PREFERENCE_KEY_V2, digest_enabled
+            if engram is None:
+                from ..core import Engram
+                engram = Engram(root=root, read_only=True)
+            if digest_enabled(engram.get_preferences().get(PREFERENCE_KEY_V2)):
+                try:
+                    legacy = _claude_summary(payload, root, engram)
+                except Exception:
+                    legacy = {}
+                if legacy.get("digest") and legacy.get("summary"):
+                    prepared["independent_content_digest"] = legacy["summary"]
+            return prepared
         return _claude_summary(payload, root, engram)
     if kind == "claude_compact":
         from .auto_absorb_compact import _extract_compact_summary
@@ -227,6 +264,11 @@ def _archive(engram, event, content: str, *, daily: bool = False) -> None:
     from .spool import _publish
     import portalocker
     from ..contexts import _sanitize_session_id_for_path
+    if "task_checkpoint" in event["prepared"]:
+        from ..task_checkpoint import render
+        validate_payload(event)
+        if daily or content != render(event["prepared"]["task_checkpoint"]):
+            raise ValueError("task archive rendering")
     when = datetime.fromisoformat(event["created_at"])
     project = event["payload"].get("project_folder", "")
     session_id = event["prepared"].get("session_id") or "hook-" + event["event_id"]
@@ -252,10 +294,20 @@ def _archive(engram, event, content: str, *, daily: bool = False) -> None:
     if not daily:
         from ..storage import _update_json, SkipWrite
         digest = engram._build_checkpoint_digest(
-            content, tool=event["client"], session_id=session_id, project_folder=project,
+            "" if "task_checkpoint" in event["prepared"] else content,
+            tool=event["client"], session_id=session_id, project_folder=project,
             generated_at=event["created_at"], project_revision=event["prepared"].get("project_revision"),
             revision_captured_at=event["prepared"].get("project_revision_captured_at", ""))
-        if engram._digest_has_session_signal(digest):
+        if "task_checkpoint" in event["prepared"]:
+            from ..task_checkpoint import validate
+            task = validate(event["prepared"]["task_checkpoint"])
+            # These are task assertions, never lesson/decision candidates.
+            digest.update(task_checkpoint=task, goal=task["goal"] or "",
+                          next_actions=[task["next_action"]] if task["next_action"] else [],
+                          risks=[task["blocker"]] if task["blocker"] else [],
+                          decisions=[], lessons=[])
+            digest["source"].update(capture_event=task["capture_event"], captured_at=task["captured_at"])
+        if engram._digest_has_session_signal(digest) or "task_checkpoint" in digest:
             def replace_digest(existing):
                 previous_time = existing.get("generated_at")
                 if previous_time:
@@ -305,6 +357,12 @@ def process(event: dict, root: Path, engram=None) -> None:
         return  # archival only, preserving the existing extraction boundary
     if prepared.get("context"):
         _archive(engram, event, prepared["context"])
+    if "task_checkpoint" in prepared:
+        if prepared.get("independent_content_digest"):
+            _EventWriter(engram, event).extract(
+                prepared["independent_content_digest"], source_tool=event["client"],
+                source_ref=event["event_id"], project_folder=project, capture_origin="hook_content_digest")
+        return  # the task itself never feeds extraction, quick context or project state
     if prepared.get("summary"):
         _EventWriter(engram, event).extract(
             prepared["summary"], source_tool=event["client"], source_ref=event["event_id"],

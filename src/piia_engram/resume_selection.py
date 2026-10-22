@@ -56,6 +56,18 @@ def select_resume_fields(handoff, freshness, snapshot, digests, token_budget=200
         constraints = [str(item) for item in digest.get("risks") or []
                        if any(word in str(item).lower() for word in
                               ("constraint", "must", "keep", "约束", "必须", "保留"))]
+        if "task_checkpoint" in digest:
+            from .task_checkpoint import validate
+            try:
+                task = validate(digest["task_checkpoint"])
+            except (ValueError, TypeError, KeyError, OverflowError):
+                task = None
+            if task:
+                result["current_focus"] = task["goal"] or "unknown"
+                result["next_actions"] = [task["next_action"]] if task["next_action"] else []
+                result["blocked_on"] = [task["blocker"]] if task["blocker"] else []
+                result["last_failure_reason"] = task["last_failure_reason"] or "unknown"
+                constraints = [task["constraint"]] if task["constraint"] else []
 
     def bound(value, key):
         text = str(sanitize_digest_value(value) or "").strip()
@@ -65,6 +77,8 @@ def select_resume_fields(handoff, freshness, snapshot, digests, token_budget=200
         return text
 
     result["current_focus"] = bound(result.get("current_focus") or "unknown", "current_focus")
+    if "last_failure_reason" in result:
+        result["last_failure_reason"] = bound(result["last_failure_reason"], "last_failure_reason")
     for key in ("next_actions", "blocked_on", "last_completed"):
         values = result.get(key) or []
         if not isinstance(values, list):

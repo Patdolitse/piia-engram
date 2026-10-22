@@ -2360,6 +2360,11 @@ class ContextStoreMixin:
         handoff_lines = ["## 30-second handoff"]
         handoff_lines.append("- **current_focus**: " + _escape_resume_brief_text(
             structured_handoff.get("current_focus", "unknown")))
+        if "last_failure_reason" in structured_handoff:
+            handoff_lines.append("- **last_failure_reason**: " + _escape_resume_brief_text(
+                structured_handoff["last_failure_reason"]))
+            sender = structured_handoff.get("source_session", {}).get("tool", "unknown")
+            handoff_lines.append("- **sender**: " + _escape_resume_brief_text(sender))
         if structured_handoff.get("next_actions"):
             handoff_lines.extend("- **next_action**: " + _escape_resume_brief_text(value)
                                  for value in structured_handoff["next_actions"])

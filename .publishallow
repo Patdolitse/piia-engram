@@ -244,3 +244,6 @@ tests/test_review4_426.py
 
 # Opt-in task checkpoint contracts.
 tests/test_task_checkpoint.py
+src/piia_engram/task_checkpoint.py
+docs/task-checkpoint.md
+docs/task-checkpoint.zh-CN.md

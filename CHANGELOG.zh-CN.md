@@ -10,6 +10,8 @@
 
 ### 新增
 
+- Claude Code Stop/PreCompact hook 新增可选标签式任务检查点：必须明确启用并配置 transcript 根目录白名单，生产端有界快照在持久化前检查隐私，重试使用冻结输入，原生恢复字段保留未审核警示。默认捕获与客户端注册不变。队列加密独立，下游会话 Markdown、digest 和发布中间文件仍为明文。PreCompact 仅尽力而为。详见[启用说明](docs/task-checkpoint.zh-CN.md)。
+
 - 在启用加密的存储根保护 hook 队列正文，提供认证事件绑定、明文发布与启用加密共用的策略锁、有界意图发现与编码，以及只读恢复诊断。此策略按根本地选择启用，复制时必须保留策略与原始 salt。旧版明文队列继续可读；下游 archive、digest 和其它生成输出仍在保护范围之外。详见[范围与恢复说明](docs/hook-queue-protection.md)。
 
 ### 修复
