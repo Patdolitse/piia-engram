@@ -230,7 +230,12 @@ def test_privacy_before_size_and_across_every_persisted_surface(tmp_path, monkey
     opt_in(monkeypatch, tmp_path)
     path = transcript(tmp_path, [record(block((secret, *VALUES[1:])))])
     queued = produce(monkeypatch, path, tmp_path)
-    assert "task_checkpoint" not in spool._read_event(queued)["payload"]
+    task = spool._read_event(queued)["payload"].get("task_checkpoint")
+    if "\u2062" in secret:
+        assert task is None  # unsupported invisible characters refuse the block
+    else:
+        assert task["goal"] is None and task["omissions"]["goal"] == "privacy"
+        assert all(task[key] == value for key, value in zip(FIELDS[1:], VALUES[1:]))
     assert spool.drain()["processed"] == 1
     root = spool.store_root()
     from piia_engram.core import Engram
@@ -249,7 +254,8 @@ def test_cross_field_privacy_and_preparation_recheck(tmp_path, monkeypatch):
                            "Constraint: Keep sample invariant", "Risk: Await sample input",
                            "Last failure reason: Sample assertion failed"))
     assert api().parse_text(reordered)[0] is None
-    assert api().parse_text(block(("x" * 241 + " token: samplecredentialvalue", *VALUES[1:])))[0] is None
+    oversized = api().parse_text(block(("x" * 241 + " token: samplecredentialvalue", *VALUES[1:])))[0]
+    assert oversized["goal"] is None and oversized["omissions"]["goal"] == "privacy"
     opt_in(monkeypatch, tmp_path)
     queued = produce(monkeypatch, transcript(tmp_path), tmp_path)
     event = spool._read_event(queued)

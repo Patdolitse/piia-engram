@@ -26,7 +26,7 @@ ALIASES = dict(zip(LABELS, FIELDS)) | dict(zip(
 UNKNOWN = frozenset({"unknown", "Unknown", "未知", "不详", "未提供", "不确定", "N/A", "n/a"})
 _LABEL = re.compile(r"^(" + "|".join(re.escape(label) for label in ALIASES) + r")[:：] *(.*)$")
 _META = {"schema", "omissions", "capture_event", "captured_at"}
-_OMISSIONS = {"unknown", "oversized"}
+_OMISSIONS = {"unknown", "oversized", "privacy"}
 _INLINE_SECRET_RE = re.compile(_SECRET_KEY_SUFFIX_RE.pattern.removesuffix("$") + r"\S")
 
 
@@ -128,12 +128,22 @@ def parse_text(text: str, capture_event: str = "Stop") -> tuple[dict | None, str
     values = [found[key] for key in FIELDS]
     if any(not v or not v.isprintable() or any(c in v for c in "`<>\"'") for v in values):
         return None, "ambiguous-labels"
-    if _private(values) or _private(list(found.values())):
+    private = {key for key, value in found.items() if _private([value])}
+    combined_private = _private(values) or _private(list(found.values()))
+    sequences = (list(FIELDS), list(found))
+    cross_field = any(_SECRET_KEY_SUFFIX_RE.search(found[left]) and _VALUEISH_PREFIX_RE.match(found[right])
+                      for sequence in sequences for left, right in zip(sequence, sequence[1:]))
+    # A field-local hit can be omitted. A boundary-only hit cannot safely be
+    # assigned to one field, so refuse the candidate rather than guess.
+    survivors_private = any(_private([found[key] for key in sequence if key not in private])
+                            for sequence in sequences)
+    if cross_field or (combined_private and not private) or survivors_private:
         return None, "privacy-refused"
     result = {"schema": SCHEMA, "capture_event": capture_event,
               "captured_at": datetime.now(timezone.utc).isoformat(), "omissions": {}}
     for key, value in zip(FIELDS, values):
-        reason = "unknown" if value in UNKNOWN else "oversized" if len(value) > MAX_VALUE_CHARS else ""
+        reason = ("privacy" if key in private else "unknown" if value in UNKNOWN else
+                  "oversized" if len(value) > MAX_VALUE_CHARS else "")
         result[key] = None if reason else value
         if reason:
             result["omissions"][key] = reason
