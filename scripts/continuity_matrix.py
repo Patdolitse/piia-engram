@@ -158,11 +158,12 @@ def print_table(rows: list[dict], *, header: bool = True) -> None:
 
 class Trial:
     def __init__(self, base: Path, case: dict, direction: tuple[str, str], integration: str, approval: str,
-                 *, task_checkpoint: bool = False):
+                 *, task_checkpoint: bool = False, capture_hook_command: list[str] | None = None):
         self.base, self.case = base, case
         self.sender, self.receiver = direction
         self.tool = CLIENTS[self.sender]
         self.integration, self.approval = integration, approval
+        self.capture_hook_command = capture_hook_command
         self.store = base / "store"
         self.env = isolated_env(base / "profile", self.store, approval)
         if task_checkpoint:
@@ -267,7 +268,12 @@ class Trial:
         return observation
 
     def hook(self, module: str, payload: dict, *args: str) -> dict:
-        raw = self.command("hook:" + module, [sys.executable, "-m", "piia_engram.hooks." + module, *args], payload=payload)
+        # Only the synthetic harness supplies a command seam. Product hooks
+        # have no override, and the CLI below always uses the real budget.
+        command = ([*self.capture_hook_command, module, *args]
+                   if self.capture_hook_command and module == "auto_save_on_stop" else
+                   [sys.executable, "-m", "piia_engram.hooks." + module, *args])
+        raw = self.command("hook:" + module, command, payload=payload)
         return json.loads(raw) if raw.strip() else {}
 
     def transcript(self, content: str) -> Path:
@@ -427,7 +433,7 @@ class Trial:
 
 
 async def run_matrix(work_dir: Path, *, cases: list[dict] | None = None,
-                     task_checkpoint: bool = False) -> dict:
+                     task_checkpoint: bool = False, capture_hook_command: list[str] | None = None) -> dict:
     # Require a fresh explicit root: never reuse somebody else's store or fixtures.
     work_dir = work_dir.resolve()
     work_dir.mkdir(parents=True, exist_ok=False)
@@ -439,7 +445,7 @@ async def run_matrix(work_dir: Path, *, cases: list[dict] | None = None,
                 for approval in ("default", "strict"):
                     key = f"{case['id']}-{CLIENTS[direction[0]]}-{integration}-{approval}"
                     trial = Trial(work_dir / key, case, direction, integration, approval,
-                                  task_checkpoint=task_checkpoint)
+                                  task_checkpoint=task_checkpoint, capture_hook_command=capture_hook_command)
                     try:
                         row = await asyncio.wait_for(trial.run(), timeout=180)
                     except Exception as exc:
@@ -454,6 +460,7 @@ async def run_matrix(work_dir: Path, *, cases: list[dict] | None = None,
                     print_table([row], header=False)
     return {"schema": "synthetic_continuity_matrix.v1", "synthetic": True,
         "task_checkpoint_enabled": task_checkpoint,
+        "capture_success_seam": capture_hook_command is not None,
         "real_host_verified": False, "model_calls": 0, "model_cost": 0, "cases": len(cases or load_cases()),
         "rows": rows, "accepted_count": sum(row["accepted"] for row in rows),
         "wrong_adoption": sum(row.get("wrong_adoption", 0) for row in rows),

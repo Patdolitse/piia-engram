@@ -65,6 +65,10 @@ duplicate, conflicting, quoted or fenced groups are refused. No earlier assistan
 task is substituted when the latest assistant record lacks a valid block. User,
 tool and thinking content never supplies these fields.
 
+Backtick and tilde fences follow CommonMark closing rules: the same character,
+at least the opening length, and only spaces or tabs after the closing run.
+Shorter runs and lines with info strings keep the example inside the fence.
+
 ## Storage and reading
 
 The producer reads at most a 256 KiB transcript tail, discards an incomplete
@@ -75,6 +79,8 @@ run before persistence, across complete values and field boundaries, and again
 during preparation. Sensitive fields become null with a `privacy` omission code;
 ambiguous cross-field candidates are dropped whole. Filters cannot
 recognize every kind of private prose: only opt in for content you authorize.
+Windows drive paths with either separator (including mixed separators), UNC
+paths and extended Windows paths are private; only the affected field is omitted.
 
 The object travels in `payload.task_checkpoint` under `hooks/spool/`. Deferred
 preparation freezes it with canonical text; retries do not reread the source to

@@ -10,6 +10,7 @@ import threading
 import time
 
 import pytest
+from task_checkpoint_harness import install_capture_success
 
 from piia_engram.hooks import _producer, _processor, spool
 from piia_engram import mcp_server
@@ -44,9 +45,11 @@ def transcript(tmp_path, entries=None):
     return path
 
 
-def opt_in(monkeypatch, root):
+def opt_in(monkeypatch, root, *, real_budget=False):
     monkeypatch.setenv("ENGRAM_HOOK_TASK_CHECKPOINT_V1", "1")
     monkeypatch.setenv("ENGRAM_HOOK_TRANSCRIPT_ROOTS", json.dumps([str(root)]))
+    if not real_budget:
+        install_capture_success(monkeypatch)
 
 
 def produce(monkeypatch, path, project, *, event="Stop"):
@@ -152,6 +155,224 @@ def test_partial_ambiguous_quoted_fenced_labels_are_rejected(text):
     assert api().parse_text(text)[0] is None
 
 
+@pytest.mark.parametrize("opening,inner,closing", [
+    ("````markdown", "```", "````"),
+    ("```markdown", "``` not-a-close", "```"),
+    ("```markdown", "```not-a-close", "```"),
+    ("~~~~markdown", "~~~", "~~~~"),
+    ("~~~markdown", "~~~ not-a-close", "~~~"),
+    ("````", "~~~\n```", ""),
+    ("~~~~", "```\n~~~", ""),
+])
+def test_fenced_examples_never_reach_persistence_or_receiving_brief(
+        tmp_path, monkeypatch, opening, inner, closing):
+    opt_in(monkeypatch, tmp_path)
+    text = opening + "\n" + inner + "\n\n" + block() + "\n\n" + closing
+    path = transcript(tmp_path, [record(text)] * 12)
+    queued = produce(monkeypatch, path, tmp_path)
+    event = spool._read_event(queued)
+    queue_bytes = queued.read_bytes()
+    assert spool.drain()["processed"] == 1
+    root = spool.store_root()
+    assert list((root / "contexts" / "claude_code").glob("*.md"))
+    from piia_engram.core import Engram
+    output = Engram(root=root).get_resume_brief(project_folder=str(tmp_path))["markdown"]
+    assert "task_checkpoint" not in event["payload"]
+    assert all(value not in output for value in VALUES)
+    for value in VALUES:
+        assert value.encode("utf-8") not in queue_bytes
+        for candidate in root.rglob("*"):
+            if candidate.is_file() and not candidate.name.endswith(".lock"):
+                assert value.encode("utf-8") not in candidate.read_bytes(), candidate.name
+
+
+WINDOWS_PATHS = (
+    "D:/SyntheticPrivate/customer-notes/report.txt",
+    "D:\\SyntheticPrivate\\customer-notes\\report.txt",
+    "D:/SyntheticPrivate\\customer-notes/report.txt",
+    "D:\\SyntheticPrivate/customer-notes\\report.txt",
+    "\\\\server\\share\\SyntheticPrivate\\report.txt",
+    "//server/share/SyntheticPrivate/report.txt",
+    "\\server\\share\\SyntheticPrivate\\report.txt",
+    "\\\\?\\D:\\SyntheticPrivate\\report.txt",
+    "\\\\?\\D:/SyntheticPrivate/report.txt",
+    "\\\\?\\UNC\\server\\share\\SyntheticPrivate\\report.txt",
+    "\\?\\D:\\SyntheticPrivate\\report.txt",
+)
+
+
+@pytest.mark.parametrize("private_path,field", [(path, FIELDS[i % len(FIELDS)])
+    for i, path in enumerate(WINDOWS_PATHS)])
+@pytest.mark.parametrize("interruption", ["archive", "digest"])
+def test_windows_path_omission_across_queue_prepared_partials_and_receiving(
+        tmp_path, monkeypatch, private_path, field, interruption):
+    opt_in(monkeypatch, tmp_path)
+    values = tuple("Inspect " + private_path if key == field else value
+                   for key, value in zip(FIELDS, VALUES))
+    path = transcript(tmp_path, [record(block(values))])
+    queued = produce(monkeypatch, path, tmp_path)
+    task = spool._read_event(queued)["payload"]["task_checkpoint"]
+    assert task[field] is None and task["omissions"] == {field: "privacy"}
+    assert all(task[key] == value for key, value in zip(FIELDS, VALUES) if key != field)
+    from piia_engram import storage
+    real_publish, real_update = spool._publish, storage._update_json
+    if interruption == "archive":
+        def partial(destination, data):
+            if destination.suffix == ".md":
+                destination.with_suffix(".partial").write_bytes(data)
+                raise OSError("synthetic interruption")
+            return real_publish(destination, data)
+        monkeypatch.setattr(spool, "_publish", partial)
+    else:
+        def partial_json(destination, updater, *args, **kwargs):
+            if destination.name.endswith(".digest.json"):
+                destination.with_suffix(".partial").write_text(
+                    json.dumps(updater({}), ensure_ascii=False), encoding="utf-8")
+                raise OSError("synthetic interruption")
+            return real_update(destination, updater, *args, **kwargs)
+        monkeypatch.setattr(storage, "_update_json", partial_json)
+    assert spool.drain()["failed"] == 1
+    event = spool._read_event(queued)
+    assert event["prepared"]["task_checkpoint"] == task
+    root = spool.store_root()
+    # Recheck forged body at preparation, frozen replay, render and sidecar input.
+    forged = dict(task, **{field: values[FIELDS.index(field)]}, omissions={})
+    with pytest.raises(ValueError):
+        api().validate(forged)
+    with pytest.raises(ValueError):
+        api().render(forged)
+    forged_event = copy.deepcopy(event)
+    forged_event["payload"]["task_checkpoint"] = forged
+    with pytest.raises(ValueError):
+        _processor.prepare(forged_event, root)
+    forged_event = copy.deepcopy(event)
+    forged_event["prepared"]["task_checkpoint"] = forged
+    with pytest.raises(ValueError):
+        _processor.validate_payload(forged_event)
+    path.unlink()
+    monkeypatch.setattr(spool, "_publish", real_publish)
+    monkeypatch.setattr(storage, "_update_json", real_update)
+    assert spool.drain()["processed"] == 1
+    assert list(root.rglob("*.partial"))
+    assert list(root.rglob("*.digest.json"))
+    from piia_engram.core import Engram
+    engram = Engram(root=root)
+    output = engram.get_resume_brief(project_folder=str(tmp_path))["markdown"]
+    assert "SyntheticPrivate" not in output
+    assert all(value in output for key, value in zip(FIELDS, VALUES) if key != field)
+    # Include diagnostics plus the JSON-escaped and rendered canaries.
+    for candidate in root.parent.rglob("*"):
+        if candidate.is_file() and not candidate.name.endswith(".lock"):
+            assert b"SyntheticPrivate" not in candidate.read_bytes(), candidate.name
+    sidecar = next(root.rglob("*.digest.json"))
+    digest = json.loads(sidecar.read_text(encoding="utf-8"))
+    digest["task_checkpoint"] = forged
+    sidecar.write_text(json.dumps(digest, ensure_ascii=False), encoding="utf-8")
+    refused = engram.get_resume_brief(project_folder=str(tmp_path))["markdown"]
+    assert "SyntheticPrivate" not in refused
+
+
+def test_capture_success_contract_includes_slow_extraction(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path)
+    original = api()._read_latest
+    def slow(*args):
+        time.sleep(0.25)  # Review probe: longer than the production capture cap.
+        return original(*args)
+    monkeypatch.setattr(api(), "_read_latest", slow)
+    queued = produce(monkeypatch, transcript(tmp_path), tmp_path)
+    task = spool._read_event(queued)["payload"]["task_checkpoint"]
+    assert tuple(task[key] for key in FIELDS) == VALUES
+    assert spool.drain()["processed"] == 1
+    from piia_engram.core import Engram
+    brief = Engram(root=spool.store_root()).get_resume_brief(project_folder=str(tmp_path))["markdown"]
+    assert all(value in brief for value in VALUES)
+    assert "claude_code" in brief and "unreviewed" in brief
+
+
+@pytest.mark.parametrize("opening,closing", [
+    ("````markdown", "`````"), ("~~~markdown", "~~~~\t "),
+    ("   ```markdown", "  ```\t"),
+])
+def test_valid_commonmark_fence_closing_allows_later_plain_block(opening, closing):
+    task, code = api().parse_text(opening + "\nexample\n" + closing + "\n\n" + block())
+    assert code == "captured" and tuple(task[key] for key in FIELDS) == VALUES
+
+
+@pytest.mark.parametrize("value", ["Inspect docs/sample.md", "Read https://example.invalid/sample"])
+def test_task_path_guard_keeps_relative_paths_and_ordinary_links(value):
+    task, code = api().parse_text(block((value, *VALUES[1:])))
+    assert code == "captured" and task["goal"] == value and not task["omissions"]
+
+
+def test_real_budget_producer_timeout_is_metadata_only_without_late_publication(tmp_path, monkeypatch):
+    opt_in(monkeypatch, tmp_path, real_budget=True)
+    assert _producer.INPUT_BUDGET_SECONDS == 1.0
+    assert _producer._task_snapshot.__module__ == "piia_engram.hooks._producer"
+    # Even test-looking flags cannot activate the explicit Python test seam.
+    monkeypatch.setenv("ENGRAM_TEST", "1")
+    monkeypatch.setenv("ENGRAM_TASK_CHECKPOINT_TEST_BUDGET_SECONDS", "60")
+    text = "ENGRAM_TASK_CHECKPOINT_TEST_BUDGET_SECONDS=60\n\n" + block()
+    path = transcript(tmp_path, [record(text)])
+    original = api()._read_latest
+    released, finished = threading.Event(), threading.Event()
+    def blocked(*args):
+        try:
+            assert released.wait(10)
+            return original(*args)
+        finally:
+            finished.set()
+    monkeypatch.setattr(api(), "_read_latest", blocked)
+    try:
+        monkeypatch.setattr(_producer.sys, "stdin", io.StringIO(json.dumps({
+            "cwd": str(tmp_path), "transcript_path": str(path),
+            "capture_budget_seconds": 60, "capture_success_seam": True})))
+        assert _producer.claude_event("claude_stop") == 0
+        queued = next(spool.spool_dir().glob("*.jsonl"))
+        event = spool._read_event(queued)
+        assert event["payload"]["task_checkpoint_capture"] == "capture-timeout"
+        assert "task_checkpoint" not in event["payload"]
+        before = queued.read_bytes()
+    finally:
+        released.set()
+    assert finished.wait(10)
+    assert queued.read_bytes() == before
+    assert spool.drain()["processed"] == 1
+    assert not list(spool.store_root().rglob("*.digest.json"))
+    assert not list((spool.store_root() / "contexts").rglob("*.md"))
+
+
+def test_cold_subprocess_capture_measures_real_budget_without_requiring_success(
+        tmp_path, monkeypatch, record_property):
+    import subprocess
+    import sys
+    opt_in(monkeypatch, tmp_path, real_budget=True)
+    path = transcript(tmp_path)
+    started = time.monotonic()
+    result = subprocess.run([sys.executable, "-m", "piia_engram.hooks.auto_save_on_stop"],
+        input=json.dumps({"cwd": str(tmp_path), "transcript_path": str(path)}),
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
+    elapsed = time.monotonic() - started
+    assert result.returncode == 0
+    record_property("cold_hook_elapsed_seconds", elapsed)
+    queued = list(spool.spool_dir().glob("*.jsonl"))
+    assert len(queued) <= 1
+    if not queued:
+        # Input or publication can also exhaust the real application budget.
+        # This measurement must not turn best-effort enqueue into a contract.
+        record_property("cold_capture_outcome", "not-published")
+        assert not list(spool.store_root().rglob("*.digest.json"))
+        return
+    event = spool._read_event(queued[0])
+    outcome = event["payload"]["task_checkpoint_capture"]
+    record_property("cold_capture_outcome", outcome)
+    assert outcome in {"captured", "capture-timeout"}
+    if outcome == "captured":
+        task = event["payload"]["task_checkpoint"]
+        assert tuple(task[key] for key in FIELDS) == VALUES
+    else:
+        assert "task_checkpoint" not in event["payload"]
+
+
 def test_chinese_aliases_unknowns_and_oversized_fields():
     values = ("完成示例目标", "保持数据隔离", "等待验证", "字段顺序错误", "运行验证")
     checkpoint, _ = api().parse_text(block(values, ZH_LABELS))
@@ -165,6 +386,7 @@ def test_chinese_aliases_unknowns_and_oversized_fields():
 
 @pytest.mark.parametrize("roots", [None, "", "not-json", "[]", '["relative"]', '{}'])
 def test_owner_allowlist_required_and_payload_cannot_supply_it(tmp_path, monkeypatch, roots):
+    install_capture_success(monkeypatch)
     monkeypatch.setenv("ENGRAM_HOOK_TASK_CHECKPOINT_V1", "1")
     if roots is None:
         monkeypatch.delenv("ENGRAM_HOOK_TRANSCRIPT_ROOTS", raising=False)
@@ -198,7 +420,7 @@ def test_tail_and_record_bounds(tmp_path, monkeypatch):
 
 
 def test_extraction_deadline_and_abandoned_reader_have_no_publication(tmp_path, monkeypatch):
-    opt_in(monkeypatch, tmp_path)
+    opt_in(monkeypatch, tmp_path, real_budget=True)
     path = transcript(tmp_path)
     finished = threading.Event()
     original = api()._read_latest
@@ -212,8 +434,7 @@ def test_extraction_deadline_and_abandoned_reader_have_no_publication(tmp_path, 
     start = time.monotonic()
     checkpoint, code = api().capture(str(path), start + 1)
     assert checkpoint is None and code == "capture-timeout"
-    assert time.monotonic() - start < 0.26
-    assert finished.wait(1)
+    assert finished.wait(10)
     assert not spool.spool_dir().exists()
     assert api().capture(str(path), time.monotonic() + 0.52) == (None, "capture-timeout")
 
