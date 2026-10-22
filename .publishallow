@@ -241,3 +241,6 @@ tests/test_review3_426.py
 
 # Final encrypted-repair and Windows namespace regressions.
 tests/test_review4_426.py
+
+# Opt-in task checkpoint contracts.
+tests/test_task_checkpoint.py
