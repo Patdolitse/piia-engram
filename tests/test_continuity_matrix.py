@@ -144,6 +144,28 @@ def test_claude_stop_preserves_required_task_fields(cold_rows, approval):
     assert row["after_drain"]["continuation_complete"], row["after_drain"]["missing_fields"]
 
 
+@pytest.fixture(scope="module")
+def enabled_rows(tmp_path_factory):
+    base = tmp_path_factory.mktemp("continuity-enabled") / "fresh"
+    result = asyncio.run(matrix.run_matrix(base, cases=[matrix.load_cases()[0]], task_checkpoint=True))
+    assert result["error_count"] == 0
+    return result["rows"]
+
+
+@pytest.mark.parametrize("approval", ["default", "strict"])
+@pytest.mark.xfail(strict=True, reason="Enabled-cohort witness: remove only after measured XPASS")
+def test_enabled_claude_stop_preserves_required_task_fields(enabled_rows, approval):
+    row = next(row for row in enabled_rows if row["integration"] == "automatic_hooks"
+        and row["direction"].startswith("Client X") and row["approval"] == approval)
+    assert row["after_drain"]["continuation_complete"], row["after_drain"]["missing_fields"]
+    assert row["hook_injection_after_drain"]["continuation_complete"]
+    assert row["recoverable_after_drain"]
+    assert not row["direct"]["continuation_complete"] and not row["automatic_end_to_end"]
+    assert row["wrong_adoption"] == 0
+    assert row["owner_review_items"] == (2 if approval == "strict" else 1)
+    assert row["model_calls"] == row["model_cost"] == 0
+
+
 def test_no_wrong_adoption_and_review_cost_are_separate_from_model_cost(cold_rows):
     for row in cold_rows:
         assert row["wrong_adoption"] == 0

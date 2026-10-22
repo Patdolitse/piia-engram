@@ -157,13 +157,17 @@ def print_table(rows: list[dict], *, header: bool = True) -> None:
 
 
 class Trial:
-    def __init__(self, base: Path, case: dict, direction: tuple[str, str], integration: str, approval: str):
+    def __init__(self, base: Path, case: dict, direction: tuple[str, str], integration: str, approval: str,
+                 *, task_checkpoint: bool = False):
         self.base, self.case = base, case
         self.sender, self.receiver = direction
         self.tool = CLIENTS[self.sender]
         self.integration, self.approval = integration, approval
         self.store = base / "store"
         self.env = isolated_env(base / "profile", self.store, approval)
+        if task_checkpoint:
+            self.env["ENGRAM_HOOK_TASK_CHECKPOINT_V1"] = "1"
+            self.env["ENGRAM_HOOK_TRANSCRIPT_ROOTS"] = json.dumps([str(base.resolve())])
         self.steps: list[dict] = []
         self.observations: dict = {}
         self.checks: dict[str, bool] = {}
@@ -422,7 +426,8 @@ class Trial:
             "steps": self.steps, "elapsed_ms": round((time.perf_counter()-started)*1000, 3)}
 
 
-async def run_matrix(work_dir: Path, *, cases: list[dict] | None = None) -> dict:
+async def run_matrix(work_dir: Path, *, cases: list[dict] | None = None,
+                     task_checkpoint: bool = False) -> dict:
     # Require a fresh explicit root: never reuse somebody else's store or fixtures.
     work_dir = work_dir.resolve()
     work_dir.mkdir(parents=True, exist_ok=False)
@@ -433,7 +438,8 @@ async def run_matrix(work_dir: Path, *, cases: list[dict] | None = None) -> dict
             for integration in ("manual_mcp", "automatic_hooks"):
                 for approval in ("default", "strict"):
                     key = f"{case['id']}-{CLIENTS[direction[0]]}-{integration}-{approval}"
-                    trial = Trial(work_dir / key, case, direction, integration, approval)
+                    trial = Trial(work_dir / key, case, direction, integration, approval,
+                                  task_checkpoint=task_checkpoint)
                     try:
                         row = await asyncio.wait_for(trial.run(), timeout=180)
                     except Exception as exc:
@@ -447,6 +453,7 @@ async def run_matrix(work_dir: Path, *, cases: list[dict] | None = None) -> dict
                     write_json(work_dir / "partial-results.json", rows)
                     print_table([row], header=False)
     return {"schema": "synthetic_continuity_matrix.v1", "synthetic": True,
+        "task_checkpoint_enabled": task_checkpoint,
         "real_host_verified": False, "model_calls": 0, "model_cost": 0, "cases": len(cases or load_cases()),
         "rows": rows, "accepted_count": sum(row["accepted"] for row in rows),
         "wrong_adoption": sum(row.get("wrong_adoption", 0) for row in rows),
@@ -458,9 +465,10 @@ def main() -> int:
     parser.add_argument("--work-dir", type=Path, required=True, help="New isolated fixture/evidence directory")
     parser.add_argument("--output", type=Path, required=True, help="JSON result path")
     parser.add_argument("--scenario", choices=[case["id"] for case in load_cases()])
+    parser.add_argument("--task-checkpoint", action="store_true", help="Explicit synthetic opt-in cohort")
     args = parser.parse_args()
     cases = [case for case in load_cases() if case["id"] == args.scenario] if args.scenario else None
-    result = asyncio.run(run_matrix(args.work_dir, cases=cases))
+    result = asyncio.run(run_matrix(args.work_dir, cases=cases, task_checkpoint=args.task_checkpoint))
     write_json(args.output, result)
     print(f"Accepted {result['accepted_count']}/{len(result['rows'])}; errors {result['error_count']}; "
           f"wrong adoption {result['wrong_adoption']}; model cost 0")
