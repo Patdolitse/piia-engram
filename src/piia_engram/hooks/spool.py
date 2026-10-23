@@ -21,6 +21,7 @@ MAX_PENDING_EVENTS = 1000
 MAX_PENDING_BYTES = 16 * 1024 * 1024
 MAX_EVENT_BYTES = 128 * 1024
 MAX_MISSING_TRANSCRIPT_ATTEMPTS = 3
+DEFAULT_DIRECT_DEADLINE_SECONDS = 10.0
 PLAINTEXT_GATE_WAIT = 0.25
 MAX_MISSING_TRANSCRIPT_AGE_SECONDS = 7 * 86400
 CLEANUP_CANDIDATE_AGE_SECONDS = 7 * 86400
@@ -135,7 +136,11 @@ def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None,
     """Fail-soft producer. Returns the published event ID, or an empty string."""
     try:
         root = store_root(root).resolve()
-        deadline = deadline if deadline is not None else time.monotonic() + 1.0
+        # Hook producers always pass their own lifecycle deadline. Direct library
+        # callers get a longer bound so a cold import on a slow machine does not
+        # silently drop the event.
+        deadline = (deadline if deadline is not None
+                    else time.monotonic() + DEFAULT_DIRECT_DEADLINE_SECONDS)
         if not isinstance(kind, str) or kind not in KINDS or KINDS[kind] != client:
             raise ValueError("unsupported hook kind")
         event_id = uuid.uuid4().hex
