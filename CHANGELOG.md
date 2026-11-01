@@ -6,19 +6,23 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.27.0] - 2026-11-01
 
 ### Added
 
 - Optional labelled task checkpoints for Claude Code Stop/PreCompact hooks, with an explicit transcript-root allowlist, bounded producer snapshots, privacy checks before persistence, frozen retry inputs and native unreviewed resume fields. Default capture and client registration are unchanged. Queue encryption is independent; downstream session Markdown, digests and publication intermediates remain plaintext. PreCompact capture is best effort. See the [opt-in guide](docs/task-checkpoint.md).
 
-- Hook queue body protection on the encryption-enabled root, with authenticated event binding, a shared plaintext-publication/enablement gate, bounded intent discovery and encoding, and read-only recovery diagnostics. This is root-local opt-in; copies must preserve policy and original salt. Existing plaintext queues remain readable; downstream archives, digests and other generated outputs remain outside this protection. See the [scope and recovery guide](docs/hook-queue-protection.md).
+- Hook queue body protection on the encryption-enabled root, with authenticated event binding, a shared plaintext-publication/enablement gate, bounded intent discovery and encoding, and read-only recovery diagnostics. This is root-local opt-in; copies must preserve policy and original salt. Known limits: an incomplete restore that loses both the required marker and the original salt, a second root or host without the secret, or a secret configured before initialization leaves no durable encryption intent, and capture then behaves as an unencrypted root. Existing plaintext queues remain readable; downstream archives, digests and other generated outputs remain outside this protection. See the [scope and recovery guide](docs/hook-queue-protection.md).
 
 ### Fixed
 
 - Codex conversation capture supports current rollout message formats while preserving legacy capture, excluding injected instructions and tool payloads, and avoiding mirrored messages.
 
 - Hook-origin knowledge audit writes always omit candidate text. Cursor debug output records fixed shape/count metadata, and new debounce keys are hashed.
+
+### Release Evidence
+
+See the [release evidence declarations](release-evidence/README.md) for the checks required before publication.
 
 ## [4.26.0] - 2026-10-21
 

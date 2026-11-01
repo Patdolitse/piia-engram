@@ -13,7 +13,7 @@
   "retrieval_modes": [
     "keyword_no_persistent_index"
   ],
-  "runtime_version": "4.26.0",
+  "runtime_version": "4.27.0",
   "schema": "engram.embedded_capability_witness.v1",
   "snapshot_schema": "engram.embedded_task_context_snapshot.v1",
   "source_digests": {
@@ -22,5 +22,5 @@
     "embedded/handshake.py": "4d98f06f9989a3b10eea7bc509878983b6f361e491971f61845708f4231c9560",
     "embedded/snapshot.py": "247421d90adf8b35d0f89e087f170381fa2229a15bf5a6e7c33e1b6d1a8ee31a"
   },
-  "witness_hash": "2441fdaf51df9597bfe596f35166dcec4758723f0ce44805b354dfea2d9ab6ab"
+  "witness_hash": "f454bf7f81947df6f74deb92bd21466a52a633456121f1911e76c43c53b3e0a2"
 }
