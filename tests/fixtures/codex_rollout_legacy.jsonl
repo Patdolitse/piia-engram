@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"synthetic-legacy-session","cwd":"/synthetic/project"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"  检查示例。\n保留空格  \n"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\nSYNTHETIC_AGENT_INSTRUCTIONS"}]}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"\n  已完成。  "}}
+{"type":"event_msg","payload":{"type":"token_count","message":"SYNTHETIC_TOKEN_COUNT"}}

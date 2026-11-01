@@ -16,6 +16,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- Codex conversation capture supports current rollout message formats while preserving legacy capture, excluding injected instructions and tool payloads, and avoiding mirrored messages.
+
 - Hook-origin knowledge audit writes always omit candidate text. Cursor debug output records fixed shape/count metadata, and new debounce keys are hashed.
 
 ## [4.26.0] - 2026-10-21
