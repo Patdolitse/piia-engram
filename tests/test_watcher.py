@@ -924,3 +924,17 @@ def test_watcher_cli_once_routes_to_scanner(install_env, fake_engram, capsys):
     assert install_env.mod.run_watcher_cli(["once"]) == 0
     out = json.loads(capsys.readouterr().out.strip())
     assert "discovered" in out
+
+
+def test_codex_current_format_drops_generic_wrapped_user_parts():
+    from piia_engram.watcher import codex_adapter as c
+
+    def entry(text):
+        return {"type": "response_item", "payload": {"type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": text}]}}
+
+    for wrapped in ("<collaboration_mode>plan</collaboration_mode>", "  <user_action kind='x'>run</user_action>",
+                    "<turn_aborted/>", "<permissions_instructions>allow</permissions_instructions>"):
+        assert c._current_message(entry(wrapped)) is None
+    kept = c._current_message(entry("Please compare 3 < 4 in the sample"))
+    assert kept == ("response", "user", "Please compare 3 < 4 in the sample")
