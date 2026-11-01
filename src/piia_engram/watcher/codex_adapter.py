@@ -42,11 +42,16 @@ ENV_SESSIONS_ROOT = "ENGRAM_WATCH_CODEX_SESSIONS"
 # the whole contaminated part rather than attempting to interpret its markup.
 _INJECTED_INSTRUCTIONS = re.compile(
     r"#\s*AGENTS\.md\b|"
-    r"<(?:environment_context|skills_instructions|instructions|user_instructions|"
+    r"<(?:environment_context|skills_instructions|instructions|user_instructions|permissions_instructions|"
     r"permissions|system-reminder|skills)\b|"
     r"^\s*#{1,6}\s+(?:available\s+)?skills\b",
     re.IGNORECASE | re.MULTILINE,
 )
+
+
+# Host wrappers such as <collaboration_mode> or <user_action> are not the user's
+# own words: a user part that starts with a tag-like wrapper is dropped.
+_WRAPPED_PART = re.compile(r"\A\s*<[A-Za-z][\w.:-]*[\s>/]")
 
 
 def _current_message(entry: dict) -> tuple[str, str, str] | None:
@@ -88,7 +93,7 @@ def _current_message(entry: dict) -> tuple[str, str, str] | None:
             continue
         if not isinstance(text, str) or not text.strip():
             continue
-        if role == "user" and _INJECTED_INSTRUCTIONS.search(text):
+        if role == "user" and (_INJECTED_INSTRUCTIONS.search(text) or _WRAPPED_PART.match(text)):
             continue
         parts.append(text.strip())
     message = "\n".join(parts)
