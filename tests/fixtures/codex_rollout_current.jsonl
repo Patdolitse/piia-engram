@@ -1,0 +1,13 @@
+{"type":"session_meta","payload":{"id":"synthetic-codex-session","cwd":"/synthetic/project"}}
+{"type":"response_item","payload":{"type":"message","role":"system","content":[{"type":"input_text","text":"SYNTHETIC_SYSTEM_INSTRUCTIONS"}]}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"SYNTHETIC_DEVELOPER_INSTRUCTIONS"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\nSYNTHETIC_AGENT_INSTRUCTIONS"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\nSYNTHETIC_ENVIRONMENT\n</environment_context>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skills_instructions>\nSYNTHETIC_SKILLS\n</skills_instructions>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","id":"synthetic-input","content":[{"type":"input_text","text":"修复示例计数器。"},{"type":"text","text":"保留现有接口。"}]}}
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"synthetic-user-item","content":[{"type":"text","text":"修复示例计数器。"},{"type":"text","text":"保留现有接口。"}]}}}
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","content":[{"type":"text","text":"SYNTHETIC_TOOL_BODY"}],"result":"SYNTHETIC_TOOL_RESULT"}}}
+{"type":"response_item","payload":{"type":"function_call_output","output":"SYNTHETIC_TOOL_OUTPUT"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","channel":"analysis","content":[{"type":"output_text","text":"SYNTHETIC_ANALYSIS"}]}}
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"synthetic-agent-item","phase":"final","content":[{"type":"Text","text":"已更新示例。"},{"type":"Text","text":"合成检查通过。"}]}}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","id":"synthetic-agent-item","content":[{"type":"output_text","text":"已更新示例。"},{"type":"output_text","text":"合成检查通过。"}]}}

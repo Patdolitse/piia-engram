@@ -198,6 +198,181 @@ def test_parse_tail_truncation_keeps_conclusion(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+_ROLLOUT_FIXTURES = Path(__file__).parent / "fixtures"
+_CURRENT_SUMMARY = "[user] 修复示例计数器。\n保留现有接口。\n[assistant] 已更新示例。\n合成检查通过。"
+
+
+def _current_rollout_line(role: str, text: str, source: str = "completed") -> str:
+    if source == "response":
+        return json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": role,
+            "content": [{"type": "input_text" if role == "user" else "output_text", "text": text}],
+        }}, ensure_ascii=False)
+    return json.dumps({"type": "event_msg", "payload": {
+        "type": "item_completed", "item": {
+            "type": "UserMessage" if role == "user" else "AgentMessage",
+            "content": [{"type": "text" if role == "user" else "Text", "text": text}],
+        },
+    }}, ensure_ascii=False)
+
+
+def test_codex_current_synthetic_fixture_captures_only_conversation():
+    parsed = codex_adapter.parse(_ROLLOUT_FIXTURES / "codex_rollout_current.jsonl")
+    assert parsed["summary"] == _CURRENT_SUMMARY
+    assert parsed["session_id"] == "synthetic-codex-session"
+    assert parsed["project_folder"] == "/synthetic/project"
+    assert parsed["end_offset"] == (_ROLLOUT_FIXTURES / "codex_rollout_current.jsonl").stat().st_size
+
+
+@pytest.mark.parametrize("max_chars", [4000, 24])
+def test_codex_legacy_synthetic_fixture_is_byte_identical(max_chars):
+    parsed = codex_adapter.parse(_ROLLOUT_FIXTURES / "codex_rollout_legacy.jsonl", max_chars=max_chars)
+    expected = "[user] 检查示例。\n保留空格\n[assistant] 已完成。"[-max_chars:]
+    assert parsed["summary"].encode("utf-8") == expected.encode("utf-8")
+    assert parsed["session_id"] == "synthetic-legacy-session"
+
+
+@pytest.mark.parametrize("source", ["response", "completed", "top_completed", "direct_completed"])
+@pytest.mark.parametrize("role", ["user", "assistant"])
+def test_codex_current_message_envelopes(tmp_path, source, role):
+    line = _current_rollout_line(role, "synthetic text", "response" if source == "response" else "completed")
+    entry = json.loads(line)
+    if source in ("top_completed", "direct_completed"):
+        entry["type"] = "item_completed"
+        if source == "direct_completed":
+            entry["payload"] = entry["payload"]["item"]
+    path = _write_rollout(tmp_path, extra_lines=[json.dumps(entry)])
+    assert codex_adapter.parse(path)["summary"] == f"[{role}] synthetic text"
+
+
+@pytest.mark.parametrize("source", ["response", "completed"])
+@pytest.mark.parametrize("injection", [
+    "# AGENTS.md instructions\nSYNTHETIC_INJECTION",
+    "<environment_context>SYNTHETIC_INJECTION</environment_context>",
+    "<INSTRUCTIONS>SYNTHETIC_INJECTION</INSTRUCTIONS>",
+    "<permissions instructions>SYNTHETIC_INJECTION</permissions>",
+    "<skills_instructions>SYNTHETIC_INJECTION</skills_instructions>",
+    "## Skills\nSYNTHETIC_INJECTION",
+])
+def test_codex_current_injected_user_parts_are_excluded(tmp_path, source, injection):
+    entry = json.loads(_current_rollout_line("user", injection, source))
+    item = entry["payload"] if source == "response" else entry["payload"]["item"]
+    item["content"].extend([
+        {"type": "text", "text": "clean synthetic request"},
+        {"type": "tool_result", "text": "SYNTHETIC_TOOL_BODY"},
+        {"type": "image", "text": "SYNTHETIC_IMAGE_BODY"},
+    ])
+    path = _write_rollout(tmp_path, extra_lines=[json.dumps(entry)])
+    assert codex_adapter.parse(path)["summary"] == "[user] clean synthetic request"
+
+
+@pytest.mark.parametrize("payload", [
+    {"type": "message", "role": "developer", "content": [{"type": "text", "text": "noise"}]},
+    {"type": "message", "role": "system", "content": [{"type": "text", "text": "noise"}]},
+    {"type": "UserMessage", "role": "developer", "content": [{"type": "text", "text": "noise"}]},
+    {"type": "McpToolCall", "content": [{"type": "text", "text": "noise"}]},
+    {"type": "message", "role": "tool", "content": [{"type": "text", "text": "noise"}]},
+    {"type": "message", "role": "assistant", "channel": "analysis", "content": [{"type": "text", "text": "noise"}]},
+    {"type": "message", "role": "user", "content": "not a list"},
+    {"type": "message", "role": "user", "content": [None, "noise", {"type": "text", "text": 17}]},
+    {"type": "message", "role": "user", "content": [{"type": None, "text": "noise"}]},
+    {"type": "item_completed", "item": []},
+])
+def test_codex_current_ignores_non_conversation_and_malformed_parts(tmp_path, payload):
+    path = _write_rollout(tmp_path, extra_lines=[json.dumps({"type": "response_item", "payload": payload})])
+    assert codex_adapter.parse(path)["summary"] == ""
+
+
+def test_codex_legacy_events_remain_authoritative_with_current_mirrors(tmp_path):
+    path = _write_rollout(tmp_path, turns=[("user", "same"), ("assistant", "answer")], extra_lines=[
+        _current_rollout_line("user", "same", "response"),
+        _current_rollout_line("assistant", "answer"),
+        _current_rollout_line("assistant", "extra response-only text", "response"),
+    ])
+    assert codex_adapter.parse(path)["summary"] == "[user] same\n[assistant] answer"
+
+
+@pytest.mark.parametrize("first_source", ["response", "completed"])
+def test_codex_current_mirrors_split_across_incremental_scans(tmp_path, first_source):
+    other_source = "completed" if first_source == "response" else "response"
+    path = _write_rollout(tmp_path, extra_lines=[_current_rollout_line("user", "repeat", first_source)])
+    first = codex_adapter.parse(path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_current_rollout_line("user", "repeat", other_source) + "\n")
+    mirror = codex_adapter.parse(path, start_offset=first["end_offset"])
+    assert mirror["summary"] == ""
+    assert mirror["end_offset"] == path.stat().st_size
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_current_rollout_line("user", "repeat", first_source) + "\n")
+        handle.write(_current_rollout_line("user", "repeat", other_source) + "\n")
+    repeated = codex_adapter.parse(path, start_offset=mirror["end_offset"])
+    assert repeated["summary"] == "[user] repeat"
+    assert repeated["session_id"] == first["session_id"]
+    assert repeated["project_folder"] == first["project_folder"]
+    assert codex_adapter.parse(path)["summary"] == "[user] repeat\n[user] repeat"
+
+
+def test_codex_current_bounds_and_unterminated_tail(tmp_path):
+    path = _write_rollout(tmp_path, extra_lines=[_current_rollout_line("user", "x" * 2000)])
+    first = codex_adapter.parse(path, max_chars=80)
+    assert first["summary"] == "x" * 80
+    final = _current_rollout_line("assistant", "synthetic final")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(final[:20])
+    incomplete = codex_adapter.parse(path, start_offset=first["end_offset"])
+    assert incomplete["summary"] == ""
+    assert incomplete["end_offset"] == first["end_offset"]
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(final[20:] + "\n")
+    completed = codex_adapter.parse(path, start_offset=incomplete["end_offset"])
+    assert completed["summary"] == "[assistant] synthetic final"
+
+
+def test_codex_current_bounded_tail_and_malformed_history(tmp_path):
+    path = _write_rollout(tmp_path, extra_lines=[
+        _current_rollout_line("user", "old request"),
+        json.dumps({"type": "event_msg", "payload": {"type": [], "message": "noise"}}),
+    ])
+    offset = path.stat().st_size
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_current_rollout_line("assistant", "new answer") + "\n")
+    assert codex_adapter.parse(path, start_offset=offset)["summary"] == "[assistant] new answer"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "padding", "payload": {"text": "x" * 513000}}) + "\n")
+        handle.write(_current_rollout_line("assistant", "tail answer") + "\n")
+    parsed = codex_adapter.parse(path, max_chars=60)
+    assert parsed["summary"] == "[assistant] tail answer"
+    assert parsed["end_offset"] == path.stat().st_size
+    offset = parsed["end_offset"]
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_current_rollout_line("assistant", "tail answer", "response") + "\n")
+    assert codex_adapter.parse(path, start_offset=offset)["summary"] == ""
+
+
+def test_codex_current_mirror_of_previous_legacy_event_is_not_recaptured(tmp_path):
+    path = _write_rollout(tmp_path, turns=[("user", "legacy request")])
+    first = codex_adapter.parse(path)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_current_rollout_line("user", "legacy request", "response") + "\n")
+    assert codex_adapter.parse(path, start_offset=first["end_offset"])["summary"] == ""
+
+
+def test_scan_current_synthetic_fixture_saves_and_deduplicates(fake_engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_WATCHER_DEBOUNCE", "0")
+    day = _day_dir(codex_adapter.sessions_root())
+    path = day / "rollout-synthetic-current.jsonl"
+    path.write_text((_ROLLOUT_FIXTURES / "codex_rollout_current.jsonl").read_text(encoding="utf-8"), encoding="utf-8")
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1
+    assert fake_engram.calls[0]["content"].endswith(_CURRENT_SUMMARY)
+    assert core.scan_once(["codex"], baseline_existing=False)["saved"] == 0
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_current_rollout_line("assistant", "synthetic next turn") + "\n")
+    assert core.scan_once(["codex"], baseline_existing=False)["saved"] == 1
+    assert fake_engram.calls[-1]["content"].endswith("[assistant] synthetic next turn")
+    assert "修复示例" not in fake_engram.calls[-1]["content"]
+
+
 def test_scan_saves_new_transcript_to_contexts(fake_engram):
     day = _day_dir(codex_adapter.sessions_root())
     _write_rollout(day, turns=[("user", "hello"), ("assistant", "world")])

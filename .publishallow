@@ -25,6 +25,8 @@ src/**
 src/piia_engram/hooks/_spool_protection.py
 docs/hook-queue-protection.md
 tests/**
+tests/fixtures/codex_rollout_current.jsonl
+tests/fixtures/codex_rollout_legacy.jsonl
 tests/test_maint426_review.py
 tests/test_isolated_events.py
 tests/test_isolated_recall_receipts.py

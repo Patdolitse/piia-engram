@@ -10,10 +10,12 @@ Line shapes that matter here:
 - ``{"type": "session_meta", "payload": {"id": <uuid>, "cwd": <workspace>}}``
   — first line; carries the session id and working directory.
 - ``{"type": "event_msg", "payload": {"type": "user_message", "message": str}}``
-  — the *clean* user input. (``response_item`` user messages are polluted by
-  AGENTS.md / permissions injections, so they are deliberately ignored.)
+  — the legacy clean user input.
 - ``{"type": "event_msg", "payload": {"type": "agent_message", "message": str}}``
   — the assistant's final reply for a turn.
+- Current rollouts use ``response_item`` messages or ``item_completed``
+  events containing ``UserMessage`` / ``AgentMessage`` items. Only text
+  content parts are captured; injected instruction blocks are excluded.
 
 Codex has no usable hook slot (its ``notify`` config slot is occupied by the
 Codex App's own computer-use component), so this adapter feeds the universal
@@ -24,16 +26,121 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from ._segments import read_segment
+from ._segments import MAX_SEGMENT_BYTES, read_segment
 
 TOOL_NAME = "codex"
 
 #: Override for the sessions root (tests, exotic layouts).
 ENV_SESSIONS_ROOT = "ENGRAM_WATCH_CODEX_SESSIONS"
+
+# User-role response items can also carry host-injected instructions. Reject
+# the whole contaminated part rather than attempting to interpret its markup.
+_INJECTED_INSTRUCTIONS = re.compile(
+    r"#\s*AGENTS\.md\b|"
+    r"<(?:environment_context|skills_instructions|instructions|user_instructions|"
+    r"permissions|system-reminder|skills)\b|"
+    r"^\s*#{1,6}\s+(?:available\s+)?skills\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _current_message(entry: dict) -> tuple[str, str, str] | None:
+    """Return (source, role, text) for an allowlisted completed message."""
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    etype = entry.get("type")
+    if etype == "response_item":
+        source, item = "response", payload
+    elif etype == "item_completed" or (
+        etype == "event_msg" and payload.get("type") == "item_completed"
+    ):
+        source, item = "completed", payload.get("item", payload)
+    else:
+        return None
+    if not isinstance(item, dict):
+        return None
+    itype = item.get("type")
+    if itype in ("UserMessage", "AgentMessage"):
+        role = "user" if itype == "UserMessage" else "assistant"
+        if item.get("role", role) != role:
+            return None
+    elif itype == "message" and item.get("role") in ("user", "assistant"):
+        role = item["role"]
+    else:
+        return None
+    if item.get("channel") == "analysis" or item.get("phase") == "analysis":
+        return None
+    content = item.get("content")
+    if not isinstance(content, list):
+        return None
+    parts: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        ptype, text = part.get("type"), part.get("text")
+        if not isinstance(ptype, str) or ptype.lower() not in ("input_text", "output_text", "text"):
+            continue
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if role == "user" and _INJECTED_INSTRUCTIONS.search(text):
+            continue
+        parts.append(text.strip())
+    message = "\n".join(parts)
+    return (source, role, message) if message else None
+
+
+def _previous_messages(path: Path, offset: int) -> list[tuple[str, str, str]]:
+    """Bounded look-behind for mirrors split across incremental scans."""
+    seek = max(0, offset - MAX_SEGMENT_BYTES)
+    with open(path, "rb") as handle:
+        handle.seek(seek)
+        raw = handle.read(offset - seek)
+    if seek:
+        raw = raw.partition(b"\n")[2]  # discard a potentially partial head
+    messages: list[tuple[str, str, str]] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        message = _current_message(entry)
+        if message:
+            messages.append(message)
+        elif entry.get("type") == "event_msg":
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            ptype = payload.get("type")
+            role = "user" if ptype == "user_message" else "assistant" if ptype == "agent_message" else ""
+            text = payload.get("message")
+            if role and isinstance(text, str) and text.strip():
+                messages.append(("legacy", role, text.strip()))
+    return messages
+
+
+def _current_lines(
+    messages: list[tuple[str, str, str]], previous: list[tuple[str, str, str]]
+) -> list[str]:
+    # Count occurrences per source: mirror streams share an occurrence, while
+    # repeated identical turns in the same stream must remain separate turns.
+    counts: dict[tuple[str, str], dict[str, int]] = {}
+    lines: list[str] = []
+    for history, batch in ((True, previous), (False, messages)):
+        for source, role, message in batch:
+            sources = counts.setdefault((role, message), {})
+            captured = max(sources.values(), default=0)
+            sources[source] = sources.get(source, 0) + 1
+            if not history and sources[source] > captured:
+                lines.append(f"[{role}] {message}")
+    return lines
 
 
 def sessions_root() -> Path:
@@ -119,6 +226,7 @@ def parse(path: Path, max_chars: int = 4000, start_offset: int = 0) -> dict:
     session_id = ""
     project_folder = ""
     lines: list[str] = []
+    current: list[tuple[str, str, str]] = []
     text, end_offset = read_segment(path, start_offset)
 
     for raw_line in text.splitlines():
@@ -134,6 +242,9 @@ def parse(path: Path, max_chars: int = 4000, start_offset: int = 0) -> dict:
         payload = entry.get("payload")
         if not isinstance(payload, dict):
             continue
+        message_item = _current_message(entry)
+        if message_item:
+            current.append(message_item)
         etype = entry.get("type")
         if etype == "session_meta":
             sid = payload.get("id")
@@ -151,6 +262,12 @@ def parse(path: Path, max_chars: int = 4000, start_offset: int = 0) -> dict:
                 lines.append(f"[user] {message.strip()}")
             elif ptype == "agent_message":
                 lines.append(f"[assistant] {message.strip()}")
+
+    # Legacy clean events remain authoritative, including their exact ordering
+    # and whitespace behaviour. Current formats are a fallback for new hosts.
+    if not lines and current:
+        previous = _previous_messages(path, start_offset) if 0 < start_offset <= end_offset else []
+        lines = _current_lines(current, previous)
 
     if start_offset > 0 and not (session_id and project_folder):
         head_sid, head_cwd = _read_head_meta(path)
