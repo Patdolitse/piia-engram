@@ -188,7 +188,7 @@ def test_secure_optional_dependency_has_cryptography():
     """secure extras 应声明加密所需的 cryptography。"""
     data = _load()
     secure_deps = data["project"]["optional-dependencies"]["secure"]
-    assert "cryptography>=41.0" in secure_deps
+    assert "cryptography>=50.0" in secure_deps
 
 
 def test_all_optional_dependency():
@@ -196,7 +196,7 @@ def test_all_optional_dependency():
     data = _load()
     all_deps = data["project"]["optional-dependencies"]["all"]
     assert "uvicorn>=0.20" in all_deps
-    assert "cryptography>=41.0" in all_deps
+    assert "cryptography>=50.0" in all_deps
 
 
 def test_ci_workflow_exists():
@@ -233,7 +233,7 @@ def test_publish_workflow_release_trigger_and_trusted_publishing():
     assert "release_sanitize_check.py --internal --strict" in content
     assert "python -m build" in content
     assert "check_release_artifact_private_terms.py dist --strict" in content
-    assert "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33" in content
+    assert "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086" in content
     assert "skip-existing: true" in content
     assert "secrets.PYPI_API_TOKEN" not in content
     assert "password:" not in content

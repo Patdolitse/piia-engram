@@ -59,7 +59,7 @@ ui = [
     "uvicorn>=0.20",
 ]
 secure = [
-    "cryptography>=41.0",
+    "cryptography>=50.0",
 ]
 # v4.0 hybrid search (optional): semantic vector layer on top of the
 # zero-dep FTS5 index. ~230-280MB once the embedding model is fetched.
@@ -78,7 +78,7 @@ reader = [
 all = [
     "starlette>=0.40",
     "uvicorn>=0.20",
-    "cryptography>=41.0",
+    "cryptography>=50.0",
     "sqlite-vec>=0.1.0",
     "fastembed>=0.3.0",
     "httpx>=0.27,<1",
