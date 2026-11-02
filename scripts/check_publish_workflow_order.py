@@ -41,7 +41,7 @@ SUPPLY_CHAIN_ORDER_MARKERS = (
     # gh-action-pypi-publish uploads every file in dist/ and fails on
     # non-distribution files, so the SBOM must be removed before publish.
     ("SBOM removal before publish", "rm dist/piia-engram-sbom.cdx.json"),
-    ("PyPI publish", "uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"),
+    ("PyPI publish", "uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086"),
 )
 ATTEST_ACTION_RE = re.compile(r"uses:\s*actions/(attest(?:-build-provenance|-sbom)?)@([^\s#]+)")
 STEP_RE = re.compile(r"(?ms)^      - name: (?P<name>[^\n]+)\n(?P<body>.*?)(?=^      - name: |\Z)")
