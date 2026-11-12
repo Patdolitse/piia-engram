@@ -254,6 +254,56 @@ def test_scan_passes_checkpoint_to_save_agent_context(fake_engram, opt_in, monke
     assert fake_engram.calls[-1]["task_checkpoint"] is None  # no block -> none
 
 
+def test_split_mirror_checkpoint_survives_across_two_scans(opt_in, monkeypatch):
+    """The completed copy arrives one scan after its response mirror.
+
+    Scan N captures the mirror (a save without a checkpoint); scan N+1 sees
+    only the completed copy, which the mirror-aware dedup drops from the
+    summary — yet its five-label block still yields a checkpoint that must be
+    saved, not skipped with an advancing watermark.
+    """
+    monkeypatch.setenv("ENGRAM_WATCHER_DEBOUNCE", "0")
+    path = _rollout([_completed_line("user", "synthetic request"),
+                     _response_line("assistant", BLOCK)])
+    assert core.scan_once(["codex"], baseline_existing=False)["saved"] == 1
+    assert "task_checkpoint" not in _sidecar()  # mirrors are never candidates
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(_completed_line("assistant", BLOCK) + "\n")
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 1 and counters["errors"] == 0
+    assert _sidecar()["task_checkpoint"]["goal"] == GOAL
+    # The rendered labelled lines are the segment's content.
+    session_md = _sidecar_path().with_name(f"{UUID}.md").read_text(encoding="utf-8")
+    rendered = ["Goal: Ship the sample parity feature",
+                "Constraint: Keep the sample budget intact",
+                "Risk: The sample reviewer is offline",
+                "Last failure reason: The sample check failed",
+                "Next: Run the sample check again"]
+    tail = session_md.split("---\n")[-1]
+    for line in rendered:
+        assert line in tail
+    from piia_engram.core import Engram
+    brief = Engram().get_resume_brief(project_folder=PROJECT, token_budget=2000)
+    section = _handoff_section(brief["markdown"])
+    for value in VALUES:
+        assert value in section
+    assert brief["handoff_meta"]["last_failure_reason"] == FAILURE
+
+
+def test_empty_segment_without_checkpoint_is_still_skipped(fake_engram, monkeypatch):
+    monkeypatch.setenv("ENGRAM_WATCHER_DEBOUNCE", "0")
+    path = _rollout([_completed_line("user", "synthetic request")])
+    core.scan_once(["codex"], baseline_existing=False)
+    assert len(fake_engram.calls) == 1
+    with path.open("a", encoding="utf-8") as handle:
+        # A mirror of the already-captured user turn: deduped to an empty
+        # summary, no checkpoint -> the skip path is unchanged.
+        handle.write(_response_line("user", "synthetic request") + "\n")
+    counters = core.scan_once(["codex"], baseline_existing=False)
+    assert counters["saved"] == 0 and counters["skipped"] >= 1
+    assert len(fake_engram.calls) == 1
+
+
 def test_save_agent_context_attaches_checkpoint_even_without_signal(tmp_path, opt_in):
     from piia_engram.core import Engram
     engram = Engram()
