@@ -100,6 +100,31 @@ def _current_message(entry: dict) -> tuple[str, str, str] | None:
     return (source, role, message) if message else None
 
 
+def _segment_task_checkpoint(messages: list[tuple[str, str, str]]) -> dict | None:
+    """Opt-in task snapshot from the segment's last completed assistant message.
+
+    Mirrors the Claude Stop hook's "latest assistant record" contract: only the
+    final ``item_completed`` assistant message of this segment is a candidate.
+    Mirrored ``response`` duplicates, legacy ``agent_message`` events, user text
+    and host-wrapped parts are never parsed, so the v4.27.0 privacy behaviour
+    is unchanged. Gated on the same opt-in variable as the hook path; the
+    rollout capture event is only accepted because this caller explicitly
+    allows it. A segment whose last assistant message carries no valid
+    five-label block simply yields no checkpoint.
+    """
+    from ..task_checkpoint import EVENTS, OPT_IN, ROLLOUT_EVENT, parse_text
+
+    if os.environ.get(OPT_IN) != "1":
+        return None
+    for source, role, text in reversed(messages):
+        if source == "completed" and role == "assistant":
+            task, _reason = parse_text(
+                text, capture_event=ROLLOUT_EVENT,
+                allowed_events=EVENTS | {ROLLOUT_EVENT})
+            return task
+    return None
+
+
 def _previous_messages(path: Path, offset: int) -> list[tuple[str, str, str]]:
     """Bounded look-behind for mirrors split across incremental scans."""
     seek = max(0, offset - MAX_SEGMENT_BYTES)
@@ -221,7 +246,10 @@ def _read_head_meta(path: Path) -> tuple[str, str]:
 def parse(path: Path, max_chars: int = 4000, start_offset: int = 0) -> dict:
     """Turn one rollout file (or its new tail) into a checkpoint payload.
 
-    Returns ``{"session_id", "project_folder", "summary", "end_offset"}``.
+    Returns ``{"session_id", "project_folder", "summary", "end_offset"}`` and,
+    when ``ENGRAM_HOOK_TASK_CHECKPOINT_V1=1`` and the segment's last completed
+    assistant message ends with a valid five-label block, that block as a
+    validated ``task_checkpoint`` dict for :func:`save_agent_context`.
     With ``start_offset > 0`` only lines appended since that byte position
     are summarized (incremental capture); ``end_offset`` is where the next
     scan should resume. ``session_id`` falls back to the filename stem so a
@@ -280,9 +308,13 @@ def parse(path: Path, max_chars: int = 4000, start_offset: int = 0) -> dict:
         project_folder = project_folder or head_cwd
     if not session_id:
         session_id = path.stem
-    return {
+    result = {
         "session_id": session_id,
         "project_folder": project_folder,
         "summary": "\n".join(lines)[-max_chars:],
         "end_offset": end_offset,
     }
+    checkpoint = _segment_task_checkpoint(current)
+    if checkpoint:
+        result["task_checkpoint"] = checkpoint
+    return result

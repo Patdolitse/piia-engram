@@ -6,6 +6,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 新增
+
+- 任务检查点的可选开关现同样作用于 watcher 的 Codex rollout 捕获：在 watcher 进程环境中设置 `ENGRAM_HOOK_TASK_CHECKPOINT_V1=1` 后，分段中最后一条已完成助手消息末尾的五标签块会像 Claude Stop 快照一样附加到会话 digest，resume brief 因此带上目标、约束、阻塞、上次失败原因和下一步。watcher 路径无需配置 transcript 根目录白名单，不含有效标签块的分段保持既有捕获行为。详见[任务检查点说明](docs/task-checkpoint.zh-CN.md)。
+
 ## [4.27.0] - 2026-11-01
 
 ### 新增

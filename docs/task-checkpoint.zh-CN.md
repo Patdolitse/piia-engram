@@ -4,6 +4,8 @@
 
 Claude Code 的 Stop、PreCompact hook 可在入队前捕获一小段带明确标签的助手任务说明。
 **默认关闭，必须明确启用；启用队列加密不等于同意捕获正文。** hook 注册方式、安装向导和客户端配置均不改变。
+同一个开关也可让 Engram watcher 从 Codex rollout 记录捕获任务块，见下文
+[Codex rollout 捕获（watcher）](#codex-rollout-捕获watcher)。
 
 ## 启用
 
@@ -49,6 +51,39 @@ JSON 数组，不从事件、工作目录或客户端配置推断。只读取白
 
 反引号和波浪号围栏按 CommonMark 规则闭合：字符相同、长度不少于开头，且后面只能有空格或制表符。
 较短的标记行和带 info string 的标记行不会结束围栏，内部示例不会作为任务捕获。
+
+## Codex rollout 捕获（watcher）
+
+Codex 没有可用的 hook 槽位，因此同一开关也通过通用 watcher 生效。只需在 watcher
+进程（运行 `engram watcher` 或其安装的启动器）的环境中设置任务检查点变量：
+
+```sh
+export ENGRAM_HOOK_TASK_CHECKPOINT_V1=1
+```
+
+此路径不需要 `ENGRAM_HOOK_TRANSCRIPT_ROOTS` 白名单：watcher 本身只读取 Codex
+会话目录。每个新增 rollout 分段中，只有最后一条**已完成**（completed）的助手消息
+是候选；镜像 `response` 副本、旧版 `agent_message` 事件、用户正文和宿主包装内容
+一律不解析。助手必须以五标签块**结束**该消息。想在实践中获得检查点，可以把类似
+下面的指令加入你自己的 `AGENTS.md`（Engram 绝不会自动写入任何 `AGENTS.md` 或
+用户配置）：
+
+```markdown
+每个任务步骤的最终回复请以下面的块结尾（普通文本行，每行一个标签，块前留空行，
+不要放进代码围栏）：
+
+Goal: <一行目标>
+Constraint: <一行约束>
+Risk: <当前阻塞，没有则填 "unknown">
+Last failure reason: <最近一次失败，没有则填 "unknown">
+Next: <紧接着的下一步行动>
+```
+
+标签、围栏、唯一性、隐私过滤和长度限制与 hook 路径完全一致。捕获到的块会像
+Claude Stop 快照一样附加到 `session_digest.v1` 边车文件，`get_resume_brief` 因此
+带上 `codex` 来源的目标、约束、阻塞、上次失败原因和下一步。之后某个分段的最后
+一条已完成助手消息没有有效标签块时，按既有方式保存（启发式 digest，不附加检查点），
+与 Claude Stop 路径一致。
 
 ## 持久化和恢复
 

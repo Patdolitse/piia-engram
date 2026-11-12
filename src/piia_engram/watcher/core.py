@@ -60,6 +60,9 @@ WRITEBACK_ENV = "ENGRAM_WATCHER_WRITEBACK"
 #: ``parse(path, max_chars, start_offset=0) -> dict`` returning at least
 #: ``summary``; adapters that also return an integer ``end_offset`` get
 #: incremental capture (only bytes past the stored offset are re-read).
+#: An adapter may additionally return a validated ``task_checkpoint`` dict
+#: (opt-in, e.g. the Codex rollout five-label block); it is forwarded to
+#: ``save_agent_context`` as the internal keyword-only checkpoint argument.
 ADAPTERS: dict[str, dict[str, Callable[..., Any]]] = {
     codex_adapter.TOOL_NAME: {
         "discover": codex_adapter.discover,
@@ -371,6 +374,7 @@ def scan_once(
                     content=content,
                     session_id=parsed.get("session_id") or path.stem,
                     project_folder=project_folder,
+                    task_checkpoint=parsed.get("task_checkpoint"),
                 )
             except Exception as exc:  # noqa: BLE001
                 _log(f"{name}: save failed for {path.name}: {exc!r}")
