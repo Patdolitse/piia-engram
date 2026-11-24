@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ._log import log_failure
 from ._spool_protection import (CRYPTO_CODES, ProtectionError, PolicyGateBusy, QueueCodec,
-                                capture_deadline, check_deadline, ensure_required, loads,
+                                check_deadline, ensure_required, loads,
                                 policy_gate, required, required_with_budget, seal_with_budget)
 from ..atomic_replace import replace_with_retry
 
@@ -146,7 +146,8 @@ def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None,
         event_id = uuid.uuid4().hex
         event = {"schema": 1, "event_id": event_id, "kind": kind, "client": client,
                  "created_at": datetime.now(timezone.utc).isoformat(), "payload": payload}
-        deadline = capture_deadline(deadline)
+        # One deadline for policy reads and publication. Only key derivation and
+        # sealing are also held to their own crypto allowance (seal_with_budget).
         data, protected = seal_with_budget(root, event, deadline)
         check_deadline(deadline)
         directory = spool_dir(root)
