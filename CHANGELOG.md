@@ -12,6 +12,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - The Claude Code and Cursor SessionStart resume hooks: the brief's store-mode check runs once per read instead of once per nested read, and the session digest walk skips sessions without a digest and is bounded, so a brief on a store with many saved sessions no longer costs (session files x knowledge store size). The hook's read budget is 10 seconds by default (`ENGRAM_RESUME_HOOK_BUDGET_S` overrides it, capped below the registered hook timeout), and `engram doctor` reports budget timeouts from the last 7 days.
 
+- Hook capture no longer drops a Stop, PreCompact or write event just because a policy or marker file read is slow. The 0.5-second crypto allowance now bounds key derivation and sealing only; policy checks and publication use the hook's existing deadline, which is unchanged. Protection is unchanged: a root that requires protection still never publishes plaintext, and crypto work that exceeds its allowance still refuses.
+
 ## [4.27.0] - 2026-11-01
 
 ### Added
