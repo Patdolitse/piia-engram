@@ -6,6 +6,12 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Hook capture no longer drops a Stop, PreCompact or write event just because a policy or marker file read is slow. The 0.5-second crypto allowance now bounds key derivation and sealing only; policy checks and publication use the hook's existing deadline, which is unchanged. Protection is unchanged: a root that requires protection still never publishes plaintext, and crypto work that exceeds its allowance still refuses.
+
 ## [4.27.0] - 2026-11-01
 
 ### Added
