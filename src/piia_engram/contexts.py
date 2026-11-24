@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,13 @@ from .store_paths import confined_path
 from .resume_selection import EARLIER_RECORD, RETRIEVAL_HINT, select_resume_fields
 
 logger = logging.getLogger(__name__)
+
+#: Newest session files (all tools) the resume brief looks at: its digest walk
+#: and its recent-context read. A store can hold thousands of legacy sessions,
+#: so both reads are bounded. Sessions behind the newest 200 files are not
+#: selected for the resume brief or the resume packs; ``get_recent_context``
+#: without ``scan_limit`` and ``get_session_digest`` still read any of them.
+RESUME_DIGEST_SCAN_LIMIT = 200
 
 
 def _utc_now_iso_seconds() -> str:
@@ -70,6 +78,21 @@ def _valid_session_id_for_path(value: object) -> bool:
     return (isinstance(value, str) and _SESSION_ID_PATH_RE.fullmatch(value) is not None
             and bool(value.strip("."))
             and value.split(".")[0].upper() not in _RESERVED_FILE_STEMS)
+
+
+def _session_digest_sidecar(tool_dir: Path | None, session_id: str) -> Path | None:
+    """Locate ``get_session_digest``'s sidecar for a session without reading it.
+
+    ``tool_dir`` is the confined ``contexts/<tool>/`` directory. The result is
+    the path ``_session_digest_path`` returns, or ``None`` when that read has no
+    file to open (invalid id or tool directory). Existence is left to the
+    caller, so a legacy session without a sidecar costs one check and no
+    guarded read.
+    """
+    session_ref = str(session_id or "").strip()
+    if tool_dir is None or not _valid_session_id_for_path(session_ref):
+        return None
+    return tool_dir / f"{session_ref}.digest.json"
 
 
 def _sanitize_session_id_for_path(session_id: str, fallback: datetime) -> str:
@@ -772,7 +795,10 @@ class ContextStoreMixin:
         project_folder: str = "",
         limit: int = 6,
     ) -> list[dict[str, Any]]:
-        """Return recent digest sidecars only; never read raw session bodies."""
+        """Return recent digest sidecars only; never read raw session bodies.
+
+        Only the newest ``RESUME_DIGEST_SCAN_LIMIT`` session files are inspected.
+        """
         if int(limit or 0) <= 0:
             return []
         project_ids = set(_project_id_aliases(project_folder)) if project_folder else set()
@@ -789,7 +815,16 @@ class ContextStoreMixin:
         except Exception:
             return []
         session_files.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        for _mtime, tool_name, session_id in session_files:
+        tool_dirs_by_name: dict[str, Path | None] = {}
+        for _mtime, tool_name, session_id in session_files[:RESUME_DIGEST_SCAN_LIMIT]:
+            if tool_name not in tool_dirs_by_name:
+                try:
+                    tool_dirs_by_name[tool_name] = self._context_tool_dir(tool_name)
+                except ValueError:
+                    tool_dirs_by_name[tool_name] = None
+            sidecar = _session_digest_sidecar(tool_dirs_by_name[tool_name], session_id)
+            if sidecar is None or not sidecar.is_file():
+                continue  # no digest to read: skip without a guarded read
             digest = self.get_session_digest(
                 tool_name,
                 session_id,
@@ -1645,6 +1680,8 @@ class ContextStoreMixin:
         tool: str = "",
         project_folder: str = "",
         limit: int = 1,
+        *,
+        scan_limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return the most recent context sessions.
 
@@ -1653,12 +1690,16 @@ class ContextStoreMixin:
             project_folder: Optional project path. When set, only sessions
                 saved for that project are returned.
             limit: Max sessions to return (default 1 = latest only).
+            scan_limit: When set, only the newest ``scan_limit`` session files
+                across the selected tools are looked at, so the read does not
+                grow with the number of saved sessions. A matching session behind
+                them is not returned. Unset, every file is looked at.
 
         Returns:
             List of ``{tool, session_id, content, modified_at}`` dicts,
             sorted newest-first.
         """
-        results: list[dict[str, Any]] = []
+        matches: list[dict[str, Any]] = []
         target_project_ids = set(_project_id_aliases(project_folder)) if project_folder else set()
         no_project_id = _project_id("")
 
@@ -1671,55 +1712,90 @@ class ContextStoreMixin:
                 d.name for d in self._contexts_dir.iterdir() if d.is_dir()
             ]
 
+        tool_dirs: dict[str, Path] = {}
         for t in tool_names:
             try:
                 tool_dir = self._context_tool_dir(t)
             except ValueError:
                 continue
-            if not tool_dir.exists():
-                continue
-            files = sorted(
-                tool_dir.glob("*.md"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            for f in files:
-                try:
-                    self._context_session_path(t, f.stem)
-                except ValueError:
-                    continue
-                content = ""
-                digest = self.get_session_digest(t, f.stem)
-                if not digest:
-                    try:
-                        content = f.read_text(encoding="utf-8")
-                    except OSError:
-                        continue
-                    header_project = _session_header_project(content)
-                    source_project = _project_id(header_project) if header_project else ""
-                else:
-                    source = digest.get("source")
-                    source_project = source.get("project_id", "") if isinstance(source, dict) else ""
-                    if source_project == no_project_id:
-                        source_project = ""
-                if target_project_ids:
-                    if source_project not in target_project_ids:
-                        continue
-                elif source_project:
-                    continue
-                if not content:
-                    content = f.read_text(encoding="utf-8")
-                results.append({
-                    "tool": t,
-                    "session_id": f.stem,
-                    "content": content,
-                    "modified_at": datetime.fromtimestamp(
-                        f.stat().st_mtime,
-                    ).replace(microsecond=0).isoformat(),
-                })
+            if tool_dir.exists():
+                tool_dirs[t] = tool_dir
 
-        results.sort(key=lambda x: x["modified_at"], reverse=True)
-        return results[:limit]
+        # (tool, file) pairs in the order they are looked at: each tool's files
+        # newest first, or with a scan limit the newest files across all tools.
+        # The capped order keeps ties the way the sort by ``modified_at`` below
+        # leaves them: same second, then tool order, then newest within a tool.
+        scanned: list[tuple[str, Path]] = []
+        if scan_limit is None:
+            for t, tool_dir in tool_dirs.items():
+                scanned.extend(
+                    (t, path)
+                    for path in sorted(tool_dir.glob("*.md"),
+                                       key=lambda p: p.stat().st_mtime, reverse=True)
+                )
+        else:
+            newest = sorted(
+                ((path.stat().st_mtime, index, path)
+                 for index, tool_dir in enumerate(tool_dirs.values())
+                 for path in tool_dir.glob("*.md")),
+                key=lambda item: (-math.floor(item[0]), item[1], -item[0]),
+            )
+            tools = list(tool_dirs)
+            scanned = [(tools[index], path)
+                       for _mtime, index, path in newest[:max(0, int(scan_limit))]]
+
+        for t, f in scanned:
+            if not _valid_session_id_for_path(f.stem):
+                continue
+            if f.is_symlink() or (hasattr(f, "is_junction") and f.is_junction()):
+                continue  # the tool directory is confined; a link could leave it
+            content = ""
+            sidecar = _session_digest_sidecar(tool_dirs[t], f.stem)
+            digest = (self.get_session_digest(t, f.stem)
+                      if sidecar is not None and sidecar.is_file() else None)
+            if not digest:
+                try:
+                    content = f.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                header_project = _session_header_project(content)
+                source_project = _project_id(header_project) if header_project else ""
+            else:
+                source = digest.get("source")
+                source_project = source.get("project_id", "") if isinstance(source, dict) else ""
+                if source_project == no_project_id:
+                    source_project = ""
+            if target_project_ids:
+                if source_project not in target_project_ids:
+                    continue
+            elif source_project:
+                continue
+            if not content:
+                content = f.read_text(encoding="utf-8")
+            matches.append({
+                "tool": t,
+                "session_id": f.stem,
+                "content": content,
+                "modified_at": datetime.fromtimestamp(
+                    f.stat().st_mtime,
+                ).replace(microsecond=0).isoformat(),
+            })
+
+        matches.sort(key=lambda x: x["modified_at"], reverse=True)
+        results: list[dict[str, Any]] = []
+        # One confinement check per returned file. A file that is not confined is
+        # left out and the next match takes its place, as when the check came
+        # before the read.
+        candidates = matches if limit is None or limit > 0 else matches[:limit]
+        for item in candidates:
+            try:
+                self._context_session_path(item["tool"], item["session_id"])
+            except ValueError:
+                continue
+            results.append(item)
+            if len(results) == limit:
+                break
+        return results
 
     # ------------------------------------------------------------------
     # List
@@ -2135,7 +2211,8 @@ class ContextStoreMixin:
 
         # ---- 4. Recent agent contexts (cross-tool) ---------------------
         try:
-            recent = self.get_recent_context(limit=2, project_folder=project_folder)
+            recent = self.get_recent_context(
+                limit=2, project_folder=project_folder, scan_limit=RESUME_DIGEST_SCAN_LIMIT)
             if recent:
                 # Newest-first: cite the most recent session's time in the brand line.
                 last_session_when = str(recent[0].get("modified_at", "") or "")

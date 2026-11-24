@@ -6,6 +6,12 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- The Claude Code and Cursor SessionStart resume hooks: the brief's store-mode check runs once per read instead of once per nested read, and the session digest walk skips sessions without a digest and is bounded, so a brief on a store with many saved sessions no longer costs (session files x knowledge store size). The hook's read budget is 10 seconds by default (`ENGRAM_RESUME_HOOK_BUDGET_S` overrides it, capped below the registered hook timeout), and `engram doctor` reports budget timeouts from the last 7 days.
+
 ## [4.27.0] - 2026-11-01
 
 ### Added

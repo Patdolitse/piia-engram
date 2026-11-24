@@ -400,4 +400,6 @@ engram doctor --json
 
 延迟检查点摘要复用普通检查点的来源构造。`source.project_revision` 表示首次准备延迟内容、检查点写入前观察到的项目修订号，不声明它是更早 hook 调用时的修订号。该值与 `source.project_revision_captured_at` 一起冻结在队列事件中，`source.project_revision_capture` 为 `deferred_prepare`；`generated_at` 仍为原始事件时间。项目修订号改变后重试也保留这些值。旧的 prepared 事件在升级后的首次 drain 中采集该来源。
 
-SessionStart 仍同步返回接续简报，使用只读存储访问，并设置固定一秒应用预算。超时或读取失败时输出原有 continue 响应（无上下文），以状态码 0 退出。预算从 Python/模块加载后开始，操作系统启动时间不计入。此路径省略周报提示生成，仍可使用 `engram weekly`。
+SessionStart 仍同步返回接续简报，使用只读存储访问，并设置应用预算（默认 10 秒，见下文）。超时或读取失败时输出原有 continue 响应（无上下文），以状态码 0 退出。预算从 hook 脚本开始运行起计算，涵盖加载 Engram 模块、打开存储和生成简报；解释器与操作系统的启动时间不计入。此路径省略周报提示生成，仍可使用 `engram weekly`。
+
+接续简报 hook 的这次读取默认有 10 秒。如需调整，请在 AI 工具传给其 hook 的环境变量中设置 `ENGRAM_RESUME_HOOK_BUDGET_S`（秒）：无效值使用默认值，小于 1 秒的值提升为 1 秒，并且任何值都不会超过 hook 注册超时减 1 秒（Claude Code 的 SessionStart 注册超时为 15 秒，即上限 14 秒）。预算用完时，会话在没有简报的情况下开始。`engram doctor` 会报告最近 7 天内发生这种情况的次数。

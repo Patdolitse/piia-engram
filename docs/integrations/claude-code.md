@@ -85,6 +85,16 @@ interactive sessions Stop runs at the end of every turn. Re-running
 `engram setup` or `engram doctor --fix` keeps this edit. `engram doctor` does
 not report this field.
 
+### Resume brief at session start
+
+SessionStart is synchronous: a new session waits for the resume brief hook, which
+setup registers with a 15-second timeout. The hook gives its read 10 seconds by
+default, the Engram import and the store read included. To change that, set
+`ENGRAM_RESUME_HOOK_BUDGET_S` (seconds) in the environment Claude Code passes to
+its hooks; an invalid value uses the default and the result is capped at 14
+seconds. When the budget runs out, the session starts without the brief, and
+`engram doctor` reports how often that happened in the last 7 days.
+
 ## Smoke test
 
 1. Restart Claude Code.

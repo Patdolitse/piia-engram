@@ -6,6 +6,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 修复
+
+- Claude Code 和 Cursor 的 SessionStart 接续 hook：简报的存储模式检查每次读取只执行一次，而不是每层嵌套读取都执行；会话摘要遍历会跳过没有摘要的会话并设有上限，因此会话很多的存储上生成简报不再按“会话文件数 × 知识库大小”计时。hook 的读取预算默认 10 秒（可用 `ENGRAM_RESUME_HOOK_BUDGET_S` 覆盖，上限低于 hook 的注册超时），`engram doctor` 会报告最近 7 天的预算超时。
+
 ## [4.27.0] - 2026-11-01
 
 ### 新增

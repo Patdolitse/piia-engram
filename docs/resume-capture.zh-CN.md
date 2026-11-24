@@ -13,6 +13,8 @@
 
 `estimated_tokens` 是对渲染后 Markdown 的软估算（约四字符一 token），不是真实 tokenizer 测量，也不是返回数据大小的硬限制。包装、标题、省略提示和存在感首行都有成本；`budget.over_budget` 表明估算是否超过有效请求预算。为保留唯一动作或阻塞，小预算可能被超过。结构化包和响应元数据另有开销，它们的 JSON 不计入 `estimated_tokens`。不承诺任意长度的字段都能装进 128 token。128 以下预算沿用身份回退，并报告交接缺失。
 
+Claude Code 和 Cursor 的 SessionStart hook 注入的正是这份简报，这次读取默认有 10 秒时间预算，涵盖 Engram 导入和存储读取。`ENGRAM_RESUME_HOOK_BUDGET_S`（秒）可覆盖该预算：无效值使用默认值，小于 1 秒的值提升为 1 秒，结果不超过 hook 注册超时减 1 秒（Claude Code 的 SessionStart 注册超时为 15 秒，即上限 14 秒）。预算用完时，会话在没有简报的情况下开始；`engram doctor` 会报告最近 7 天内发生这种情况的次数。
+
 缺失字段继续显示 unknown，冲突来源沿用现有 checkpoint 仲裁，不制造下一步。`omitted` 列出省略区段及字段，沿用预算原因、数量和合法知识 ID，并提供 `retrieval_hint`；两个包也复用现有遗漏元数据和取回提示。可扩大简报预算，读取 `get_project_snapshot`（含 `checkpoint_history`）、`get_recent_context`、`get_session_digest`，或使用合法知识的搜索/历史路径。指针和被截短的前缀不等于完整字段已经恢复；读取仍受相同作用域与权限限制。
 
 原始 checkpoint 和会话摘要统一标为 **earlier session record（先前会话记录）**：未经审核的参考材料，不提供审批或行动授权。为保持兼容，现有列表仍叫 `trusted_context`，其中快照/约束项会携带该来源状态。待审知识仍是候选；合法知识保留原有 tier 和审核状态。`fresh` 描述新鲜度，`validated` 描述验证，`verified` 仍是知识层级，任何一个都不单独产生当前用户授权。strict eligibility、审批权、敏感度上限、存储 schema 和 Owner 专属 trust 细节不变。

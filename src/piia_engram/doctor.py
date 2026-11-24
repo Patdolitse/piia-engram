@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .setup_support import wizard as W
@@ -1125,6 +1126,7 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
     if not fix and _encrypted_diagnostics(root):
         print("    [--] Encrypted-store functional checks skipped; metadata diagnosis needs no key.")
         _print_connection_report(root, days)
+        _print_resume_budget_check(root)
         return problems
     stored = stored_replay_check(Path(_engram_root()))
     if stored["status"] == "WARN":
@@ -1599,6 +1601,10 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
                 f"to register the {label} hook."
             )
 
+    # A registered SessionStart hook answers the host with exit 0 even when its
+    # read timed out, so "registered" above does not mean the brief arrived.
+    _print_resume_budget_check(eng.root)
+
     print()
     W._safe_print("  -- Encoding health --\n")
     try:
@@ -1736,6 +1742,64 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
 def stored_replay_check(root: Path) -> dict:
     from .isolated_store import stored_replay_findings
     return stored_replay_findings(root)
+
+
+_RESUME_BUDGET_MESSAGE = "resume read budget exceeded"
+_RESUME_BUDGET_WINDOW_DAYS = 7
+
+
+def resume_budget_check(root: Path, *, now: datetime | None = None) -> dict:
+    """Read-only count of recent resume-hook budget timeouts in hooks.log.
+
+    Both resume hooks (Claude Code and Cursor) write the same entry. Only the
+    count is reported: no log body, hook argument or path.
+    """
+    now = datetime.now() if now is None else now
+    since = now - timedelta(days=_RESUME_BUDGET_WINDOW_DAYS)
+    try:
+        lines = (Path(root) / "logs" / "hooks.log").read_text(
+            encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        lines = []
+    except OSError as exc:
+        return {"name": "resume_hook_budget", "status": "WARN", "count": 0,
+                "window_days": _RESUME_BUDGET_WINDOW_DAYS, "read_only": True,
+                "unreadable": type(exc).__name__, "hint": ""}
+    count = 0
+    for line in lines:
+        if _RESUME_BUDGET_MESSAGE not in line:
+            continue
+        try:  # "<local ISO timestamp> [<hook>] <message>"
+            recent = datetime.fromisoformat(line.split(" ", 1)[0]) >= since
+        except (TypeError, ValueError):
+            continue
+        count += int(recent)
+    return {"name": "resume_hook_budget", "status": "WARN" if count else "PASS",
+            "count": count, "window_days": _RESUME_BUDGET_WINDOW_DAYS,
+            "read_only": True, "unreadable": "", "hint": _resume_budget_hint()}
+
+
+def _resume_budget_hint() -> str:
+    from .hooks._budget import BUDGET_ENV, READ_BUDGET_SECONDS
+
+    return (f"Raise it with {BUDGET_ENV} (seconds, default {READ_BUDGET_SECONDS:g}; "
+            "capped below the hook's registered timeout).")
+
+
+def _print_resume_budget_check(root: Path) -> None:
+    try:
+        finding = resume_budget_check(root)
+    except Exception as exc:  # the message may hold a private path: name the type only
+        W._safe_print(f"    [--] Resume budget check skipped ({type(exc).__name__})")
+        return
+    if finding["unreadable"]:
+        W._safe_print(f"    [--] Resume hook budget check skipped ({finding['unreadable']})")
+    elif finding["count"]:
+        W._safe_print(
+            f"    [--] Resume brief hook: {finding['count']} budget timeout(s) in the last "
+            f"{finding['window_days']} days; the brief was not injected on those session starts. "
+            + finding["hint"]
+        )
 
 
 def decision_consistency_check(eng) -> dict:
