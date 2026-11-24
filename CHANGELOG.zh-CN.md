@@ -6,6 +6,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 修复
+
+- setup 或 `doctor --fix` 写入的 Claude Code hook 在 Windows 的 Git Bash 下静默失效。hook 命令现在使用正斜杠解释器路径。`engram doctor` 会报告仍使用裸反斜杠路径的已有 hook，不再将其视为正常；`doctor --fix` 原地改写。doctor 也能识别以 `command` + `args` 登记的 hook，不再报告缺失或再添加一个，`--fix` 会移除重复的 Engram 登记。同步的 Stop hook 保持同步。
+
 ## [4.27.0] - 2026-11-01
 
 ### 新增

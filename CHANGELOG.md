@@ -6,6 +6,12 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Claude Code hooks written by setup or `doctor --fix` failed silently under Git Bash on Windows. Hook commands now use a forward-slash interpreter path. `engram doctor` reports an existing hook that still has a bare backslash path instead of calling it healthy, and `doctor --fix` rewrites it in place. Doctor also recognizes a hook registered as `command` + `args`, so it no longer reports it missing or adds a second one, and `--fix` removes duplicate Engram registrations. A synchronous Stop hook stays synchronous.
+
 ## [4.27.0] - 2026-11-01
 
 ### Added

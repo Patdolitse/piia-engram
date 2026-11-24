@@ -5131,9 +5131,12 @@ class TestEngramHookCommandConstruction:
         from piia_engram.setup_wizard import (
             _build_engram_hook_command, _HOOK_MODULES,
         )
+        # Off Windows the path is quoted as it always was; the Windows
+        # form (Git Bash) is covered in tests/test_hook_command_shell_forms.py.
         cmd = _build_engram_hook_command(
             r"C:\Program Files\Python312\python.exe",
             module=_HOOK_MODULES["auto_save_on_stop"],
+            windows=False,
         )
         assert cmd.startswith('"C:\\Program Files\\Python312\\python.exe"')
         # Critically NOT the legacy double-escaped form.
