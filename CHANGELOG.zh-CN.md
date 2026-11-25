@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 任务检查点的可选开关现同样作用于 watcher 的 Codex rollout 捕获：在 watcher 进程环境中设置 `ENGRAM_HOOK_TASK_CHECKPOINT_V1=1` 后，分段中最后一条已完成助手消息末尾的五标签块会像 Claude Stop 快照一样附加到会话 digest，resume brief 因此带上目标、约束、阻塞、上次失败原因和下一步。watcher 路径无需配置 transcript 根目录白名单，不含有效标签块的分段保持既有捕获行为。详见[任务检查点说明](docs/task-checkpoint.zh-CN.md)。
+
 ### 修复
 
 - Hook 捕获不再仅因策略或标记文件读取缓慢而丢失 Stop、PreCompact 或写入事件。0.5 秒加密时限现在只约束密钥派生与加密；策略检查和发布使用 hook 既有的截止时间，该截止时间不变。保护机制不变：要求保护的存储根仍不会发布明文，超出时限的加密操作仍然拒绝。

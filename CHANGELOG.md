@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+
+- The optional task checkpoint opt-in now also applies to Codex rollout capture through the watcher: with `ENGRAM_HOOK_TASK_CHECKPOINT_V1=1` set in the watcher environment, a five-label block ending the last completed assistant message of a segment is attached to the session digest exactly like a Claude Stop snapshot, so resume briefs carry the goal, constraint, blocker, last failure reason and next action. No transcript-roots allowlist is needed for the watcher, and segments without a valid block keep the existing capture behaviour. See the [task checkpoint guide](docs/task-checkpoint.md).
+
 ### Fixed
 
 - Hook capture no longer drops a Stop, PreCompact or write event just because a policy or marker file read is slow. The 0.5-second crypto allowance now bounds key derivation and sealing only; policy checks and publication use the hook's existing deadline, which is unchanged. Protection is unchanged: a root that requires protection still never publishes plaintext, and crypto work that exceeds its allowance still refuses.
