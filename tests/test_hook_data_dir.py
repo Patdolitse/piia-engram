@@ -14,6 +14,7 @@ tmp dir, and the real ``~/.claude`` is never read or written.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from pathlib import Path
 
@@ -72,10 +73,43 @@ def _hook_argv(hook: dict) -> list[str]:
 
 def _root_in_hook_process(hook: dict, module, monkeypatch) -> Path:
     """The store root a hook process resolves when Claude Code itself was
-    started without ``ENGRAM_DIR``."""
-    monkeypatch.delenv("ENGRAM_DIR", raising=False)
-    module._apply_argv_env(_hook_argv(hook))
+    started without ``ENGRAM_DIR``.
+
+    ``_apply_argv_env`` writes every ``--env KEY=VAL`` into ``os.environ``. In
+    a hook process that ends with the process; here it would stay for every
+    later test (``CLAUDE_INVOKED_BY`` makes the hooks return early). Each key
+    is therefore handed to ``monkeypatch`` first, which puts it back.
+    """
+    argv = _hook_argv(hook)
+    keys = {"ENGRAM_DIR"}
+    keys.update(argv[index + 1].partition("=")[0].strip()
+                for index, arg in enumerate(argv[:-1]) if arg == "--env")
+    for key in sorted(filter(None, keys)):
+        # delenv alone records nothing for a variable that is not set.
+        monkeypatch.setenv(key, "recorded-for-restore")
+        monkeypatch.delenv(key)
+    module._apply_argv_env(argv)
     return storage._engram_root()
+
+
+@pytest.mark.parametrize("event", sorted(INJECTORS))
+def test_reading_a_hook_command_leaves_the_environment_as_it_was(
+        event, home, claude_config, tmp_path):
+    custom = tmp_path / "store"
+    custom.mkdir()
+    injector, module = INJECTORS[event]
+    assert injector(PY, file_safety_root=custom, authorized_external_write=True)
+    (hook,) = _hooks(_read(claude_config), event)
+    before = dict(os.environ)
+
+    with pytest.MonkeyPatch.context() as patch:
+        assert _root_in_hook_process(hook, module, patch) == custom.resolve()
+        assert os.environ["ENGRAM_DIR"] == custom.resolve().as_posix()
+        if event != "Stop":
+            assert os.environ["CLAUDE_INVOKED_BY"].startswith("engram_")
+
+    assert dict(os.environ) == before
+    assert "CLAUDE_INVOKED_BY" not in os.environ
 
 
 @pytest.mark.parametrize("event", sorted(INJECTORS))
