@@ -16,6 +16,8 @@
 
 - setup 或 `doctor --fix` 写入的 Claude Code hook 在 Windows 的 Git Bash 下静默失效。hook 命令现在使用正斜杠解释器路径。`engram doctor` 会报告仍使用裸反斜杠路径的已有 hook，不再将其视为正常；`doctor --fix` 原地改写。doctor 也能识别以 `command` + `args` 登记的 hook，不再报告缺失或再添加一个，`--fix` 会移除重复的 Engram 登记。同步的 Stop hook 保持同步。
 
+- Claude Code 和 Cursor 的 SessionStart 接续 hook：简报的存储模式检查每次读取只执行一次，而不是每层嵌套读取都执行；会话摘要遍历会跳过没有摘要的会话并设有上限，因此会话很多的存储上生成简报不再按“会话文件数 × 知识库大小”计时。hook 的读取预算默认 10 秒（可用 `ENGRAM_RESUME_HOOK_BUDGET_S` 覆盖，上限低于 hook 的注册超时），`engram doctor` 会报告最近 7 天的预算超时。
+
 - Hook 捕获不再仅因策略或标记文件读取缓慢而丢失 Stop、PreCompact 或写入事件。0.5 秒加密时限现在只约束密钥派生与加密；策略检查和发布使用 hook 既有的截止时间，该截止时间不变。保护机制不变：要求保护的存储根仍不会发布明文，超出时限的加密操作仍然拒绝。
 
 ## [4.27.0] - 2026-11-01

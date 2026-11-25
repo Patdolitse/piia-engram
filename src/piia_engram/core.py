@@ -9,6 +9,7 @@ import os
 import re
 from copy import deepcopy
 from contextlib import nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -3762,6 +3763,30 @@ for _name in sorted(STORE_WRITE_METHODS):
     setattr(Engram, _name, _read_only_guard(getattr(Engram, _name)))
 
 
+# Guarded reads of one Engram instance that are still running in this context:
+# {id(instance): (instance, mode)}. A read nested inside another read of the same
+# instance reuses the outer store mode instead of re-reading the store metadata
+# (lessons, decisions and the overflow archives) for every nested call.
+_ACTIVE_READ_MODES: ContextVar[dict[int, tuple[Engram, str]] | None] = ContextVar(
+    "engram_active_read_modes", default=None)
+
+
+def _enter_guarded_read(eng):
+    """Return ``(store mode, reset token)`` for one guarded read of ``eng``.
+
+    The outermost read of an instance in this thread/context validates the store
+    mode as before. Reads nested inside it get that same mode and no token.
+    """
+    active = _ACTIVE_READ_MODES.get()
+    key = id(eng)
+    if active is not None and key in active:
+        return active[key][1], None
+    mode = eng._read_store_mode()
+    scoped = dict(active) if active else {}
+    scoped[key] = (eng, mode)  # the reference keeps id(eng) unique while scoped
+    return mode, _ACTIVE_READ_MODES.set(scoped)
+
+
 def _non_quarantining_read_guard(method):
     import functools
 
@@ -3770,35 +3795,39 @@ def _non_quarantining_read_guard(method):
         from .isolated_store import (REPLAY_EXPERIENCE, mark_replay_export,
                                      carries_replay_marker)
 
-        mode = self._read_store_mode()
-        if getattr(self, '_read_only', False):
-            with non_quarantining_reads():
+        mode, token = _enter_guarded_read(self)
+        try:
+            if getattr(self, '_read_only', False):
+                with non_quarantining_reads():
+                    result = method(self, *args, **kwargs)
+            else:
                 result = method(self, *args, **kwargs)
-        else:
-            result = method(self, *args, **kwargs)
-        export_reads = {
-            "get_project_snapshot", "get_knowledge_history", "build_project_resume_pack",
-            "build_agent_context_pack", "get_resume_brief", "build_user_portrait",
-            "build_user_portrait_rich", "get_latest_portrait", "get_previous_portrait",
-            "list_user_portraits", "compare_user_portraits", "render_user_portrait",
-            "render_user_portrait_html", "render_portrait_growth", "generate_context",
-            "generate_context_report",
-            "get_recent_context", "get_session_digest", "get_daily_log",
-        }
-        if method.__name__ in export_reads and (mode == REPLAY_EXPERIENCE
-                                               or carries_replay_marker((args, kwargs))):
-            if method.__name__ == "generate_context_report":
-                text, omitted = result
-                return mark_replay_export(text), omitted
-            result = mark_replay_export(result)
-            if method.__name__ == "get_resume_brief":
-                markdown = result["markdown"]
-                result["byte_size"] = len(markdown.encode("utf-8"))
-                result["estimated_tokens"] = max(1, len(markdown) // 4)
-                result["budget"]["over_budget"] = (
-                    result["estimated_tokens"] > max(100, int(result["budget"]["requested_tokens"])))
+            export_reads = {
+                "get_project_snapshot", "get_knowledge_history", "build_project_resume_pack",
+                "build_agent_context_pack", "get_resume_brief", "build_user_portrait",
+                "build_user_portrait_rich", "get_latest_portrait", "get_previous_portrait",
+                "list_user_portraits", "compare_user_portraits", "render_user_portrait",
+                "render_user_portrait_html", "render_portrait_growth", "generate_context",
+                "generate_context_report",
+                "get_recent_context", "get_session_digest", "get_daily_log",
+            }
+            if method.__name__ in export_reads and (mode == REPLAY_EXPERIENCE
+                                                   or carries_replay_marker((args, kwargs))):
+                if method.__name__ == "generate_context_report":
+                    text, omitted = result
+                    return mark_replay_export(text), omitted
+                result = mark_replay_export(result)
+                if method.__name__ == "get_resume_brief":
+                    markdown = result["markdown"]
+                    result["byte_size"] = len(markdown.encode("utf-8"))
+                    result["estimated_tokens"] = max(1, len(markdown) // 4)
+                    result["budget"]["over_budget"] = (
+                        result["estimated_tokens"] > max(100, int(result["budget"]["requested_tokens"])))
+                return result
             return result
-        return result
+        finally:
+            if token is not None:
+                _ACTIVE_READ_MODES.reset(token)
 
     return guarded
 

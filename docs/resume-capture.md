@@ -24,6 +24,14 @@ wire size; their serialized JSON is not included in `estimated_tokens`. The cont
 does not promise that arbitrary-length fields fit in 128 tokens. Budgets below 128
 retain the identity fallback and report the absent handoff.
 
+The Claude Code and Cursor SessionStart hooks inject this brief, and that read has a
+time budget of 10 seconds by default, covering the Engram import and the store read.
+`ENGRAM_RESUME_HOOK_BUDGET_S` (seconds) overrides it: an invalid value uses the
+default, a value below 1 second is raised to 1, and the result is capped one second
+below the timeout the hook is registered with (14 seconds for Claude Code's 15-second
+SessionStart registration). When the budget runs out, the session starts without the
+brief; `engram doctor` reports how often that happened in the last 7 days.
+
 Unknown or conflicting source fields remain unknown or follow the existing checkpoint
 arbitration. Engram does not invent a missing next step. `omitted` names cut sections
 and fields, carries the existing budget reason/count/eligible IDs, and adds a
