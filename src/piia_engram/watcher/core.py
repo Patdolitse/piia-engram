@@ -60,6 +60,9 @@ WRITEBACK_ENV = "ENGRAM_WATCHER_WRITEBACK"
 #: ``parse(path, max_chars, start_offset=0) -> dict`` returning at least
 #: ``summary``; adapters that also return an integer ``end_offset`` get
 #: incremental capture (only bytes past the stored offset are re-read).
+#: An adapter may additionally return a validated ``task_checkpoint`` dict
+#: (opt-in, e.g. the Codex rollout five-label block); it is forwarded to
+#: ``save_agent_context`` as the internal keyword-only checkpoint argument.
 ADAPTERS: dict[str, dict[str, Callable[..., Any]]] = {
     codex_adapter.TOOL_NAME: {
         "discover": codex_adapter.discover,
@@ -346,22 +349,37 @@ def scan_once(
                 new_entry["offset"] = end_offset
 
             summary = parsed.get("summary", "")
+            checkpoint = parsed.get("task_checkpoint")
+            body = summary
             if not summary.strip():
-                # The new bytes carry no conversation (meta/system lines, or
-                # a still-unterminated trailing line). Advance the watermark
-                # so the file is re-checked only after it grows; keep the
-                # save timestamp so the debounce history survives.
-                if isinstance(entry.get("saved_at"), str):
-                    new_entry["saved_at"] = entry["saved_at"]
-                tool_state[key] = new_entry
-                counters["skipped"] += 1
-                continue
+                if checkpoint is None:
+                    # The new bytes carry no conversation (meta/system lines, or
+                    # a still-unterminated trailing line). Advance the watermark
+                    # so the file is re-checked only after it grows; keep the
+                    # save timestamp so the debounce history survives.
+                    if isinstance(entry.get("saved_at"), str):
+                        new_entry["saved_at"] = entry["saved_at"]
+                    tool_state[key] = new_entry
+                    counters["skipped"] += 1
+                    continue
+                # A checkpoint can arrive with an empty summary: when an
+                # earlier scan already captured the response mirror of the
+                # final reply, the mirror-aware dedup drops its completed
+                # copy from the summary. The validated checkpoint then stands
+                # in as the segment's content — the canonical labelled lines,
+                # exactly as the Claude Stop archive renders them — instead
+                # of being silently dropped with an advancing watermark.
+                from ..task_checkpoint import FIELDS, LABELS
+
+                body = "\n".join(f"{label}: {checkpoint.get(field)}"
+                                 for label, field in zip(LABELS, FIELDS)
+                                 if checkpoint.get(field) is not None)
 
             content = f"[{name.capitalize()} Watcher 自动记录]\n"
             project_folder = parsed.get("project_folder", "")
             if project_folder:
                 content += f"工作目录: {project_folder}\n"
-            content += "---\n" + summary
+            content += "---\n" + body
 
             try:
                 from piia_engram.core import Engram
@@ -371,6 +389,7 @@ def scan_once(
                     content=content,
                     session_id=parsed.get("session_id") or path.stem,
                     project_folder=project_folder,
+                    task_checkpoint=checkpoint,
                 )
             except Exception as exc:  # noqa: BLE001
                 _log(f"{name}: save failed for {path.name}: {exc!r}")

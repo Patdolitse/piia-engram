@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import stat
+from typing import AbstractSet
 
 from .hook_digest import (normalize_text, sanitize_line, shape_scan,
                           _SECRET_KEY_SUFFIX_RE, _VALUEISH_PREFIX_RE)
@@ -14,6 +15,13 @@ from .hook_digest import (normalize_text, sanitize_line, shape_scan,
 SCHEMA = "task_checkpoint.v1"
 OPT_IN = "ENGRAM_HOOK_TASK_CHECKPOINT_V1"
 ROOTS = "ENGRAM_HOOK_TRANSCRIPT_ROOTS"
+#: Capture events accepted unless a caller explicitly widens the gate.
+EVENTS = frozenset({"Stop", "PreCompact"})
+#: Watcher-side rollout capture. Accepted only by callers that pass it in
+#: ``allowed_events`` alongside ``EVENTS``; everything else keeps rejecting it.
+ROLLOUT_EVENT = "CodexRollout"
+#: Closed universe: no ``allowed_events`` set can whitelist another event name.
+_KNOWN_EVENTS = EVENTS | {ROLLOUT_EVENT}
 MAX_TAIL_BYTES = 256 * 1024
 MAX_RECORD_BYTES = 64 * 1024
 MAX_OBJECT_BYTES = 8 * 1024
@@ -54,11 +62,16 @@ def _private(values: list[str]) -> bool:
     return False
 
 
-def validate(value: object) -> dict:
-    """Recheck untrusted queue/prepared/sidecar input; return a detached object."""
+def validate(value: object, *, allowed_events: AbstractSet[str] = EVENTS) -> dict:
+    """Recheck untrusted queue/prepared/sidecar input; return a detached object.
+
+    ``allowed_events`` defaults to the hook events; a caller may explicitly add
+    :data:`ROLLOUT_EVENT`. No other event name is ever acceptable.
+    """
     if not isinstance(value, dict) or set(value) != set(FIELDS) | _META:
         raise ValueError("task_shape")
-    if value["schema"] != SCHEMA or value["capture_event"] not in {"Stop", "PreCompact"}:
+    if (value["schema"] != SCHEMA or value["capture_event"] not in allowed_events
+            or value["capture_event"] not in _KNOWN_EVENTS):
         raise ValueError("task_schema")
     if not isinstance(value["captured_at"], str):
         raise ValueError("task_time")
@@ -93,9 +106,15 @@ def validate(value: object) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
-def parse_text(text: str, capture_event: str = "Stop") -> tuple[dict | None, str]:
-    """Accept exactly one contiguous, plain five-label block in one record."""
-    if capture_event not in {"Stop", "PreCompact"}:
+def parse_text(text: str, capture_event: str = "Stop",
+               *, allowed_events: AbstractSet[str] = EVENTS) -> tuple[dict | None, str]:
+    """Accept exactly one contiguous, plain five-label block in one record.
+
+    ``capture_event`` must be in ``allowed_events`` (default: the hook events);
+    rollout capture requires the caller to pass :data:`ROLLOUT_EVENT` explicitly.
+    The block-parsing rules themselves do not depend on the event.
+    """
+    if capture_event not in allowed_events or capture_event not in _KNOWN_EVENTS:
         return None, "event-refused"
     found = {}
     positions = []
@@ -160,7 +179,7 @@ def parse_text(text: str, capture_event: str = "Stop") -> tuple[dict | None, str
         if reason:
             result["omissions"][key] = reason
     try:
-        return validate(result), "captured"
+        return validate(result, allowed_events=allowed_events), "captured"
     except (ValueError, TypeError, OverflowError):
         return None, "no-useful-fields"
 

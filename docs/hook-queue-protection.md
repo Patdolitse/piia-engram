@@ -67,9 +67,10 @@ or processed without its frozen fields. Pending caps remain 1,000 events and
 are outside that pending-only cap.
 
 Input, intent discovery (policy/salt/secret checks), and both plaintext and encrypted
-encoding share a 1.0-second application deadline. Policy checks, crypto readiness,
-sealing and transition resealing use at most 0.5 seconds of the remaining budget,
-with a 25 ms diagnostic reserve. Expired results cannot start event publication.
+encoding share a 1.0-second application deadline. Crypto readiness, sealing and
+transition resealing use at most 0.5 seconds, counted from when that work starts and
+never past the application deadline; policy checks use the application deadline.
+Both keep a 25 ms diagnostic reserve. Expired results cannot start event publication.
 Each new hook process derives
 its own memory-only key. Slow machines fail closed; an abandoned crypto worker
 cannot publish later. Interpreter/package startup and final filesystem

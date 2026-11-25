@@ -172,9 +172,15 @@ def check_deadline(deadline: float) -> None:
         raise ProtectionError("crypto-timeout")
 
 
-def capture_deadline(deadline: float) -> float:
-    """One sealing/policy allowance, including transition reseals and checks."""
-    return min(deadline, time.monotonic() + CRYPTO_BUDGET_SECONDS + DIAGNOSTIC_RESERVE_SECONDS)
+def capture_deadline(deadline: float, start: float | None = None) -> float:
+    """Latest end of one crypto allowance (key derivation, sealing, reseals).
+
+    The allowance starts at ``start`` (now by default) and never passes the
+    caller's deadline. Policy and marker reads are not crypto work: only the
+    caller's deadline bounds them.
+    """
+    return min(deadline, (time.monotonic() if start is None else start)
+               + CRYPTO_BUDGET_SECONDS + DIAGNOSTIC_RESERVE_SECONDS)
 
 
 def _ensure_required_locked(root: Path, deadline: float | None = None) -> None:
@@ -233,6 +239,8 @@ class QueueCodec:
     def __init__(self, root: Path):
         self.root = root
         self._material = None
+        # When key derivation/sealing began; None while only the policy read ran.
+        self.crypto_started = None
 
     def ready(self):
         if self._material is None:
@@ -259,6 +267,7 @@ class QueueCodec:
         if not protected:
             data = json_bytes(event)
         else:
+            self.crypto_started = time.monotonic()
             engine, key, salt_id = self.ready()
             header = {name: event[name] for name in IMMUTABLE[:5]}
             header.update(schema=2, protection="enc:v2c", salt_id=salt_id)
@@ -346,14 +355,24 @@ class QueueCodec:
 
 def seal_with_budget(root: Path, event: dict, deadline: float) -> tuple[bytes, bool]:
     """Abandoned workers can only finish in memory; no filesystem write capability."""
-    value = _with_budget(lambda: QueueCodec(root).encode(event), capture_deadline(deadline))
+    codec = QueueCodec(root)
+    value = _with_budget(lambda: codec.encode(event), deadline, codec)
     return value, loads(value.decode("utf-8"))["schema"] == 2
 
 
-def _with_budget(operation, deadline: float):
-    """Policy reads and both encoders run inside the same read-only wait."""
+def _with_budget(operation, deadline: float, codec: QueueCodec | None = None):
+    """Policy reads and both encoders run inside the same read-only wait.
+
+    The caller's deadline bounds the policy read. A codec's key derivation and
+    sealing also answer to the crypto allowance, which starts where they start:
+    a slow policy read cannot shorten it, and they cannot stretch it.
+    """
     check_deadline(deadline)
     end = deadline - DIAGNOSTIC_RESERVE_SECONDS
+
+    def latest(start):  # newest permitted finish for crypto work starting then
+        return end if codec is None else capture_deadline(deadline, start) - DIAGNOSTIC_RESERVE_SECONDS
+
     result = []
     finished = threading.Event()
     def seal():
@@ -366,8 +385,20 @@ def _with_budget(operation, deadline: float):
         finally:
             finished.set()
     threading.Thread(target=seal, name="engram-hook-seal", daemon=True).start()
-    if not finished.wait(max(0, end - time.monotonic())) or time.monotonic() > end:
-        raise ProtectionError("crypto-timeout")
+    limit = latest(time.monotonic())
+    while True:
+        done = finished.wait(max(0, limit - time.monotonic()))
+        started = codec.crypto_started if codec is not None else None
+        if started is not None:
+            limit = min(limit, latest(started))
+        now = time.monotonic()
+        if done and now <= limit:
+            break
+        # Recheck per allowance while the policy read is still running.
+        later = latest(started if started is not None else now)
+        if later <= limit:
+            raise ProtectionError("crypto-timeout")
+        limit = later
     ok, value = result[0]
     if not ok:
         raise ProtectionError(value)

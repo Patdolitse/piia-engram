@@ -274,3 +274,46 @@ def other_ai_tools_home(tmp_path, monkeypatch) -> Path:
     write_other_ai_tools_samples(home)
     assert Path.home() == home
     return home
+
+
+_HOOKS_LOG_TAIL_LINES = 20
+
+
+def _hooks_log_tails(item) -> list[tuple[str, str]]:
+    """Tails of the hooks.log files a test's throwaway stores wrote.
+
+    Hook capture is fail-soft: a dropped event leaves only a line in its root's
+    ``logs/hooks.log`` (or the sibling ``*.hooks.log`` when that folder is
+    unwritable). A failed "one spool file expected" assertion shows those lines.
+    """
+    try:
+        base = item.funcargs.get("tmp_path")
+        if base is None:
+            return []
+        candidates = set(base.rglob("hooks.log")) | set(base.rglob("*.hooks.log"))
+        candidates.update(base.parent.glob(base.name + ".hooks.log"))
+        tails = []
+        for path in sorted(candidates):
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                with path.open("rb") as handle:
+                    lines = handle.read().decode("utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            if lines:
+                label = path.relative_to(base).as_posix() if base in path.parents else path.name
+                tails.append(("hooks.log tail: " + label,
+                              "\n".join(lines[-_HOOKS_LOG_TAIL_LINES:])))
+        return tails
+    except Exception:
+        return []  # diagnostics must never change a test's outcome
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """A failed test reports what its stores' hooks.log recorded."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        report.sections.extend(_hooks_log_tails(item))

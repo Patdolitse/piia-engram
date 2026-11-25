@@ -5,7 +5,9 @@
 Claude Code Stop and PreCompact hooks can optionally snapshot a small labelled
 assistant task block before queuing the event. This feature is **off by default**.
 Queue encryption does not enable it or constitute consent to capture conversation
-text. Existing hook registration and client configuration are unchanged.
+text. Existing hook registration and client configuration are unchanged. The same
+opt-in variable also enables capture from Codex rollout transcripts through the
+Engram watcher; see [Codex rollout capture](#codex-rollout-capture-watcher) below.
 
 ## Opt in
 
@@ -68,6 +70,44 @@ tool and thinking content never supplies these fields.
 Backtick and tilde fences follow CommonMark closing rules: the same character,
 at least the opening length, and only spaces or tabs after the closing run.
 Shorter runs and lines with info strings keep the example inside the fence.
+
+## Codex rollout capture (watcher)
+
+Codex has no user hook slot, so the same opt-in also works through the universal
+watcher. Set only the checkpoint variable in the environment of the watcher
+process (the one running `engram watcher` or its installed launcher):
+
+```sh
+export ENGRAM_HOOK_TASK_CHECKPOINT_V1=1
+```
+
+No `ENGRAM_HOOK_TRANSCRIPT_ROOTS` allowlist is needed on this path: the watcher
+already scopes reads to Codex session directories. Only the last *completed*
+assistant message of each newly appended rollout segment is a candidate;
+mirrored `response` duplicates, legacy `agent_message` events, user text and
+host-wrapped parts are never parsed. The assistant must **end** that message
+with the five-label block above. A practical way to get checkpoints is to add
+an instruction like this to your own `AGENTS.md` (Engram never writes to any
+`AGENTS.md` or user configuration automatically):
+
+```markdown
+End your final reply of each task step with this block (plain lines, one label
+each, blank line before it, no code fence):
+
+Goal: <one line>
+Constraint: <one line>
+Risk: <current blocker, or "unknown">
+Last failure reason: <most recent failure, or "unknown">
+Next: <the immediate next action>
+```
+
+Labels, fencing, uniqueness, privacy filters and size limits are identical to
+the hook path. A captured block is attached to the `session_digest.v1` sidecar
+exactly like a Claude Stop snapshot, so `get_resume_brief` carries the goal,
+constraint, blocker, last failure reason and next action with `codex`
+provenance. A later segment whose last completed assistant message carries no
+valid block is saved as usual (heuristic digest, no checkpoint), matching the
+Claude Stop path.
 
 ## Storage and reading
 

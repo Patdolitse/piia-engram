@@ -661,6 +661,8 @@ class ContextStoreMixin:
         session_id: str = "",
         project_folder: str = "",
         actions: list[dict[str, str]] | None = None,
+        *,
+        task_checkpoint: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Save or append a context checkpoint for a tool session.
 
@@ -673,10 +675,21 @@ class ContextStoreMixin:
             actions: Optional structured action log — list of dicts with
                      ``tool_called``, ``arguments_summary``, ``result_summary``.
                      Used by playbook auto-extraction for higher-fidelity steps.
+            task_checkpoint: Internal, keyword-only — NOT part of the MCP tool
+                     surface. A ``task_checkpoint.v1`` dict (the watcher's
+                     rollout capture event is accepted here) attached to the
+                     digest sidecar exactly like the Claude Stop hook path;
+                     the sidecar is then written even without heuristic signal.
 
         Returns:
             ``{session_id, file, tool, appended}``
         """
+        task = None
+        if task_checkpoint is not None:
+            from .task_checkpoint import EVENTS, ROLLOUT_EVENT, validate
+
+            # Fail fast on a malformed checkpoint: before any file is written.
+            task = validate(task_checkpoint, allowed_events=EVENTS | {ROLLOUT_EVENT})
         tool_safe = _sanitize_tool_name(tool)
         tool_dir = self._context_tool_dir(tool_safe)
         tool_dir.mkdir(parents=True, exist_ok=True)
@@ -725,7 +738,16 @@ class ContextStoreMixin:
         digest = self._build_checkpoint_digest(
             body, tool=tool_safe, session_id=session_id, project_folder=project_folder,
         )
-        if self._digest_has_session_signal(digest):
+        if task is not None:
+            # Task assertions, never lesson/decision candidates — attached key
+            # for key like the Claude Stop hook path (hooks/_processor.py).
+            digest.update(task_checkpoint=task, goal=task["goal"] or "",
+                          next_actions=[task["next_action"]] if task["next_action"] else [],
+                          risks=[task["blocker"]] if task["blocker"] else [],
+                          decisions=[], lessons=[])
+            digest["source"].update(capture_event=task["capture_event"],
+                                    captured_at=task["captured_at"])
+        if self._digest_has_session_signal(digest) or "task_checkpoint" in digest:
             _atomic_write_json(self._session_digest_path(tool_safe, session_id), digest)
 
         return {
