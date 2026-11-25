@@ -292,18 +292,10 @@ def _claude_hook_rows(home: Path) -> list[dict]:
     )
 
     rows: list[dict] = []
-    hooks = settings.get("hooks", {}) if isinstance(settings, dict) else {}
     for event, label, markers, match_mode in hook_specs:
-        registered = False
-        matcher = all if match_mode == "all" else any
-        for event_group in hooks.get(event, []) if isinstance(hooks, dict) else []:
-            for hook in event_group.get("hooks", []):
-                cmd = str(hook.get("command", ""))
-                if matcher(marker in cmd for marker in markers):
-                    registered = True
-                    break
-            if registered:
-                break
+        registered = bool(W._matching_event_hooks(
+            settings, event, markers, all_required=(match_mode == "all"),
+        ))
         rows.append({
             "event": event,
             "label": label,
@@ -313,6 +305,25 @@ def _claude_hook_rows(home: Path) -> list[dict]:
             "sha256_12": _file_sha256_12(settings_path) if settings_exists else "",
         })
     return rows
+
+
+def _engram_hooks_removed(
+    settings_path: Path,
+    event: str,
+    markers: tuple[str, ...],
+    *,
+    all_required: bool,
+    before: int,
+) -> int:
+    """Engram hooks for ``event`` that a ``--fix`` call took out of the file."""
+    try:
+        current = json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        return 0
+    remaining = len(W._matching_event_hooks(
+        current, event, markers, all_required=all_required,
+    ))
+    return max(0, before - remaining)
 
 
 def _claude_code_integrity_row(tool_id: str, cfg: dict) -> dict:
@@ -1556,49 +1567,89 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
 
     python_path_for_fix: str | None = None
     for event, label, markers, match_mode, injector in hook_specs:
-        found = False
-        matcher = all if match_mode == "all" else any
-        for event_group in settings.get("hooks", {}).get(event, []):
-            for hook in event_group.get("hooks", []):
-                cmd = hook.get("command", "")
-                if matcher(m in cmd for m in markers):
-                    found = True
-                    break
-            if found:
-                break
+        all_required = match_mode == "all"
+        matches = W._matching_event_hooks(
+            settings, event, markers, all_required=all_required,
+        )
+        # Registered is not the same as runnable: on Windows Git Bash drops
+        # the backslashes of a bare interpreter path. Doctor used to report
+        # such a hook as healthy. A hook with an ``args`` list is started
+        # without a shell and is fine as it is.
+        unsafe = [
+            hook for _, hook in matches
+            if W._hook_command_has_unquoted_backslash(hook)
+        ]
+        # Older --fix runs could not see a command+args hook and appended
+        # a second registration next to it.
+        duplicated = len(matches) > 1
 
-        if found:
-            W._safe_print(f"    [ok] {label} hook registered")
+        if matches:
+            if unsafe:
+                W._safe_print(
+                    f"    [!!] {label} hook uses a legacy or shell-unsafe command"
+                )
+            else:
+                W._safe_print(f"    [ok] {label} hook registered")
+        else:
+            W._safe_print(f"    [--] No Engram {label} hook in Claude Code settings")
+        if duplicated:
+            W._safe_print(
+                f"    [!!] {label} hook registered {len(matches)} times"
+            )
+
+        if matches and not unsafe and not duplicated:
             continue
 
-        W._safe_print(f"    [--] No Engram {label} hook in Claude Code settings")
-        if fix:
-            if python_path_for_fix is None:
-                python_path_for_fix = W._find_python() or ""
-            if python_path_for_fix:
-                # v3.30.1: pass force_rewrite=True so doctor --fix can
-                # upgrade stale hooks (e.g. script-path style → -m form,
-                # or hooks whose env markers no longer satisfy doctor's
-                # strict-match check). Without force_rewrite, idempotent
-                # skip would let "PreCompact present but stale" survive.
-                result = injector(
-                    python_path_for_fix,
-                    force_rewrite=True,
-                    file_safety_root=eng.root,
-                    authorized_external_write=True,
+        if not fix:
+            if unsafe:
+                print(
+                    f"           Run 'engram doctor --fix' to rewrite the "
+                    f"{label} hook in place."
                 )
-                if result:
-                    W._safe_print(f"    [fixed] {label} hook registered: {result}")
-                else:
-                    W._safe_print(
-                        f"    [info] {label} hook already up to date"
-                    )
-            else:
-                W._safe_print("    [info] Cannot fix: Python not found")
+            elif not matches:
+                print(
+                    f"           Run 'engram doctor --fix' or 'engram setup' "
+                    f"to register the {label} hook."
+                )
+            if duplicated:
+                print(
+                    f"           Run 'engram doctor --fix' to keep one "
+                    f"{label} hook."
+                )
+            continue
+
+        if python_path_for_fix is None:
+            python_path_for_fix = W._find_python() or ""
+        if not python_path_for_fix:
+            W._safe_print("    [info] Cannot fix: Python not found")
+            continue
+        # v3.30.1: pass force_rewrite=True so doctor --fix can
+        # upgrade stale hooks (e.g. script-path style → -m form,
+        # or hooks whose env markers no longer satisfy doctor's
+        # strict-match check). Without force_rewrite, idempotent
+        # skip would let "PreCompact present but stale" survive.
+        result = injector(
+            python_path_for_fix,
+            force_rewrite=True,
+            file_safety_root=eng.root,
+            authorized_external_write=True,
+        )
+        if not result:
+            W._safe_print(f"    [info] {label} hook already up to date")
+        elif not matches:
+            W._safe_print(f"    [fixed] {label} hook registered: {result}")
+        elif not duplicated:
+            W._safe_print(f"    [fixed] {label} hook rewritten in place: {result}")
         else:
-            print(
-                f"           Run 'engram doctor --fix' or 'engram setup' "
-                f"to register the {label} hook."
+            # The injector kept one registration and took out the rest;
+            # say how many went, since the file loses entries.
+            removed = _engram_hooks_removed(
+                settings_path, event, markers, all_required=all_required,
+                before=len(matches),
+            )
+            W._safe_print(
+                f"    [fixed] {label} hook: one registration kept, "
+                f"{removed} duplicate registration(s) removed: {result}"
             )
 
     # A registered SessionStart hook answers the host with exit 0 even when its

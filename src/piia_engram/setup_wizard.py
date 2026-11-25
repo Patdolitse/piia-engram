@@ -935,9 +935,12 @@ def _quote_for_shell(value: str) -> str:
     but *not* for PowerShell when used in the executable (first-token)
     position.
 
-    **Claude Code hook runner context**: Node.js ``child_process.exec()``
-    defaults to ``cmd.exe`` on Windows, so the double-quote fallback is
-    correct for the hook use-case today.
+    **Claude Code hook commands**: their interpreter path reaches this
+    helper through ``_quote_hook_interpreter``, which on Windows first
+    turns its backslashes into forward slashes, because Claude Code runs
+    the command through Git Bash, which reads an unquoted backslash as an
+    escape.  This helper then quotes it like any other value, and quotes
+    the ``--env KEY=VAL`` arguments.
 
     .. warning::
 
@@ -945,10 +948,9 @@ def _quote_for_shell(value: str) -> str:
        spaces, the generated command ``"C:\\Program Files\\...\\python.exe"
        -m module`` will fail in PowerShell because PS treats a quoted
        first token as a string expression, not a command invocation.
-       PowerShell requires ``& "path" -m module``.  This is NOT a
-       problem for Claude Code hooks (cmd.exe), but would break if a
-       future hook runner switches to PowerShell.  In that case,
-       ``_build_engram_hook_command`` should prefix ``& `` on Windows.
+       PowerShell requires ``& "path" -m module``.  Claude Code hooks
+       are not run by cmd.exe (see above), so the quoted form carries
+       the same limit when ``_quote_hook_interpreter`` writes it.
     """
     if not value:
         return '""'
@@ -963,28 +965,158 @@ def _quote_for_shell(value: str) -> str:
     return f'"{out}"'
 
 
+def _hook_shell_is_git_bash() -> bool:
+    """Where Claude Code hands a hook ``command`` string to Git Bash.
+
+    A hook without ``args`` runs through ``sh -c`` on macOS and Linux and
+    through Git Bash on Windows, so this is ``os.name == "nt"``. The
+    platform is read here, once, so tests can inject it (the ``windows=``
+    argument of the helpers below) instead of patching ``os.name``.
+    """
+    return os.name == "nt"
+
+
+def _quote_hook_interpreter(python_path: str, *, windows: bool | None = None) -> str:
+    """Quote the interpreter path at the head of a hook ``command``.
+
+    Not ``_quote_for_shell`` alone: on Windows that leaves the
+    backslashes of a Windows interpreter path in place, and Git Bash
+    reads each one as an escape, so the hook exits 127. There the
+    backslashes become forward slashes first, which Git Bash, cmd.exe and
+    PowerShell all accept; quoting is then left to ``_quote_for_shell``,
+    so a path without spaces or shell metacharacters stays bare. Elsewhere
+    the path is quoted exactly as ``_quote_for_shell`` quotes it.
+    """
+    if windows is None:
+        windows = _hook_shell_is_git_bash()
+    if windows:
+        python_path = python_path.replace("\\", "/")
+    return _quote_for_shell(python_path)
+
+
+def _hook_marker_text(hook: dict) -> str:
+    """Where a hook entry's markers are looked for.
+
+    Its ``command`` and, joined with a space, its ``args``: an older
+    registration split ``python -m piia_engram.hooks.<name>`` over the
+    two, and doctor and the injector both have to see it.
+    """
+    if not isinstance(hook, dict):
+        return ""
+    parts = [str(hook.get("command") or "")]
+    args = hook.get("args")
+    if isinstance(args, list):
+        parts.extend(str(arg) for arg in args)
+    return " ".join(parts)
+
+
+def _event_hooks(settings: dict, event: str) -> list[tuple[dict, dict]]:
+    """Every ``(group, hook)`` registered under ``event``.
+
+    A ``hooks`` section of an unexpected shape yields nothing, as in the
+    config integrity report.
+    """
+    hooks = settings.get("hooks") if isinstance(settings, dict) else None
+    groups = hooks.get(event) if isinstance(hooks, dict) else None
+    found: list[tuple[dict, dict]] = []
+    for group in groups if isinstance(groups, list) else []:
+        entries = group.get("hooks") if isinstance(group, dict) else None
+        for hook in entries if isinstance(entries, list) else []:
+            if isinstance(hook, dict):
+                found.append((group, hook))
+    return found
+
+
+def _matching_event_hooks(
+    settings: dict,
+    event: str,
+    markers: tuple[str, ...],
+    *,
+    all_required: bool = False,
+) -> list[tuple[dict, dict]]:
+    """The ``(group, hook)`` pairs under ``event`` that are Engram's own.
+
+    A hook is Engram's when a marker appears in its command or its args
+    (``all_required``: every marker must, as doctor's PreCompact check
+    wants). Doctor and the injector share this, so they always agree on
+    which hooks exist.
+    """
+    matches: list[tuple[dict, dict]] = []
+    for group, hook in _event_hooks(settings, event):
+        text = _hook_marker_text(hook)
+        hits = [marker in text for marker in markers]
+        if all(hits) if all_required else any(hits):
+            matches.append((group, hook))
+    return matches
+
+
+def _hook_command_has_unquoted_backslash(
+    hook: dict, *, windows: bool | None = None,
+) -> bool:
+    """Whether Git Bash cannot run a registered hook's command.
+
+    True on Windows for a shell-form command whose interpreter path has a
+    backslash outside double quotes ahead of ``-m`` — Git Bash drops each
+    one and the hook exits 127. A hook with an ``args`` list is started
+    without a shell, so its ``command`` is never read this way. ``False``
+    everywhere else and off Windows.
+    """
+    if not isinstance(hook, dict) or isinstance(hook.get("args"), list):
+        return False
+    if windows is None:
+        windows = _hook_shell_is_git_bash()
+    if not windows:
+        return False
+    head = str(hook.get("command") or "").split(" -m ", 1)[0]
+    quoted = False
+    for char in head:
+        if char == '"':
+            quoted = not quoted
+        elif char == "\\" and not quoted:
+            return True
+    return False
+
+
 def _build_engram_hook_command(
     python_path: str,
     *,
     module: str,
     extra_env: dict[str, str] | None = None,
+    windows: bool | None = None,
 ) -> str:
     """Build the ``command`` string for a hook entry.
 
     Uses ``"{python}" -m piia_engram.hooks.<module>`` so we don't have
     to ship the script outside the wheel and don't have to quote a
-    script path. Env hints are passed as ``--env KEY=VAL`` pairs that
-    the hook module parses from ``sys.argv`` — that's the only env
-    transport that works identically on Windows cmd, PowerShell, and
-    POSIX shells without an inline ``KEY=VAL prog`` prefix (which
-    Windows shells don't understand).
+    script path. The interpreter goes through ``_quote_hook_interpreter``
+    (``windows`` overrides the platform, for tests). Env hints are passed
+    as ``--env KEY=VAL`` pairs that the hook module parses from
+    ``sys.argv`` — that's the only env transport that works identically on
+    Windows cmd, PowerShell, and POSIX shells without an inline
+    ``KEY=VAL prog`` prefix (which Windows shells don't understand).
     """
-    parts: list[str] = [_quote_for_shell(python_path), "-m", module]
+    parts: list[str] = [
+        _quote_hook_interpreter(python_path, windows=windows), "-m", module,
+    ]
     if extra_env:
         for key, value in extra_env.items():
             parts.append("--env")
             parts.append(_quote_for_shell(f"{key}={value}"))
     return " ".join(parts)
+
+
+def _remove_event_hook(event_groups: list, group: dict, hook: dict) -> None:
+    """Take ``hook`` out of its ``group`` by identity; drop an emptied group."""
+    entries = group.get("hooks")
+    for index, candidate in enumerate(entries):
+        if candidate is hook:
+            del entries[index]
+            break
+    if not entries:
+        for index, candidate in enumerate(event_groups):
+            if candidate is group:
+                del event_groups[index]
+                break
 
 
 def _inject_claude_code_hook_for_event(
@@ -1000,6 +1132,7 @@ def _inject_claude_code_hook_for_event(
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    windows: bool | None = None,
 ) -> str | None:
     """Register a per-event hook in Claude Code's ``settings.json``.
 
@@ -1016,31 +1149,44 @@ def _inject_claude_code_hook_for_event(
         status_message: ``statusMessage`` field shown in Claude Code UI.
         timeout: Hook timeout in seconds.
         extra_env: Extra env hints; transported as ``--env KEY=VAL`` argv.
-        marker_keywords: Strings used to detect "already registered".
+        marker_keywords: Strings that make a hook Engram's own, looked
+            for in its ``command`` and its ``args``.
         async_hook: ``True`` for fire-and-forget Stop / PreCompact /
             PostCompact; ``False`` for SessionStart, where
             ``additionalContext`` must be written before the first user
-            turn is processed.
+            turn is processed. Sets ``async`` on a hook added here only.
         force_rewrite: If ``False`` (default), skip when any existing hook
             matches ``marker_keywords`` — backward-compatible idempotent
-            behaviour, preserves any user-customised hook. If ``True``,
-            *replace* the matching hook's ``command`` (and timeout /
-            statusMessage / async) with the freshly built one, so doctor
-            ``--fix`` can upgrade stale hooks left behind by older
-            versions (e.g. script-path style → ``python -m`` style, or
-            hooks whose env markers no longer satisfy the current
-            doctor's strict-match check).
+            behaviour, preserves any user-customised hook. If ``True``:
+
+            * One registration, written as one ``command`` string: replace
+              its ``command`` with the freshly built one (timeout and
+              statusMessage refreshed, ``async`` left as found) unless it
+              is already the current one. Doctor ``--fix`` uses this to
+              upgrade stale hooks left behind by older versions (e.g.
+              script-path style → ``python -m`` style, hooks whose env
+              markers no longer satisfy its strict-match check) and to
+              repair a bare-backslash path that Git Bash cannot run.
+            * One registration with an ``args`` list (started without a
+              shell, so valid as it is): never rewritten or converted.
+            * Registered more than once: keep one and remove the rest —
+              the first with an ``args`` list, else the first with the
+              current command, else the first. That last one is rewritten
+              in place only when Git Bash cannot run it. The kept hook
+              keeps its ``async`` as found.
+        windows: Overrides the platform the command is built for (tests).
 
     Returns:
         Path to the settings file on success (either newly added or
         rewritten); ``None`` if a matching hook already existed and
-        ``force_rewrite`` is False, or on failure.
+        ``force_rewrite`` is False, if the matching hook is already up to
+        date, or on failure.
     """
     try:
         settings_path = _claude_code_mcp.settings_path()
 
         engram_command = _build_engram_hook_command(
-            python_path, module=module, extra_env=extra_env,
+            python_path, module=module, extra_env=extra_env, windows=windows,
         )
 
         settings: dict = {}
@@ -1050,43 +1196,10 @@ def _inject_claude_code_hook_for_event(
         hooks = settings.setdefault("hooks", {})
         event_groups = hooks.setdefault(event, [])
 
-        # Look for a matching existing hook.
-        existing_hook: dict | None = None
-        for event_group in event_groups:
-            for hook in event_group.get("hooks", []):
-                cmd = hook.get("command", "")
-                if any(kw in cmd for kw in marker_keywords):
-                    existing_hook = hook
-                    break
-            if existing_hook is not None:
-                break
+        # Look for matching existing hooks.
+        matches = _matching_event_hooks(settings, event, marker_keywords)
 
-        if existing_hook is not None:
-            if not force_rewrite:
-                logger.info(
-                    "Engram %s hook already registered (matched marker)", event,
-                )
-                return None  # Already registered, no rewrite requested
-
-            # Rewrite in place: update the command (and refresh metadata)
-            # so doctor --fix can upgrade old hooks left behind by earlier
-            # Engram versions.
-            existing_cmd = existing_hook.get("command", "")
-            if existing_cmd == engram_command:
-                logger.info(
-                    "Engram %s hook already up to date (no rewrite needed)",
-                    event,
-                )
-                return None  # Same command — nothing to do
-            existing_hook["command"] = engram_command
-            existing_hook["timeout"] = timeout
-            existing_hook["statusMessage"] = status_message
-            if async_hook:
-                existing_hook["async"] = True
-            else:
-                existing_hook.pop("async", None)
-            logger.info("Engram %s hook rewritten in place", event)
-        else:
+        if not matches:
             # No matching hook — append fresh.
             engram_hook: dict = {
                 "type": "command",
@@ -1101,6 +1214,73 @@ def _inject_claude_code_hook_for_event(
                 event_groups[0].setdefault("hooks", []).append(engram_hook)
             else:
                 event_groups.append({"hooks": [engram_hook]})
+        else:
+            if not force_rewrite:
+                logger.info(
+                    "Engram %s hook already registered (matched marker)", event,
+                )
+                return None  # Already registered, no rewrite requested
+
+            def is_exec_form(hook: dict) -> bool:
+                # Started without a shell: a valid registration as it is.
+                return isinstance(hook.get("args"), list)
+
+            def is_current(hook: dict) -> bool:
+                return (
+                    hook.get("command", "") == engram_command
+                    and not is_exec_form(hook)
+                )
+
+            if len(matches) > 1:
+                # Registered more than once, as when older --fix runs
+                # appended a hook next to one they could not see. Keep
+                # one and drop the rest: a command+args hook, else the
+                # current command, else the first.
+                kept = next((hook for _, hook in matches if is_exec_form(hook)), None)
+                if kept is None:
+                    kept = next(
+                        (hook for _, hook in matches if is_current(hook)), matches[0][1],
+                    )
+                # Only the last fallback is touched, and only when Git
+                # Bash cannot run it.
+                repair = _hook_command_has_unquoted_backslash(kept, windows=windows)
+            else:
+                kept = matches[0][1]
+                if is_exec_form(kept):
+                    logger.info(
+                        "Engram %s hook already up to date (no rewrite needed)",
+                        event,
+                    )
+                    return None  # Never rewritten or converted
+                # A stale command or a bare-backslash path: update the
+                # command (and refresh metadata) so doctor --fix can
+                # upgrade hooks left behind by earlier Engram versions.
+                repair = not is_current(kept)
+
+            if not repair and len(matches) == 1:
+                logger.info(
+                    "Engram %s hook already up to date (no rewrite needed)",
+                    event,
+                )
+                return None  # Same command — nothing to do
+            if repair:
+                kept["command"] = engram_command
+                kept["timeout"] = timeout
+                kept["statusMessage"] = status_message
+                # ``async`` is left as found: a Stop hook made synchronous
+                # on purpose stays that way.
+                logger.info("Engram %s hook rewritten in place", event)
+            removed = 0
+            for group, hook in matches:
+                if hook is kept:
+                    continue
+                _remove_event_hook(event_groups, group, hook)
+                removed += 1
+            if removed:
+                logger.info(
+                    "Engram %s hook: removed %d duplicate registration(s)",
+                    event, removed,
+                )
 
         _write_config_text_with_backup(
             settings_path,
