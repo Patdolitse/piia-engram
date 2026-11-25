@@ -97,6 +97,44 @@ def _run_startup_auto_migrate() -> None:
         auto_migrate()
 
 
+def _claude_hook_notice() -> str:
+    """One stderr line when a registered Claude Code hook cannot run.
+
+    Read-only: Claude Code's settings are never written from the server,
+    and a check that fails says nothing.
+    """
+    try:
+        from piia_engram import setup_wizard as _setup_wizard
+
+        events = _setup_wizard.claude_hook_problems()
+    except Exception:
+        return ""
+    if not events:
+        return ""
+    return (
+        "[engram] notice: the Claude Code " + ", ".join(events) + " hook registered "
+        "for Engram cannot run as written. Run 'engram doctor --fix' to repair it."
+    )
+
+
+def _start_claude_hook_check() -> threading.Thread | None:
+    """Look at the registered hooks off the start path; never blocks it."""
+    def check() -> None:
+        try:
+            notice = _claude_hook_notice()
+            if notice:
+                print(notice, file=sys.stderr)
+        except Exception:
+            pass
+
+    try:
+        thread = threading.Thread(target=check, name="engram-hook-check", daemon=True)
+        thread.start()
+        return thread
+    except Exception:
+        return None
+
+
 from piia_engram.beta_tracker import track_event as _track_beta_event
 
 
@@ -1748,6 +1786,9 @@ def main() -> None:
         if _latch:
             print(f"[engram] warning: {_latch}", file=sys.stderr)
     _show_usage_notice()
+    # A hook left by an older version may not run; say so once, on stderr.
+    if args.transport == "stdio" and not _is_ephemeral:
+        _start_claude_hook_check()
 
     if args.transport == "sse":
         if not _HAS_STARLETTE:

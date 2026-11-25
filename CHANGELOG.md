@@ -14,6 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - Claude Code hooks now reach a data directory outside the default location. Setup wrote `ENGRAM_DIR` only into the Engram MCP entry, which a hook never sees, so with a custom data directory and no machine-wide `ENGRAM_DIR` the hooks read and queued into `~/.engram`. Hook commands now carry the directory, `engram doctor` reports an Engram hook that does not, and `engram setup` or `doctor --fix` adds it in place.
 
+- `engram setup` now repairs an existing Engram hook that Git Bash cannot run (a bare backslash interpreter path left by an older version) in place, as `doctor --fix` does; before, it reported the hook as already registered and left it broken.
+
+- The Engram MCP server reports such a hook on stderr when it starts and suggests `engram doctor --fix`. The server only reads Claude Code's settings; it never changes them.
+
 ## [4.28.0] - 2026-11-25
 
 ### Added

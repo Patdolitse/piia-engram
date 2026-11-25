@@ -1271,8 +1271,9 @@ def _inject_claude_code_hook_for_event(
         force_rewrite: If ``False`` (default), skip when any existing hook
             matches ``marker_keywords`` — backward-compatible idempotent
             behaviour, preserves any user-customised hook — unless one of
-            them cannot do its job (see ``data_dir``). Then, and always if
-            ``True``:
+            them cannot do its job: Git Bash cannot run it, or it lacks
+            ``data_dir``. Then ``engram setup`` repairs it the way doctor
+            ``--fix`` does, and always if ``True``:
 
             * One registration, written as one ``command`` string: replace
               its ``command`` with the freshly built one, or with
@@ -1349,8 +1350,12 @@ def _inject_claude_code_hook_for_event(
                 event_groups.append({"hooks": [engram_hook]})
         else:
             def is_broken(hook: dict) -> bool:
-                # Registered, but it cannot do its job as written.
-                return _hook_lacks_data_dir(hook, data_env)
+                # Registered, but it cannot do its job as written: Git Bash
+                # cannot run it, or it opens another store.
+                return (
+                    _hook_command_has_unquoted_backslash(hook, windows=windows)
+                    or _hook_lacks_data_dir(hook, data_env)
+                )
 
             if not force_rewrite and not any(is_broken(hook) for _, hook in matches):
                 logger.info(
@@ -1383,10 +1388,8 @@ def _inject_claude_code_hook_for_event(
                     kept = next(
                         (hook for _, hook in matches if is_current(hook)), matches[0][1],
                     )
-                # The kept one is touched only when it cannot do its job:
-                # Git Bash cannot run it, or it opens another store.
-                repair = is_broken(kept) or _hook_command_has_unquoted_backslash(
-                    kept, windows=windows)
+                # The kept one is touched only when it cannot do its job.
+                repair = is_broken(kept)
                 # ... or, on request, to stop a shell from parsing it.
                 if force_rewrite and exec_form and _hook_is_shell_form_module(kept):
                     repair = True
@@ -1446,6 +1449,50 @@ def _inject_claude_code_hook_for_event(
             "Failed to register Engram %s hook: %s", event, exc,
         )
         return None
+
+
+#: (event, markers, all markers required) of the hooks Engram registers,
+#: as doctor's hook checks match them.
+_CLAUDE_HOOK_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    ("Stop", ("auto_save_on_stop", "piia_engram.hooks.auto_save_on_stop"), False),
+    ("PreCompact",
+     ("CLAUDE_INVOKED_BY=engram_precompact", "piia_engram.hooks.auto_save_on_stop"), True),
+    ("SessionStart",
+     ("auto_inject_resume_brief", "piia_engram.hooks.auto_inject_resume_brief"), False),
+    ("PostCompact", ("auto_absorb_compact", "piia_engram.hooks.auto_absorb_compact"), False),
+)
+#: Claude Code's settings.json is small; past this size it is not parsed.
+_HOOK_CHECK_MAX_BYTES = 4 * 1024 * 1024
+
+
+def claude_hook_problems(*, windows: bool | None = None) -> list[str]:
+    """Events whose registered Engram hook Git Bash cannot run.
+
+    For the MCP server start: one small file read, nothing written, no
+    ``claude`` command run, and never an exception — a settings file that
+    is missing, oversized or not the expected shape reports nothing.
+    ``engram doctor`` says more; this only tells whether to run it.
+    """
+    try:
+        settings_path = _claude_code_mcp.settings_path()
+        if not settings_path.is_file():
+            return []
+        if settings_path.stat().st_size > _HOOK_CHECK_MAX_BYTES:
+            return []
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        events: list[str] = []
+        for event, markers, all_required in _CLAUDE_HOOK_SPECS:
+            matches = _matching_event_hooks(
+                settings, event, markers, all_required=all_required,
+            )
+            if any(
+                _hook_command_has_unquoted_backslash(hook, windows=windows)
+                for _, hook in matches
+            ):
+                events.append(event)
+        return events
+    except Exception:
+        return []
 
 
 def _inject_claude_code_hook(
