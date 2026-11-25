@@ -1539,13 +1539,45 @@ _CLAUDE_HOOK_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
 _HOOK_CHECK_MAX_BYTES = 4 * 1024 * 1024
 
 
-def claude_hook_problems(*, windows: bool | None = None) -> list[str]:
-    """Events whose registered Engram hook Git Bash cannot run.
+def _git_bash_found() -> bool:
+    """Whether a Git Bash is where Claude Code looks for one (Windows).
 
-    For the MCP server start: one small file read, nothing written, no
-    ``claude`` command run, and never an exception — a settings file that
-    is missing, oversized or not the expected shape reports nothing.
-    ``engram doctor`` says more; this only tells whether to run it.
+    Claude Code's own ``CLAUDE_CODE_GIT_BASH_PATH``, the ``bash.exe`` that
+    belongs to the ``git`` on PATH, and the default install locations.
+    File checks only; nothing is started.
+    """
+    candidates: list[Path] = []
+    override = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH", "").strip()
+    if override:
+        candidates.append(Path(override))
+    git = shutil.which("git")
+    if git:
+        folder = Path(git).resolve().parent  # ...\Git\cmd or ...\Git\mingw64\bin
+        candidates += [folder.parent / "bin" / "bash.exe",
+                       folder.parent.parent / "bin" / "bash.exe"]
+    for variable, below in (("ProgramFiles", "Git"), ("ProgramW6432", "Git"),
+                            ("ProgramFiles(x86)", "Git"), ("LOCALAPPDATA", "Programs/Git")):
+        root = os.environ.get(variable, "").strip()
+        if root:
+            candidates.append(Path(root) / below / "bin" / "bash.exe")
+    return any(candidate.is_file() for candidate in candidates)
+
+
+def claude_hook_problems(
+    *, windows: bool | None = None, data_dir: str | Path | None = None,
+) -> list[str]:
+    """Events whose registered Engram hook cannot do its job as written.
+
+    That is a hook Git Bash cannot run (bare backslash path), a hook with a
+    quoted interpreter path on a Windows machine where no Git Bash is found
+    (nothing can start it), and, when ``data_dir`` is given, an Engram
+    module hook that would open another store than ``data_dir``.
+
+    For the MCP server start: one small file read and a few file checks,
+    nothing written, no ``claude`` command run, and never an exception — a
+    settings file that is missing, oversized or not the expected shape
+    reports nothing. ``engram doctor`` says more; this only tells whether
+    to run it.
     """
     try:
         settings_path = _claude_code_mcp.settings_path()
@@ -1554,13 +1586,26 @@ def claude_hook_problems(*, windows: bool | None = None) -> list[str]:
         if settings_path.stat().st_size > _HOOK_CHECK_MAX_BYTES:
             return []
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        data_env = _hook_data_dir(data_dir)
+        git_bash: list[bool] = []  # looked for once, and only when it matters
+
+        def cannot_start(hook: dict) -> bool:
+            if _hook_command_has_unquoted_backslash(hook, windows=windows):
+                return True
+            if not (_hook_is_shell_form_module(hook)
+                    and _hook_needs_git_bash(hook, windows=windows)):
+                return False
+            if not git_bash:
+                git_bash.append(_git_bash_found())
+            return not git_bash[0]
+
         events: list[str] = []
         for event, markers, all_required in _CLAUDE_HOOK_SPECS:
             matches = _matching_event_hooks(
                 settings, event, markers, all_required=all_required,
             )
             if any(
-                _hook_command_has_unquoted_backslash(hook, windows=windows)
+                cannot_start(hook) or _hook_lacks_data_dir(hook, data_env)
                 for _, hook in matches
             ):
                 events.append(event)

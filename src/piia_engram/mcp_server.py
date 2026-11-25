@@ -98,22 +98,28 @@ def _run_startup_auto_migrate() -> None:
 
 
 def _claude_hook_notice() -> str:
-    """One stderr line when a registered Claude Code hook cannot run.
+    """One stderr line when a registered Claude Code hook cannot do its job.
 
-    Read-only: Claude Code's settings are never written from the server,
-    and a check that fails says nothing.
+    It cannot start as written, or it would open another store than this
+    server: the server's own ``ENGRAM_DIR`` is the one the MCP entry passes
+    in, which a hook does not see. Read-only: Claude Code's settings are
+    never written from the server, no ``claude`` command is run, and a
+    check that fails says nothing.
     """
     try:
         from piia_engram import setup_wizard as _setup_wizard
 
-        events = _setup_wizard.claude_hook_problems()
+        events = _setup_wizard.claude_hook_problems(
+            data_dir=os.environ.get("ENGRAM_DIR", "").strip() or None)
     except Exception:
         return ""
     if not events:
         return ""
     return (
         "[engram] notice: the Claude Code " + ", ".join(events) + " hook registered "
-        "for Engram cannot run as written. Run 'engram doctor --fix' to repair it."
+        "for Engram cannot start as written or does not use this server's data "
+        "directory. Run 'engram doctor' for details and 'engram doctor --fix' to "
+        "repair it."
     )
 
 

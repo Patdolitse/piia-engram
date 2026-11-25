@@ -16,7 +16,7 @@
 
 - `engram setup` 现在会像 `doctor --fix` 一样，原地修复 Git Bash 无法执行的已有 Engram hook（旧版本留下的裸反斜杠解释器路径）；此前它把这种 hook 当作已登记而保持原样。
 
-- Engram MCP 服务启动时会在 stderr 上报告这种 hook，并建议运行 `engram doctor --fix`。服务只读取 Claude Code 的设置，不会修改。
+- Engram MCP 服务启动时会在 stderr 上报告这种 hook，并建议运行 `engram doctor --fix`。它同样会报告与服务自身数据目录不一致的 hook，以及在找不到 Git Bash 的 Windows 机器上使用带引号 Python 路径的 hook。服务只读取 Claude Code 的设置，不会修改，也不运行 `claude` 命令。
 
 - 接续简报不再因为大量无关的短会话记录而丢掉某个项目的上次会话。简报查看最新的 200 个会话，这个上限现在只计入带摘要的会话；此前每个会话文件都占名额，几天没碰的项目可能拿不到上次会话。
 

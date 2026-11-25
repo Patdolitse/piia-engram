@@ -154,17 +154,17 @@ class TestServerStart:
         return mcp_server
 
     def test_notice_names_the_fix(self, server, monkeypatch):
-        monkeypatch.setattr(W, "claude_hook_problems", lambda: ["Stop", "SessionStart"])
+        monkeypatch.setattr(W, "claude_hook_problems", lambda **kw: ["Stop", "SessionStart"])
         notice = server._claude_hook_notice()
         assert notice.startswith("[engram] notice:")
         assert "Stop, SessionStart" in notice and "engram doctor --fix" in notice
 
     def test_no_problem_no_notice(self, server, monkeypatch):
-        monkeypatch.setattr(W, "claude_hook_problems", lambda: [])
+        monkeypatch.setattr(W, "claude_hook_problems", lambda **kw: [])
         assert server._claude_hook_notice() == ""
 
     def test_a_failing_check_is_silent(self, server, monkeypatch, capsys):
-        def boom():
+        def boom(**kw):
             raise RuntimeError("settings unreadable")
 
         monkeypatch.setattr(W, "claude_hook_problems", boom)
@@ -199,7 +199,7 @@ class TestServerStart:
         monkeypatch.setattr(server, "_run_startup_auto_migrate", lambda: None)
         monkeypatch.setattr(server.mcp, "run", lambda transport: events.append(f"run:{transport}"))
 
-        def slow_check():
+        def slow_check(**kw):
             gate.wait(timeout=30)
             events.append("checked")
             return []

@@ -16,7 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - `engram setup` now repairs an existing Engram hook that Git Bash cannot run (a bare backslash interpreter path left by an older version) in place, as `doctor --fix` does; before, it reported the hook as already registered and left it broken.
 
-- The Engram MCP server reports such a hook on stderr when it starts and suggests `engram doctor --fix`. The server only reads Claude Code's settings; it never changes them.
+- The Engram MCP server reports such a hook on stderr when it starts and suggests `engram doctor --fix`. It also reports a hook that would use another data directory than the server itself, and a hook with a quoted Python path on a Windows machine where no Git Bash is found. The server only reads Claude Code's settings; it never changes them and runs no `claude` command.
 
 - The resume brief no longer loses a project's last session behind unrelated short session records. The brief looks at the 200 newest sessions, and that limit now counts only sessions that have a digest; before, every session file counted, so a project untouched for a few days could come back without its last session.
 

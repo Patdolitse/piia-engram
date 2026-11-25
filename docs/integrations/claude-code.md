@@ -106,8 +106,11 @@ After an upgrade, hooks written by an older version stay as they were. One that
 Git Bash cannot run (an unquoted backslash interpreter path) is rewritten in
 place by `engram setup` and by `engram doctor --fix`; neither adds a second
 registration. Until then the Engram MCP server prints one notice on stderr at
-each start, naming the affected hook events. The server only reads
-`settings.json`.
+each start, naming the affected hook events. The same notice covers a hook that
+would use another data directory than the server (the server's `ENGRAM_DIR` is
+the one its MCP entry passes in) and a hook with a quoted Python path on a
+Windows machine where no Git Bash is found. The server only reads
+`settings.json` and runs no `claude` command.
 
 If `settings.json` is not valid JSON (an unescaped backslash in a hand-edited
 Windows path is the usual cause), `engram doctor` reports the file and the
