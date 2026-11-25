@@ -57,9 +57,13 @@ def select_resume_fields(handoff, freshness, snapshot, digests, token_budget=200
                        if any(word in str(item).lower() for word in
                               ("constraint", "must", "keep", "约束", "必须", "保留"))]
         if "task_checkpoint" in digest:
-            from .task_checkpoint import validate
+            from .task_checkpoint import EVENTS, ROLLOUT_EVENT, validate
             try:
-                task = validate(digest["task_checkpoint"])
+                # Sidecars may also carry the watcher's rollout capture; no
+                # other event name is acceptable, and every other invariant
+                # (shape, privacy, size) still applies unchanged.
+                task = validate(digest["task_checkpoint"],
+                                allowed_events=EVENTS | {ROLLOUT_EVENT})
             except (ValueError, TypeError, KeyError, OverflowError):
                 task = None
             if task:

@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 任务检查点的可选开关现同样作用于 watcher 的 Codex rollout 捕获：在 watcher 进程环境中设置 `ENGRAM_HOOK_TASK_CHECKPOINT_V1=1` 后，分段中最后一条已完成助手消息末尾的五标签块会像 Claude Stop 快照一样附加到会话 digest，resume brief 因此带上目标、约束、阻塞、上次失败原因和下一步。watcher 路径无需配置 transcript 根目录白名单，不含有效标签块的分段保持既有捕获行为。详见[任务检查点说明](docs/task-checkpoint.zh-CN.md)。
+
 ### 修复
 
 - Claude Code 和 Cursor 的 SessionStart 接续 hook：简报的存储模式检查每次读取只执行一次，而不是每层嵌套读取都执行；会话摘要遍历会跳过没有摘要的会话并设有上限，因此会话很多的存储上生成简报不再按“会话文件数 × 知识库大小”计时。hook 的读取预算默认 10 秒（可用 `ENGRAM_RESUME_HOOK_BUDGET_S` 覆盖，上限低于 hook 的注册超时），`engram doctor` 会报告最近 7 天的预算超时。
