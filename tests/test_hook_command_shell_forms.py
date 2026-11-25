@@ -487,9 +487,12 @@ class TestGitBashRegression:
     """The generated command, run through the shells that execute hooks."""
 
     @pytest.mark.parametrize("relative", ["python3", "py stub/python3"])
-    def test_generated_command_survives_git_bash(self, git_bash, tmp_path, relative):
+    def test_generated_command_survives_git_bash(self, git_bash, tmp_path, relative, monkeypatch):
         """Without a space in the path the Windows form stays bare; with
         one it is quoted. Both arrive as one argument."""
+        # The quoted form is the subject here; tests/test_hook_short_path.py
+        # covers a volume that has a short path to write instead.
+        monkeypatch.setattr(W, "_windows_short_path", lambda path: None)
         stub = _stub_interpreter(tmp_path / relative)
         command = W._build_engram_hook_command(
             str(stub), module=STOP, extra_env={"CLAUDE_INVOKED_BY": "engram_postcompact"},

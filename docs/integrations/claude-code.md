@@ -73,12 +73,16 @@ parses it:
 
 Claude Code added `args` in 2.1.139. Setup asks the `claude` command on your
 `PATH` for its version; when that is older, or `claude` is not on `PATH`, the
-hook is written as one command string instead, which Git Bash runs. Without Git
-Bash, Claude Code hands that string to PowerShell, which cannot run it when the
-Python path contains a space; update Claude Code, make `claude` available on
-`PATH`, and run `engram doctor --fix`. `engram doctor` points out an Engram hook
-still written as one string when the `args` form is available, and `--fix`
-converts it in place. macOS and Linux keep the string form.
+hook is written as one command string instead. When the Python path contains a
+space, that string uses the Windows 8.3 short path (for example
+`C:/PROGRA~1/Python312/python.exe`), which Git Bash, PowerShell and cmd.exe all
+start. If the volume has no short names, the path is quoted; Git Bash runs the
+quoted form, but without Git Bash Claude Code hands the string to PowerShell,
+which cannot. `engram doctor` reports such a hook with `[!!]`: either update
+Claude Code and make `claude` available on `PATH`, or install Python in a path
+without a space, then run `engram doctor --fix`. `engram doctor` also points out
+an Engram hook still written as one string when the `args` form is available,
+and `--fix` converts it in place. macOS and Linux keep the string form.
 
 Claude Code starts a hook itself, so a hook does not see the environment of the
 Engram MCP entry. When your data directory is not the default `~/.engram`, each

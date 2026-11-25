@@ -1011,6 +1011,33 @@ def _hook_is_shell_form_module(hook: dict) -> bool:
     )
 
 
+def _windows_short_path(path: str) -> str | None:
+    """The 8.3 short form of an existing path, or ``None``.
+
+    ``None`` off Windows, for a path that does not exist and when the call
+    fails. A volume without short names answers with the long path, so the
+    caller checks what it got.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get_short = ctypes.windll.kernel32.GetShortPathNameW
+        get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_short.restype = wintypes.DWORD
+        size = get_short(path, None, 0)
+        if not size:
+            return None
+        buffer = ctypes.create_unicode_buffer(size)
+        if not get_short(path, buffer, size):
+            return None
+        return buffer.value or None
+    except Exception:
+        return None
+
+
 def _quote_hook_interpreter(python_path: str, *, windows: bool | None = None) -> str:
     """Quote the interpreter path at the head of a hook ``command``.
 
@@ -1021,12 +1048,45 @@ def _quote_hook_interpreter(python_path: str, *, windows: bool | None = None) ->
     PowerShell all accept; quoting is then left to ``_quote_for_shell``,
     so a path without spaces or shell metacharacters stays bare. Elsewhere
     the path is quoted exactly as ``_quote_for_shell`` quotes it.
+
+    A Windows path that would need quotes (a space) is written as its 8.3
+    short path instead when the volume has one that needs none: the quoted
+    form runs under Git Bash and cmd.exe only, because PowerShell — where
+    Claude Code sends a hook when Git Bash is not installed — reads a
+    quoted first word as a string, not a program. A short path such as
+    ``C:/PROGRA~1/Python312/python.exe`` starts in all three (``~`` is
+    special to bash only at the start of a word). Without a usable short
+    path the quoted form stays; ``_hook_needs_git_bash`` then tells.
     """
     if windows is None:
         windows = _hook_shell_is_git_bash()
-    if windows:
-        python_path = python_path.replace("\\", "/")
-    return _quote_for_shell(python_path)
+    if not windows:
+        return _quote_for_shell(python_path)
+    forward = python_path.replace("\\", "/")
+    quoted = _quote_for_shell(forward)
+    if quoted != forward:
+        short = (_windows_short_path(python_path) or "").replace("\\", "/")
+        if (short and not any(char.isspace() for char in short)
+                and not short.startswith("~") and _quote_for_shell(short) == short):
+            return short
+    return quoted
+
+
+def _hook_needs_git_bash(hook: dict, *, windows: bool | None = None) -> bool:
+    """Whether a registered hook starts only when Git Bash runs it.
+
+    True on Windows for a hook written as one string whose first word is
+    quoted (an interpreter path with a space): PowerShell, which gets the
+    hook when Git Bash is not installed, does not run a quoted first word.
+    A hook with an ``args`` list is started without a shell.
+    """
+    if not isinstance(hook, dict) or isinstance(hook.get("args"), list):
+        return False
+    if windows is None:
+        windows = _hook_shell_is_git_bash()
+    if not windows:
+        return False
+    return str(hook.get("command") or "").lstrip()[:1] in ('"', "'")
 
 
 def _hook_marker_text(hook: dict) -> str:
@@ -1400,8 +1460,12 @@ def _inject_claude_code_hook_for_event(
                     )
                 # The kept one is touched only when it cannot do its job.
                 repair = is_broken(kept)
-                # ... or, on request, to stop a shell from parsing it.
-                if force_rewrite and exec_form and _hook_is_shell_form_module(kept):
+                # ... or, on request, to stop a shell from parsing it, or to
+                # write a form that starts without Git Bash too.
+                if force_rewrite and _hook_is_shell_form_module(kept) and (
+                        exec_form or (
+                            _hook_needs_git_bash(kept, windows=windows)
+                            and not is_current(kept))):
                     repair = True
             else:
                 kept = matches[0][1]

@@ -26,6 +26,8 @@
 
 - 在 Windows 上，如果已为账户或整台机器设置了 `ENGRAM_DIR` 且指向数据目录，`engram doctor` 不再报告“hook 没有带数据目录”，因为 hook 会继承它。只写在 MCP 条目里的目录仍会被报告。
 
+- 在 Windows 上，当 hook 只能写成一条命令字符串（PATH 上没有 `claude`，或 Claude Code 早于 2.1.139）且 Python 路径含空格时，hook 现在使用 8.3 短路径，Git Bash、PowerShell 和 cmd.exe 都能启动它；带引号的写法在没有 Git Bash 时无法启动。所在卷没有短文件名时保留带引号的写法，`engram doctor` 会报告这条 hook 在没有 Git Bash 时无法启动，并给出处理办法。存在短路径时，`doctor --fix` 会改写已有的带引号 hook。
+
 ## [4.28.0] - 2026-11-25
 
 ### 新增

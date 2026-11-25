@@ -1660,6 +1660,21 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
         ]
         if shell_form and not W._claude_code_exec_hooks():
             shell_form = []
+        # Written as one string with a quoted interpreter path: Git Bash runs
+        # it, PowerShell (Claude Code's fallback without Git Bash) does not.
+        # When command + args is not available, the 8.3 short path is the way
+        # out; where the volume has none, only the owner can change that.
+        bash_only = [] if shell_form else [
+            hook for _, hook in matches
+            if W._hook_is_shell_form_module(hook) and W._hook_needs_git_bash(hook)
+        ]
+        bash_only_fixable = False
+        if bash_only:
+            if python_path_for_fix is None:
+                python_path_for_fix = W._find_python() or ""
+            bash_only_fixable = bool(python_path_for_fix) and not (
+                W._quote_hook_interpreter(python_path_for_fix).startswith('"'))
+        bash_only_stuck = bool(bash_only) and not bash_only_fixable
         # Older --fix runs could not see a command+args hook and appended
         # a second registration next to it.
         duplicated = len(matches) > 1
@@ -1689,11 +1704,31 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
                 "start it without a shell (command + args)"
             )
 
-        if matches and not unsafe and not unpinned and not duplicated and not shell_form:
+        if bash_only and not unsafe and not unpinned:
+            if bash_only_fixable:
+                W._safe_print(
+                    f"    [--] {label} hook starts only through Git Bash (quoted "
+                    "interpreter path); the short path starts in any shell"
+                )
+            else:
+                W._safe_print(
+                    f"    [!!] {label} hook cannot start when Git Bash is not "
+                    "installed: its interpreter path has a space"
+                )
+                print(
+                    "           Either update Claude Code and make 'claude' available "
+                    "on PATH, or install\n"
+                    "           Python in a path without a space; then run "
+                    "'engram doctor --fix'."
+                )
+
+        if matches and not (unsafe or unpinned or duplicated or shell_form or bash_only):
             continue
+        if bash_only_stuck and not (unsafe or unpinned or duplicated):
+            continue  # nothing --fix can write would start without Git Bash
 
         if not fix:
-            if unsafe or unpinned or shell_form:
+            if unsafe or unpinned or shell_form or bash_only_fixable:
                 print(
                     f"           Run 'engram doctor --fix' to rewrite the "
                     f"{label} hook in place."
