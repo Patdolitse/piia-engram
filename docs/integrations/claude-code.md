@@ -60,15 +60,13 @@ tool-registry, or governance maintenance surfaces.
 
 Setup registers the Engram Stop and PreCompact hooks with `"async": true`, so
 they never delay a turn (SessionStart is synchronous). In a headless run
-(`claude -p`), an async Stop hook still starts, but Claude Code ends it shortly
-after the session finishes; about 1.5 s was observed on Claude Code 2.1.302,
-which is an observation, not a documented guarantee. Engram's Stop hook only
-queues a small local event (about 0.4-0.5 s including Python startup) and
-normally finishes inside that window. A runner that kills the whole process tree
-as soon as Claude Code exits (for example a Windows Job Object or some CI
-sandboxes) can stop the hook before it queues, and that session end is then not
-captured. To prevent that, delete only the `"async": true` line from the Engram
-Stop entry in `settings.json` and keep its other fields:
+(`claude -p`), Claude Code ends an async Stop hook very soon after it starts:
+about 0.15-0.3 s was observed on Claude Code 2.1.302 (an observation, not a
+documented guarantee). Engram's Stop hook needs about 0.5 s including Python
+startup, so in headless runs and other automation the session end is usually
+**not captured** while the hook is async. To capture it, delete only the
+`"async": true` line from the Engram Stop entry in `settings.json` and keep its
+other fields:
 
 ```json
 "Stop": [
@@ -80,7 +78,7 @@ Stop entry in `settings.json` and keep its other fields:
 ]
 ```
 
-The CLI then waits for the hook, typically under half a second per turn end; in
+The CLI then waits for the hook, typically about half a second per turn end; in
 interactive sessions Stop runs at the end of every turn. Re-running
 `engram setup` or `engram doctor --fix` keeps this edit. `engram doctor` does
 not report this field.
