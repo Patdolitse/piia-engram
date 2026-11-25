@@ -56,6 +56,15 @@ Leave `ENGRAM_TOOLS` unset for the default 19 core tools. Add
 `ENGRAM_TOOLS=all` only when you intentionally need review, import/export,
 tool-registry, or governance maintenance surfaces.
 
+### How the hooks are registered
+
+Claude Code starts a hook itself, so a hook does not see the environment of the
+Engram MCP entry. When your data directory is not the default `~/.engram`, each
+Engram hook command carries it as `--env ENGRAM_DIR=<directory>`; an `ENGRAM_DIR`
+already set in Claude Code's own environment still wins. `engram doctor` reports
+an Engram hook that does not name the data directory, and `engram setup` or
+`engram doctor --fix` adds it in place.
+
 ### Headless runs and session-end capture
 
 Setup registers the Engram Stop and PreCompact hooks with `"async": true`, so

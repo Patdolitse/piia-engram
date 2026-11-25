@@ -1077,6 +1077,64 @@ def _hook_command_has_unquoted_backslash(
     return False
 
 
+def _hook_data_dir(root: str | Path | None) -> str | None:
+    """The ``ENGRAM_DIR`` a hook has to be given to open the store at ``root``.
+
+    Claude Code starts a hook itself, so the hook does not see the
+    ``ENGRAM_DIR`` of the Engram MCP entry. ``None`` when a hook process
+    finds ``root`` unaided (the default location under the home directory,
+    as ``storage._engram_root`` resolves it), or when ``root`` is not given.
+    The value uses forward slashes: Git Bash drops a bare backslash in an
+    argument as it does in the interpreter path.
+    """
+    if not root:
+        return None
+    try:
+        from .storage import _ENGRAM_DIR_NAME, _LEGACY_DIR_NAME
+
+        wanted = Path(root).expanduser().resolve()
+        home = Path.home()
+        unaided = home / _ENGRAM_DIR_NAME
+        legacy = home / _LEGACY_DIR_NAME
+        if not unaided.exists() and legacy.exists():
+            unaided = legacy
+        if wanted == unaided.resolve():
+            return None
+        return wanted.as_posix()
+    except Exception:
+        return None
+
+
+def _hook_lacks_data_dir(hook: dict, data_env: str | None) -> bool:
+    """Whether an Engram hook would open a store other than ``data_env``.
+
+    ``data_env`` is ``_hook_data_dir``'s value. Only a hook that runs a
+    ``python -m piia_engram.hooks.*`` module is judged: a script of the
+    owner's that merely mentions a marker sets its own environment.
+    """
+    if not data_env or not isinstance(hook, dict):
+        return False
+    text = _hook_marker_text(hook)
+    if "-m piia_engram.hooks." not in text:
+        return False
+    named = re.escape(f"ENGRAM_DIR={data_env}") + r"""(?=$|[\s"'])"""
+    return re.search(named, text) is None
+
+
+def _hook_args_with_data_dir(args: list, data_env: str) -> list:
+    """``args`` of a ``command`` + ``args`` hook, naming ``data_env`` once."""
+    kept: list = []
+    index = 0
+    while index < len(args):
+        if (args[index] == "--env" and index + 1 < len(args)
+                and str(args[index + 1]).startswith("ENGRAM_DIR=")):
+            index += 2
+            continue
+        kept.append(args[index])
+        index += 1
+    return kept + ["--env", f"ENGRAM_DIR={data_env}"]
+
+
 def _build_engram_hook_command(
     python_path: str,
     *,
@@ -1133,6 +1191,7 @@ def _inject_claude_code_hook_for_event(
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
     windows: bool | None = None,
+    data_dir: str | Path | None = None,
 ) -> str | None:
     """Register a per-event hook in Claude Code's ``settings.json``.
 
@@ -1157,7 +1216,9 @@ def _inject_claude_code_hook_for_event(
             turn is processed. Sets ``async`` on a hook added here only.
         force_rewrite: If ``False`` (default), skip when any existing hook
             matches ``marker_keywords`` — backward-compatible idempotent
-            behaviour, preserves any user-customised hook. If ``True``:
+            behaviour, preserves any user-customised hook — unless one of
+            them cannot do its job (see ``data_dir``). Then, and always if
+            ``True``:
 
             * One registration, written as one ``command`` string: replace
               its ``command`` with the freshly built one (timeout and
@@ -1168,13 +1229,18 @@ def _inject_claude_code_hook_for_event(
               markers no longer satisfy its strict-match check) and to
               repair a bare-backslash path that Git Bash cannot run.
             * One registration with an ``args`` list (started without a
-              shell, so valid as it is): never rewritten or converted.
+              shell, so valid as it is): never rewritten or converted;
+              only a missing ``data_dir`` argument is added to its ``args``.
             * Registered more than once: keep one and remove the rest —
               the first with an ``args`` list, else the first with the
               current command, else the first. That last one is rewritten
-              in place only when Git Bash cannot run it. The kept hook
-              keeps its ``async`` as found.
+              in place only when Git Bash cannot run it or it lacks
+              ``data_dir``. The kept hook keeps its ``async`` as found.
         windows: Overrides the platform the command is built for (tests).
+        data_dir: The Engram data directory. When a hook process would not
+            find it unaided (``_hook_data_dir``), the hook carries it as
+            ``--env ENGRAM_DIR=...``, and an existing Engram hook without
+            it is repaired in place even when ``force_rewrite`` is False.
 
     Returns:
         Path to the settings file on success (either newly added or
@@ -1185,8 +1251,12 @@ def _inject_claude_code_hook_for_event(
     try:
         settings_path = _claude_code_mcp.settings_path()
 
+        data_env = _hook_data_dir(data_dir)
+        hook_env = dict(extra_env or {})
+        if data_env:
+            hook_env["ENGRAM_DIR"] = data_env
         engram_command = _build_engram_hook_command(
-            python_path, module=module, extra_env=extra_env, windows=windows,
+            python_path, module=module, extra_env=hook_env, windows=windows,
         )
 
         settings: dict = {}
@@ -1215,7 +1285,11 @@ def _inject_claude_code_hook_for_event(
             else:
                 event_groups.append({"hooks": [engram_hook]})
         else:
-            if not force_rewrite:
+            def is_broken(hook: dict) -> bool:
+                # Registered, but it cannot do its job as written.
+                return _hook_lacks_data_dir(hook, data_env)
+
+            if not force_rewrite and not any(is_broken(hook) for _, hook in matches):
                 logger.info(
                     "Engram %s hook already registered (matched marker)", event,
                 )
@@ -1241,21 +1315,21 @@ def _inject_claude_code_hook_for_event(
                     kept = next(
                         (hook for _, hook in matches if is_current(hook)), matches[0][1],
                     )
-                # Only the last fallback is touched, and only when Git
-                # Bash cannot run it.
-                repair = _hook_command_has_unquoted_backslash(kept, windows=windows)
+                # The kept one is touched only when it cannot do its job:
+                # Git Bash cannot run it, or it opens another store.
+                repair = is_broken(kept) or _hook_command_has_unquoted_backslash(
+                    kept, windows=windows)
             else:
                 kept = matches[0][1]
-                if is_exec_form(kept):
-                    logger.info(
-                        "Engram %s hook already up to date (no rewrite needed)",
-                        event,
-                    )
-                    return None  # Never rewritten or converted
-                # A stale command or a bare-backslash path: update the
-                # command (and refresh metadata) so doctor --fix can
-                # upgrade hooks left behind by earlier Engram versions.
-                repair = not is_current(kept)
+                if is_exec_form(kept) or not force_rewrite:
+                    # A command+args hook is never rewritten or converted,
+                    # and without force_rewrite a working hook stays as is.
+                    repair = is_broken(kept)
+                else:
+                    # A stale command or a bare-backslash path: update the
+                    # command (and refresh metadata) so doctor --fix can
+                    # upgrade hooks left behind by earlier Engram versions.
+                    repair = not is_current(kept)
 
             if not repair and len(matches) == 1:
                 logger.info(
@@ -1263,7 +1337,11 @@ def _inject_claude_code_hook_for_event(
                     event,
                 )
                 return None  # Same command — nothing to do
-            if repair:
+            if repair and is_exec_form(kept):
+                # Valid as written; it only gets the missing argument.
+                kept["args"] = _hook_args_with_data_dir(kept["args"], data_env)
+                logger.info("Engram %s hook: data directory added", event)
+            elif repair:
                 kept["command"] = engram_command
                 kept["timeout"] = timeout
                 kept["statusMessage"] = status_message
@@ -1321,6 +1399,7 @@ def _inject_claude_code_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
+        data_dir=file_safety_root,
     )
 
 
@@ -1361,6 +1440,7 @@ def _inject_claude_code_precompact_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
+        data_dir=file_safety_root,
     )
 
 
@@ -1401,6 +1481,7 @@ def _inject_claude_code_sessionstart_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
+        data_dir=file_safety_root,
     )
 
 
@@ -1441,6 +1522,7 @@ def _inject_claude_code_postcompact_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
+        data_dir=file_safety_root,
     )
 
 

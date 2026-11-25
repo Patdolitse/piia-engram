@@ -6,6 +6,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 修复
+
+- Claude Code hook 现在能找到默认位置以外的数据目录。此前 setup 只把 `ENGRAM_DIR` 写进 Engram 的 MCP 条目，而 hook 看不到它；使用自定义数据目录且没有设置系统级 `ENGRAM_DIR` 时，hook 读取和排队用的都是 `~/.engram`。hook 命令现在自带数据目录，`engram doctor` 会报告没有带上它的 Engram hook，`engram setup` 或 `doctor --fix` 会原地补上。
+
 ## [4.28.0] - 2026-11-25
 
 ### 新增

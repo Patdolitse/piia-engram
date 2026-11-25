@@ -6,6 +6,12 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Claude Code hooks now reach a data directory outside the default location. Setup wrote `ENGRAM_DIR` only into the Engram MCP entry, which a hook never sees, so with a custom data directory and no machine-wide `ENGRAM_DIR` the hooks read and queued into `~/.engram`. Hook commands now carry the directory, `engram doctor` reports an Engram hook that does not, and `engram setup` or `doctor --fix` adds it in place.
+
 ## [4.28.0] - 2026-11-25
 
 ### Added

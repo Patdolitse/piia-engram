@@ -578,7 +578,8 @@ def run_doctor(tmp_path, monkeypatch, capsys, claude_config):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: home)
-    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "engram-root"))
+    # The default location: a hook process finds it without being told.
+    monkeypatch.setenv("ENGRAM_DIR", str(home / ".engram"))
     monkeypatch.setenv("ENGRAM_TEST", "1")
     monkeypatch.setattr(W, "_hook_shell_is_git_bash", lambda: True)
     monkeypatch.setattr(W, "_find_python", lambda: WIN_PYTHON)

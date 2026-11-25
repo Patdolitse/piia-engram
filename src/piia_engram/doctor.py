@@ -1566,6 +1566,9 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
     )
 
     python_path_for_fix: str | None = None
+    # Claude Code starts a hook itself: a store outside the default location
+    # reaches the hook only when its command names it.
+    hook_data_dir = W._hook_data_dir(eng.root)
     for event, label, markers, match_mode, injector in hook_specs:
         all_required = match_mode == "all"
         matches = W._matching_event_hooks(
@@ -1579,6 +1582,10 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
             hook for _, hook in matches
             if W._hook_command_has_unquoted_backslash(hook)
         ]
+        unpinned = [
+            hook for _, hook in matches
+            if W._hook_lacks_data_dir(hook, hook_data_dir)
+        ]
         # Older --fix runs could not see a command+args hook and appended
         # a second registration next to it.
         duplicated = len(matches) > 1
@@ -1587,6 +1594,11 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
             if unsafe:
                 W._safe_print(
                     f"    [!!] {label} hook uses a legacy or shell-unsafe command"
+                )
+            elif unpinned:
+                W._safe_print(
+                    f"    [!!] {label} hook does not name the data directory; unless "
+                    "ENGRAM_DIR is set for Claude Code itself it uses the default one"
                 )
             else:
                 W._safe_print(f"    [ok] {label} hook registered")
@@ -1597,11 +1609,11 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
                 f"    [!!] {label} hook registered {len(matches)} times"
             )
 
-        if matches and not unsafe and not duplicated:
+        if matches and not unsafe and not unpinned and not duplicated:
             continue
 
         if not fix:
-            if unsafe:
+            if unsafe or unpinned:
                 print(
                     f"           Run 'engram doctor --fix' to rewrite the "
                     f"{label} hook in place."
