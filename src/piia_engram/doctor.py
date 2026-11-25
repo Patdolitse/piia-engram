@@ -1586,6 +1586,14 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
             hook for _, hook in matches
             if W._hook_lacks_data_dir(hook, hook_data_dir)
         ]
+        # Runnable, but parsed by whichever shell Claude Code finds. On
+        # Windows a new enough Claude Code can start a hook without one;
+        # ``claude --version`` is asked only when such a hook exists.
+        shell_form = [
+            hook for _, hook in matches if W._hook_is_shell_form_module(hook)
+        ]
+        if shell_form and not W._claude_code_exec_hooks():
+            shell_form = []
         # Older --fix runs could not see a command+args hook and appended
         # a second registration next to it.
         duplicated = len(matches) > 1
@@ -1609,11 +1617,17 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
                 f"    [!!] {label} hook registered {len(matches)} times"
             )
 
-        if matches and not unsafe and not unpinned and not duplicated:
+        if shell_form and not unsafe and not unpinned:
+            W._safe_print(
+                f"    [--] {label} hook is one shell command; Claude Code can "
+                "start it without a shell (command + args)"
+            )
+
+        if matches and not unsafe and not unpinned and not duplicated and not shell_form:
             continue
 
         if not fix:
-            if unsafe or unpinned:
+            if unsafe or unpinned or shell_form:
                 print(
                     f"           Run 'engram doctor --fix' to rewrite the "
                     f"{label} hook in place."

@@ -976,6 +976,41 @@ def _hook_shell_is_git_bash() -> bool:
     return os.name == "nt"
 
 
+#: Claude Code release that added a hook's ``args`` list (its changelog:
+#: "Added hook ``args: string[]`` field (exec form) that spawns the command
+#: directly without a shell").
+_EXEC_HOOK_MIN_CLAUDE = (2, 1, 139)
+
+
+def _claude_code_exec_hooks(windows: bool | None = None) -> bool:
+    """Whether to register hooks as ``command`` + ``args`` (no shell).
+
+    On Windows a ``command`` string is parsed by Git Bash, or by PowerShell
+    when Git Bash is not installed, and no single string suits both once
+    the interpreter path has a space. With ``args`` Claude Code starts the
+    program itself. A Claude Code older than ``_EXEC_HOOK_MIN_CLAUDE`` does
+    not know ``args`` and would run ``command`` alone, so this is true only
+    when the ``claude`` on PATH reports a new enough version; when it is
+    missing or cannot be asked, the string form stays. Other platforms keep
+    the string form, which ``sh -c`` runs as written.
+    """
+    if windows is None:
+        windows = _hook_shell_is_git_bash()
+    if not windows:
+        return False
+    version = _claude_code_mcp.cli_version()
+    return version is not None and version >= _EXEC_HOOK_MIN_CLAUDE
+
+
+def _hook_is_shell_form_module(hook: dict) -> bool:
+    """An Engram ``python -m piia_engram.hooks.*`` hook written as one string."""
+    return (
+        isinstance(hook, dict)
+        and not isinstance(hook.get("args"), list)
+        and "-m piia_engram.hooks." in _hook_marker_text(hook)
+    )
+
+
 def _quote_hook_interpreter(python_path: str, *, windows: bool | None = None) -> str:
     """Quote the interpreter path at the head of a hook ``command``.
 
@@ -1163,6 +1198,24 @@ def _build_engram_hook_command(
     return " ".join(parts)
 
 
+def _build_engram_hook_exec(
+    python_path: str,
+    *,
+    module: str,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[str, list[str]]:
+    """The ``command`` and ``args`` of a hook Claude Code starts without a shell.
+
+    The same call ``_build_engram_hook_command`` writes as one string. No
+    shell reads either value, so the interpreter path stays as it is and
+    nothing is quoted.
+    """
+    args = ["-m", module]
+    for key, value in (extra_env or {}).items():
+        args += ["--env", f"{key}={value}"]
+    return python_path, args
+
+
 def _remove_event_hook(event_groups: list, group: dict, hook: dict) -> None:
     """Take ``hook`` out of its ``group`` by identity; drop an emptied group."""
     entries = group.get("hooks")
@@ -1192,6 +1245,7 @@ def _inject_claude_code_hook_for_event(
     authorized_external_write: bool = False,
     windows: bool | None = None,
     data_dir: str | Path | None = None,
+    exec_form: bool | None = None,
 ) -> str | None:
     """Register a per-event hook in Claude Code's ``settings.json``.
 
@@ -1221,7 +1275,8 @@ def _inject_claude_code_hook_for_event(
             ``True``:
 
             * One registration, written as one ``command`` string: replace
-              its ``command`` with the freshly built one (timeout and
+              its ``command`` with the freshly built one, or with
+              ``command`` + ``args`` under ``exec_form`` (timeout and
               statusMessage refreshed, ``async`` left as found) unless it
               is already the current one. Doctor ``--fix`` uses this to
               upgrade stale hooks left behind by older versions (e.g.
@@ -1235,12 +1290,17 @@ def _inject_claude_code_hook_for_event(
               the first with an ``args`` list, else the first with the
               current command, else the first. That last one is rewritten
               in place only when Git Bash cannot run it or it lacks
-              ``data_dir``. The kept hook keeps its ``async`` as found.
+              ``data_dir``, and an Engram module hook written as a string
+              is converted under ``exec_form``. The kept hook keeps its
+              ``async`` as found.
         windows: Overrides the platform the command is built for (tests).
         data_dir: The Engram data directory. When a hook process would not
             find it unaided (``_hook_data_dir``), the hook carries it as
             ``--env ENGRAM_DIR=...``, and an existing Engram hook without
             it is repaired in place even when ``force_rewrite`` is False.
+        exec_form: Write ``command`` + ``args`` instead of one string, so
+            no shell parses the hook. Default: ``_claude_code_exec_hooks``
+            (Windows with a Claude Code that knows ``args``).
 
     Returns:
         Path to the settings file on success (either newly added or
@@ -1258,6 +1318,11 @@ def _inject_claude_code_hook_for_event(
         engram_command = _build_engram_hook_command(
             python_path, module=module, extra_env=hook_env, windows=windows,
         )
+        if exec_form is None:
+            exec_form = _claude_code_exec_hooks(windows)
+        exec_command, exec_args = _build_engram_hook_exec(
+            python_path, module=module, extra_env=hook_env,
+        )
 
         settings: dict = {}
         if settings_path.is_file():
@@ -1271,12 +1336,10 @@ def _inject_claude_code_hook_for_event(
 
         if not matches:
             # No matching hook — append fresh.
-            engram_hook: dict = {
-                "type": "command",
-                "command": engram_command,
-                "timeout": timeout,
-                "statusMessage": status_message,
-            }
+            engram_hook: dict = {"type": "command", "command": engram_command}
+            if exec_form:
+                engram_hook.update(command=exec_command, args=exec_args)
+            engram_hook.update(timeout=timeout, statusMessage=status_message)
             if async_hook:
                 engram_hook["async"] = True
 
@@ -1300,6 +1363,11 @@ def _inject_claude_code_hook_for_event(
                 return isinstance(hook.get("args"), list)
 
             def is_current(hook: dict) -> bool:
+                if exec_form:
+                    return (
+                        hook.get("command", "") == exec_command
+                        and hook.get("args") == exec_args
+                    )
                 return (
                     hook.get("command", "") == engram_command
                     and not is_exec_form(hook)
@@ -1319,6 +1387,9 @@ def _inject_claude_code_hook_for_event(
                 # Git Bash cannot run it, or it opens another store.
                 repair = is_broken(kept) or _hook_command_has_unquoted_backslash(
                     kept, windows=windows)
+                # ... or, on request, to stop a shell from parsing it.
+                if force_rewrite and exec_form and _hook_is_shell_form_module(kept):
+                    repair = True
             else:
                 kept = matches[0][1]
                 if is_exec_form(kept) or not force_rewrite:
@@ -1343,6 +1414,8 @@ def _inject_claude_code_hook_for_event(
                 logger.info("Engram %s hook: data directory added", event)
             elif repair:
                 kept["command"] = engram_command
+                if exec_form:
+                    kept.update(command=exec_command, args=exec_args)
                 kept["timeout"] = timeout
                 kept["statusMessage"] = status_message
                 # ``async`` is left as found: a Stop hook made synchronous

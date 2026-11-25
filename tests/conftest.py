@@ -178,6 +178,7 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setattr(_claude_code_mcp, "config_dir_override", lambda:
         None if os.environ.get("CLAUDE_CONFIG_DIR") == baseline_override else original_override())
     monkeypatch.setattr(_claude_code_mcp, "cli_path", lambda: None)
+    monkeypatch.setattr(_claude_code_mcp, "_VERSION_CACHE", {})
     monkeypatch.setattr(_claude_code_mcp, "run_cli", _no_real_claude)
     try:
         yield

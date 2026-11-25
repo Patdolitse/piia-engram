@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
@@ -370,6 +371,33 @@ def _run(argv: list[str], timeout: float = CLI_TIMEOUT_SECONDS) -> subprocess.Co
 # Seams: tests replace these so no real `claude` ever runs.
 cli_path: Callable[[], str | None] = _find_cli
 run_cli: Callable[..., subprocess.CompletedProcess] = _run
+
+
+VERSION_TIMEOUT_SECONDS = 15
+#: ``claude --version`` answers of this process, by executable path.
+_VERSION_CACHE: dict[str, tuple[int, int, int] | None] = {}
+
+
+def cli_version() -> tuple[int, int, int] | None:
+    """Version of the ``claude`` on PATH; ``None`` when it cannot be told.
+
+    Asked once per process and executable. Read-only: ``claude --version``
+    changes nothing.
+    """
+    exe = cli_path()
+    if not exe:
+        return None
+    if exe not in _VERSION_CACHE:
+        version = None
+        try:
+            done = run_cli([exe, "--version"], timeout=VERSION_TIMEOUT_SECONDS)
+            found = re.search(r"(\d+)\.(\d+)\.(\d+)", done.stdout or "")
+            if done.returncode == 0 and found:
+                version = tuple(int(part) for part in found.groups())
+        except Exception:
+            version = None
+        _VERSION_CACHE[exe] = version
+    return _VERSION_CACHE[exe]
 
 
 def add_args(entry: dict) -> list[str]:

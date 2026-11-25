@@ -61,13 +61,22 @@ def config_dir(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
 
 
 class Recorder:
-    """Stands in for the claude command: records argv, answers with a return code."""
+    """Stands in for the claude command: records argv, answers with a return code.
+
+    ``claude --version`` changes nothing and is asked when hooks are written;
+    it is recorded apart, in ``probes``, so ``calls`` holds the commands that
+    register or remove something.
+    """
 
     def __init__(self, codes: dict[str, int] | None = None):
         self.calls: list[list[str]] = []
+        self.probes: list[list[str]] = []
         self.codes = codes or {}
 
     def __call__(self, argv, timeout=None):
+        if list(argv[1:]) == ["--version"]:
+            self.probes.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         self.calls.append(list(argv))
         code = self.codes.get(argv[2] if len(argv) > 2 else "", 0)
         return subprocess.CompletedProcess(argv, code, stdout="", stderr="boom\n" if code else "")
@@ -425,7 +434,7 @@ def test_doctor_fix_without_cli_prints_the_command_and_writes_nothing(home, tmp_
 def test_doctor_without_fix_runs_no_command(home, tmp_path, cli):
     _legacy_world(home, tmp_path)
     out = _doctor_text(fix=False)
-    assert cli.calls == []
+    assert cli.calls == [] and cli.probes == []
     assert "engram doctor --fix" in out or "engram setup" in out
 
 

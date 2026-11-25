@@ -10,6 +10,8 @@
 
 ### 修复
 
+- 在 Windows 上，Claude Code hook 现在以 `command` + `args` 形式登记，由 Claude Code 直接启动，不经过 shell。此前写成一条命令字符串的 hook，在没有安装 Git Bash 且 Python 路径含空格时无法启动，因为 PowerShell 不能执行带引号的写法。这需要 Claude Code 2.1.139 或更新版本：setup 会向 PATH 上的 `claude` 查询版本，版本较旧或找不到时保留字符串写法。`engram doctor` 会指出仍写成一条字符串的 Engram hook，`doctor --fix` 原地转换。
+
 - Claude Code hook 现在能找到默认位置以外的数据目录。此前 setup 只把 `ENGRAM_DIR` 写进 Engram 的 MCP 条目，而 hook 看不到它；使用自定义数据目录且没有设置系统级 `ENGRAM_DIR` 时，hook 读取和排队用的都是 `~/.engram`。hook 命令现在自带数据目录，`engram doctor` 会报告没有带上它的 Engram hook，`engram setup` 或 `doctor --fix` 会原地补上。
 
 ## [4.28.0] - 2026-11-25

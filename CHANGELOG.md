@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- On Windows, Claude Code hooks are now registered as `command` + `args`, so Claude Code starts them without a shell. A hook written as one command string did not start when Git Bash was not installed and the Python path contained a space, because PowerShell cannot run the quoted form. This needs Claude Code 2.1.139 or newer: setup asks the `claude` on PATH for its version and keeps the string form when it is older or not found. `engram doctor` points out an Engram hook still written as one string, and `doctor --fix` converts it in place.
+
 - Claude Code hooks now reach a data directory outside the default location. Setup wrote `ENGRAM_DIR` only into the Engram MCP entry, which a hook never sees, so with a custom data directory and no machine-wide `ENGRAM_DIR` the hooks read and queued into `~/.engram`. Hook commands now carry the directory, `engram doctor` reports an Engram hook that does not, and `engram setup` or `doctor --fix` adds it in place.
 
 ## [4.28.0] - 2026-11-25

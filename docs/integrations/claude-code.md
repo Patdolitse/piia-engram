@@ -58,6 +58,28 @@ tool-registry, or governance maintenance surfaces.
 
 ### How the hooks are registered
 
+On Windows, setup registers each Engram hook as `command` (the Python
+interpreter) plus an `args` list, so Claude Code starts it directly and no shell
+parses it:
+
+```json
+{
+  "type": "command",
+  "command": "<python.exe>",
+  "args": ["-m", "piia_engram.hooks.auto_inject_resume_brief", "--env", "CLAUDE_INVOKED_BY=engram_session_start"],
+  "timeout": 15
+}
+```
+
+Claude Code added `args` in 2.1.139. Setup asks the `claude` command on your
+`PATH` for its version; when that is older, or `claude` is not on `PATH`, the
+hook is written as one command string instead, which Git Bash runs. Without Git
+Bash, Claude Code hands that string to PowerShell, which cannot run it when the
+Python path contains a space; update Claude Code, make `claude` available on
+`PATH`, and run `engram doctor --fix`. `engram doctor` points out an Engram hook
+still written as one string when the `args` form is available, and `--fix`
+converts it in place. macOS and Linux keep the string form.
+
 Claude Code starts a hook itself, so a hook does not see the environment of the
 Engram MCP entry. When your data directory is not the default `~/.engram`, each
 Engram hook command carries it as `--env ENGRAM_DIR=<directory>`; an `ENGRAM_DIR`
