@@ -179,6 +179,11 @@ def _isolate_engram_store(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         None if os.environ.get("CLAUDE_CONFIG_DIR") == baseline_override else original_override())
     monkeypatch.setattr(_claude_code_mcp, "cli_path", lambda: None)
     monkeypatch.setattr(_claude_code_mcp, "_VERSION_CACHE", {})
+    # The account's persistent environment (the Windows registry) is the
+    # machine's own state: tests see none unless they supply one.
+    from piia_engram import persistent_env as _persistent_env
+
+    monkeypatch.setattr(_persistent_env, "read", lambda name: None)
     monkeypatch.setattr(_claude_code_mcp, "run_cli", _no_real_claude)
     try:
         yield

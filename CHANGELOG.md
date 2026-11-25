@@ -24,6 +24,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - `engram doctor` now checks Claude Code hooks against the data directory in Claude Code's Engram MCP entry when the terminal has no `ENGRAM_DIR`. Before, an owner whose custom directory was set only in that entry got "healthy" for hooks that used `~/.engram`, and `--fix` left them. Doctor reads the entry without changing it, says which directory it used, and reports a mismatch with the terminal's `ENGRAM_DIR`; `engram setup` offers the entry's directory first.
 
+- On Windows, `engram doctor` no longer reports "hook does not name the data directory" when `ENGRAM_DIR` is set for the account or the machine and points at the data directory, because hooks inherit it. A directory set only in the MCP entry is still reported.
+
 ## [4.28.0] - 2026-11-25
 
 ### Added

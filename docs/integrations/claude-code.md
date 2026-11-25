@@ -83,7 +83,12 @@ converts it in place. macOS and Linux keep the string form.
 Claude Code starts a hook itself, so a hook does not see the environment of the
 Engram MCP entry. When your data directory is not the default `~/.engram`, each
 Engram hook command carries it as `--env ENGRAM_DIR=<directory>`; an `ENGRAM_DIR`
-already set in Claude Code's own environment still wins. `engram doctor` reports
+already set in Claude Code's own environment still wins. On Windows, an
+`ENGRAM_DIR` set for your account or the machine (System Properties, `setx`)
+that points at the data directory reaches the hooks by itself, so the argument
+is left out and doctor does not ask for it. On macOS and Linux there is no one
+place that tells which variables Claude Code starts with, so the argument is
+always written there. `engram doctor` reports
 an Engram hook that does not name the data directory, and `engram setup` or
 `engram doctor --fix` adds it in place.
 

@@ -1117,21 +1117,31 @@ def _hook_data_dir(root: str | Path | None) -> str | None:
 
     Claude Code starts a hook itself, so the hook does not see the
     ``ENGRAM_DIR`` of the Engram MCP entry. ``None`` when a hook process
-    finds ``root`` unaided (the default location under the home directory,
-    as ``storage._engram_root`` resolves it), or when ``root`` is not given.
-    The value uses forward slashes: Git Bash drops a bare backslash in an
-    argument as it does in the interpreter path.
+    finds ``root`` unaided, or when ``root`` is not given. Unaided, a hook
+    opens what ``storage._engram_root`` resolves: the ``ENGRAM_DIR`` every
+    process of this account starts with (``persistent_env``: Windows only;
+    elsewhere there is no one place to ask, so a directory outside the
+    default location is always named), else the default location under the
+    home directory. The value uses forward slashes: Git Bash drops a bare
+    backslash in an argument as it does in the interpreter path.
     """
     if not root:
         return None
     try:
+        from . import persistent_env
         from .storage import _ENGRAM_DIR_NAME, _LEGACY_DIR_NAME
 
         wanted = Path(root).expanduser().resolve()
+        try:
+            machine_wide = persistent_env.read("ENGRAM_DIR")
+        except Exception:
+            machine_wide = None
         home = Path.home()
         unaided = home / _ENGRAM_DIR_NAME
         legacy = home / _LEGACY_DIR_NAME
-        if not unaided.exists() and legacy.exists():
+        if machine_wide:
+            unaided = Path(machine_wide).expanduser()
+        elif not unaided.exists() and legacy.exists():
             unaided = legacy
         if wanted == unaided.resolve():
             return None

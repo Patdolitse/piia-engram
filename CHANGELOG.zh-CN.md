@@ -24,6 +24,8 @@
 
 - 终端里没有设置 `ENGRAM_DIR` 时，`engram doctor` 现在按 Claude Code 的 Engram MCP 条目里的数据目录检查 hook。此前，自定义目录只写在该条目里的用户会看到 hook “正常”，实际上 hook 用的是 `~/.engram`，`--fix` 也不处理。doctor 只读取该条目、不修改，会说明用了哪个目录，并在它与终端的 `ENGRAM_DIR` 不一致时明确提示；`engram setup` 会优先给出该条目里的目录。
 
+- 在 Windows 上，如果已为账户或整台机器设置了 `ENGRAM_DIR` 且指向数据目录，`engram doctor` 不再报告“hook 没有带数据目录”，因为 hook 会继承它。只写在 MCP 条目里的目录仍会被报告。
+
 ## [4.28.0] - 2026-11-25
 
 ### 新增
