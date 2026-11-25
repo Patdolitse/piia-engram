@@ -18,6 +18,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - The Engram MCP server reports such a hook on stderr when it starts and suggests `engram doctor --fix`. The server only reads Claude Code's settings; it never changes them.
 
+- The resume brief no longer loses a project's last session behind unrelated short session records. The brief looks at the 200 newest sessions, and that limit now counts only sessions that have a digest; before, every session file counted, so a project untouched for a few days could come back without its last session.
+
 ## [4.28.0] - 2026-11-25
 
 ### Added

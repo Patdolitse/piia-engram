@@ -15,9 +15,11 @@ v3.30 additions (mechanism 5):
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 import math
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,11 +34,13 @@ from .resume_selection import EARLIER_RECORD, RETRIEVAL_HINT, select_resume_fiel
 
 logger = logging.getLogger(__name__)
 
-#: Newest session files (all tools) the resume brief looks at: its digest walk
-#: and its recent-context read. A store can hold thousands of legacy sessions,
-#: so both reads are bounded. Sessions behind the newest 200 files are not
-#: selected for the resume brief or the resume packs; ``get_recent_context``
-#: without ``scan_limit`` and ``get_session_digest`` still read any of them.
+#: Newest sessions (all tools) the resume brief looks at. A store can hold
+#: thousands of sessions, so both of its reads are bounded. The digest walk
+#: counts sessions that have a digest sidecar: a record without one is skipped
+#: from the directory listing and does not use up the bound. The recent-context
+#: read counts session files. Sessions behind the bound are not selected for the
+#: resume brief or the resume packs; ``get_recent_context`` without
+#: ``scan_limit`` and ``get_session_digest`` still read any of them.
 RESUME_DIGEST_SCAN_LIMIT = 200
 
 
@@ -819,7 +823,9 @@ class ContextStoreMixin:
     ) -> list[dict[str, Any]]:
         """Return recent digest sidecars only; never read raw session bodies.
 
-        Only the newest ``RESUME_DIGEST_SCAN_LIMIT`` session files are inspected.
+        Only the newest ``RESUME_DIGEST_SCAN_LIMIT`` sessions that have a digest
+        sidecar are inspected. Each tool directory is listed once; a session
+        without a sidecar is dropped from that listing and never examined.
         """
         if int(limit or 0) <= 0:
             return []
@@ -829,21 +835,49 @@ class ContextStoreMixin:
         session_files: list[tuple[float, str, str]] = []
         if not self._contexts_dir.exists():
             return []
+        tool_dirs_by_name: dict[str, Path | None] = {}
+        listings: dict[str, list[str]] = {}
+
+        def listing(directory: Path) -> list[str]:
+            key = str(directory)
+            if key not in listings:
+                try:
+                    listings[key] = os.listdir(directory)
+                except OSError:
+                    listings[key] = []
+            return listings[key]
+
         try:
             tool_dirs = [d for d in self._contexts_dir.iterdir() if d.is_dir()]
             for tool_dir in tool_dirs:
-                for path in tool_dir.glob("*.md"):
-                    session_files.append((path.stat().st_mtime, tool_dir.name, path.stem))
+                try:
+                    confined = self._context_tool_dir(tool_dir.name)
+                except ValueError:
+                    confined = None
+                tool_dirs_by_name[tool_dir.name] = confined
+                if confined is None:
+                    continue  # get_session_digest reads no sidecar for this tool
+                # The sidecars lie where get_session_digest reads them: almost
+                # always this same directory, so it is listed once.
+                sidecar_names = {
+                    os.path.normcase(name) for name in listing(confined)
+                    if name.endswith(".digest.json")
+                }
+                if not sidecar_names:
+                    continue
+                for name in listing(tool_dir):
+                    if not fnmatch.fnmatch(name, "*.md"):
+                        continue
+                    session_id = Path(name).stem
+                    sidecar = _session_digest_sidecar(confined, session_id)
+                    if sidecar is None or os.path.normcase(sidecar.name) not in sidecar_names:
+                        continue  # no digest: not examined, not counted
+                    session_files.append(
+                        ((tool_dir / name).stat().st_mtime, tool_dir.name, session_id))
         except Exception:
             return []
         session_files.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        tool_dirs_by_name: dict[str, Path | None] = {}
         for _mtime, tool_name, session_id in session_files[:RESUME_DIGEST_SCAN_LIMIT]:
-            if tool_name not in tool_dirs_by_name:
-                try:
-                    tool_dirs_by_name[tool_name] = self._context_tool_dir(tool_name)
-                except ValueError:
-                    tool_dirs_by_name[tool_name] = None
             sidecar = _session_digest_sidecar(tool_dirs_by_name[tool_name], session_id)
             if sidecar is None or not sidecar.is_file():
                 continue  # no digest to read: skip without a guarded read

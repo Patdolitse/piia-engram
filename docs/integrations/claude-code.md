@@ -131,6 +131,10 @@ its hooks; an invalid value uses the default and the result is capped at 14
 seconds. When the budget runs out, the session starts without the brief, and
 `engram doctor` reports how often that happened in the last 7 days.
 
+To stay fast on a large store, the brief takes a project's last session from the
+200 newest sessions that have a digest, across all tools and projects. Session
+records without a digest do not count toward that limit.
+
 ## Smoke test
 
 1. Restart Claude Code.

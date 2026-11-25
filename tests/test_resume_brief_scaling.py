@@ -384,12 +384,8 @@ def test_a_session_without_a_sidecar_is_never_read(tmp_path, monkeypatch):
 
     assert eng._recent_session_digests() == []
 
-    # Each session whose id can name a sidecar had one existence check, where
-    # get_session_digest reads: the id is stripped, the tool directory sanitized.
-    sidecars = [path for path in checked if path.name.endswith(".digest.json")]
-    assert sorted((path.parent.name, path.name) for path in sidecars) == [
-        ("claude_code", "folder.digest.json"), ("claude_code", "l1.digest.json"),
-        ("claude_code", "spaced.digest.json"), ("cursor_dir", "x.digest.json")]
+    # No sidecar is in any directory listing, so none is even checked for.
+    assert [path for path in checked if path.name.endswith(".digest.json")] == []
     # Skipping them changes nothing: the read itself finds no sidecar either.
     unreadable = (("claude_code", "."), ("claude_code", LONG_STEM), ("claude_code", "folder"),
                   ("claude_code", " spaced "), ("Cursor Dir", "x"))
@@ -397,7 +393,7 @@ def test_a_session_without_a_sidecar_is_never_read(tmp_path, monkeypatch):
         assert read_digest(eng, tool, session_id) is None
 
 
-def test_digest_walk_inspects_a_bounded_number_of_session_files(tmp_path):
+def test_digest_walk_bound_does_not_count_sessions_without_a_sidecar(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     eng = Engram(root=tmp_path / "store")
@@ -419,13 +415,13 @@ def test_digest_walk_inspects_a_bounded_number_of_session_files(tmp_path):
         return [d["source"]["session_ref"]
                 for d in eng._recent_session_digests(project_folder=str(project), limit=6)]
 
-    # s10 and 198 legacy files: s9 is the 200th, the last file the walk inspects.
     assert found() == ["s10", "s9"]
-    # One more legacy file pushes it out; the digest itself is still readable.
-    extra = legacy(limit, 1_700_000_500)
-    assert found() == ["s10"]
-    assert eng.get_session_digest("claude_code", "s9")["source"]["session_ref"] == "s9"
-    extra.unlink()
+    # More legacy files than the bound, all newer than s9: they have no digest
+    # and do not use it up (tests/test_resume_digest_cap.py covers the bound).
+    extra = [legacy(limit + index, 1_700_000_500 + index) for index in range(10)]
+    assert found() == ["s10", "s9"]
+    for path in extra:
+        path.unlink()
     assert found() == ["s10", "s9"]
     for path in newest:
         path.unlink()
