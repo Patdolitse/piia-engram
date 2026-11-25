@@ -1501,6 +1501,7 @@ def _inject_claude_code_hook(
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    data_dir: str | Path | None = None,
 ) -> str | None:
     """Register Engram Stop hook in Claude Code settings.json.
 
@@ -1519,7 +1520,8 @@ def _inject_claude_code_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
-        data_dir=file_safety_root,
+        # The store the hook opens: setup's chosen directory unless given.
+        data_dir=data_dir if data_dir is not None else file_safety_root,
     )
 
 
@@ -1529,6 +1531,7 @@ def _inject_claude_code_precompact_hook(
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    data_dir: str | Path | None = None,
 ) -> str | None:
     """v3.30: register PreCompact hook with asymmetric threshold.
 
@@ -1560,7 +1563,8 @@ def _inject_claude_code_precompact_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
-        data_dir=file_safety_root,
+        # The store the hook opens: setup's chosen directory unless given.
+        data_dir=data_dir if data_dir is not None else file_safety_root,
     )
 
 
@@ -1570,6 +1574,7 @@ def _inject_claude_code_sessionstart_hook(
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    data_dir: str | Path | None = None,
 ) -> str | None:
     """v3.30: register SessionStart hook for resume_brief auto-inject.
 
@@ -1601,7 +1606,8 @@ def _inject_claude_code_sessionstart_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
-        data_dir=file_safety_root,
+        # The store the hook opens: setup's chosen directory unless given.
+        data_dir=data_dir if data_dir is not None else file_safety_root,
     )
 
 
@@ -1611,6 +1617,7 @@ def _inject_claude_code_postcompact_hook(
     force_rewrite: bool = False,
     file_safety_root: str | Path | None = None,
     authorized_external_write: bool = False,
+    data_dir: str | Path | None = None,
 ) -> str | None:
     """v3.30: register PostCompact hook to absorb compact summary.
 
@@ -1642,7 +1649,8 @@ def _inject_claude_code_postcompact_hook(
         force_rewrite=force_rewrite,
         file_safety_root=file_safety_root,
         authorized_external_write=authorized_external_write,
-        data_dir=file_safety_root,
+        # The store the hook opens: setup's chosen directory unless given.
+        data_dir=data_dir if data_dir is not None else file_safety_root,
     )
 
 
@@ -2550,6 +2558,19 @@ def _candidate_engram_roots(default_data_dir: str) -> list[str]:
             if candidate not in choices:
                 choices.append(candidate)
     return choices
+
+
+def _default_data_dir() -> str:
+    """The data directory setup offers first.
+
+    ``ENGRAM_DIR`` of this terminal, else the directory Claude Code's Engram
+    entry already uses (an owner may have it nowhere else), else the default.
+    """
+    return (
+        os.environ.get("ENGRAM_DIR")
+        or _claude_code_mcp.engram_entry_data_dir()
+        or str(Path.home() / ".engram")
+    )
 
 
 def _choose_data_dir(default_data_dir: str) -> str:
@@ -3604,7 +3625,7 @@ def run_setup(advanced: bool = False, apply_external_config: bool = False) -> No
         sys.exit(1)
 
     # 数据目录 — 优先读 ENGRAM_DIR 环境变量
-    default_data_dir = os.environ.get("ENGRAM_DIR") or str(Path.home() / ".engram")
+    default_data_dir = _default_data_dir()
     selected_data_dir = _choose_data_dir(default_data_dir)
     # Keep setup-time Engram() calls aligned with the folder the user selected.
     os.environ["ENGRAM_DIR"] = selected_data_dir

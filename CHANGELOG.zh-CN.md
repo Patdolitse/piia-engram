@@ -22,6 +22,8 @@
 
 - Claude Code 的 `settings.json` 不是合法 JSON 时，`engram doctor` 现在会明确指出：一行信息，带文件路径和出错位置。此前它把所有 Engram hook 都报成缺失，`--fix` 则回答“已是最新”。这种状态下不会改写该文件。
 
+- 终端里没有设置 `ENGRAM_DIR` 时，`engram doctor` 现在按 Claude Code 的 Engram MCP 条目里的数据目录检查 hook。此前，自定义目录只写在该条目里的用户会看到 hook “正常”，实际上 hook 用的是 `~/.engram`，`--fix` 也不处理。doctor 只读取该条目、不修改，会说明用了哪个目录，并在它与终端的 `ENGRAM_DIR` 不一致时明确提示；`engram setup` 会优先给出该条目里的目录。
+
 ## [4.28.0] - 2026-11-25
 
 ### 新增

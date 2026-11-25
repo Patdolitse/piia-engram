@@ -87,6 +87,12 @@ already set in Claude Code's own environment still wins. `engram doctor` reports
 an Engram hook that does not name the data directory, and `engram setup` or
 `engram doctor --fix` adds it in place.
 
+The directory that counts is the one Claude Code starts Engram with: the
+`ENGRAM_DIR` of the Engram entry in Claude Code's user config. `engram doctor`
+reads that entry (it never changes it) and checks the hooks against its
+directory, also when the terminal you run doctor in has no `ENGRAM_DIR` or a
+different one; it prints a line saying so in both cases.
+
 After an upgrade, hooks written by an older version stay as they were. One that
 Git Bash cannot run (an unquoted backslash interpreter path) is rewritten in
 place by `engram setup` and by `engram doctor --fix`; neither adds a second

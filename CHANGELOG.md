@@ -22,6 +22,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - `engram doctor` now says so when Claude Code's `settings.json` is not valid JSON: one line with the file path and the position of the error. Before, it reported every Engram hook as missing and `--fix` answered "already up to date". The file is never rewritten in that state.
 
+- `engram doctor` now checks Claude Code hooks against the data directory in Claude Code's Engram MCP entry when the terminal has no `ENGRAM_DIR`. Before, an owner whose custom directory was set only in that entry got "healthy" for hooks that used `~/.engram`, and `--fix` left them. Doctor reads the entry without changing it, says which directory it used, and reports a mismatch with the terminal's `ENGRAM_DIR`; `engram setup` offers the entry's directory first.
+
 ## [4.28.0] - 2026-11-25
 
 ### Added

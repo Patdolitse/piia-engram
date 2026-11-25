@@ -307,6 +307,48 @@ def _claude_hook_rows(home: Path) -> list[dict]:
     return rows
 
 
+def _hook_store_root(run_root: Path) -> Path:
+    """The store Claude Code's hooks have to open; says so when it is not ``run_root``.
+
+    That is the ``ENGRAM_DIR`` of Claude Code's Engram MCP entry when the entry
+    sets one (read-only), else the store of this doctor run. Hooks run inside
+    Claude Code next to that entry, so they follow it and never the directory
+    of whichever terminal ran doctor.
+    """
+    from . import claude_code_mcp
+
+    entry_dir = claude_code_mcp.engram_entry_data_dir()
+    if not entry_dir:
+        return run_root
+    try:
+        entry_root = Path(entry_dir).expanduser().resolve()
+        if entry_root == Path(run_root).expanduser().resolve():
+            return run_root
+    except Exception:
+        return run_root
+    if os.environ.get("ENGRAM_DIR", "").strip():
+        W._safe_print(
+            f"    [!!] Data directory mismatch: this run uses {run_root}, "
+            f"Claude Code's Engram entry uses {entry_root}"
+        )
+        print(
+            "           Hooks are checked against the entry's directory. If the entry "
+            "is wrong,\n"
+            "           run 'engram setup' with the directory you want."
+        )
+    else:
+        W._safe_print(
+            "    [--] ENGRAM_DIR is not set in this terminal; Claude Code's Engram "
+            f"entry uses {entry_root}"
+        )
+        print(
+            "           Hooks are checked against that directory. The other checks of "
+            "this run\n"
+            f"           looked at {run_root}; set ENGRAM_DIR to check that store."
+        )
+    return entry_root
+
+
 def _engram_hooks_removed(
     settings_path: Path,
     event: str,
@@ -1585,8 +1627,13 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
 
     python_path_for_fix: str | None = None
     # Claude Code starts a hook itself: a store outside the default location
-    # reaches the hook only when its command names it.
-    hook_data_dir = W._hook_data_dir(eng.root)
+    # reaches the hook only when its command names it. The store that counts
+    # is the one Claude Code starts Engram with: the directory in its Engram
+    # MCP entry, which this terminal may not have in ENGRAM_DIR.
+    hook_root = Path(eng.root)
+    if not settings_unusable:
+        hook_root = _hook_store_root(hook_root)
+    hook_data_dir = W._hook_data_dir(hook_root)
     for event, label, markers, match_mode, injector in (
             () if settings_unusable else hook_specs):
         all_required = match_mode == "all"
@@ -1678,6 +1725,7 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
             force_rewrite=True,
             file_safety_root=eng.root,
             authorized_external_write=True,
+            data_dir=hook_root,
         )
         if not result:
             W._safe_print(f"    [info] {label} hook already up to date")

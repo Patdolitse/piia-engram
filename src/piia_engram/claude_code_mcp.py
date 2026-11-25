@@ -241,6 +241,33 @@ def read_user_config(path: Path | None = None) -> UserConfigState:
     )
 
 
+def engram_entry_data_dir(path: Path | None = None) -> str | None:
+    """``ENGRAM_DIR`` of the user-scope Engram entry, as written there.
+
+    The data directory Claude Code starts Engram with, which a terminal does
+    not know unless ``ENGRAM_DIR`` is also set there. ``None`` when there is
+    no such entry, the entry sets no directory, or the file cannot be read.
+    Read-only.
+    """
+    try:
+        path = user_config_path() if path is None else Path(path)
+        if not _is_file(path):
+            return None
+        data = _read_capped(path)
+        if not isinstance(data, dict):
+            return None
+        top = data.get("mcpServers")
+        name = engram_entry_name(top)
+        entry = top.get(name) if name and isinstance(top, dict) else None
+        env = entry.get("env") if isinstance(entry, dict) else None
+        value = env.get("ENGRAM_DIR") if isinstance(env, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    except Exception:
+        return None
+    return None
+
+
 @dataclass
 class LegacyState:
     """Engram entries left in ``~/.claude/.mcp.json`` (a file Claude Code does not read)."""
