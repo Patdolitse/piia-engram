@@ -94,6 +94,11 @@ registration. Until then the Engram MCP server prints one notice on stderr at
 each start, naming the affected hook events. The server only reads
 `settings.json`.
 
+If `settings.json` is not valid JSON (an unescaped backslash in a hand-edited
+Windows path is the usual cause), `engram doctor` reports the file and the
+position of the error, checks no hooks, and neither it nor `--fix` changes the
+file. Correct it by hand and run `engram doctor --fix` again.
+
 ### Headless runs and session-end capture
 
 Setup registers the Engram Stop and PreCompact hooks with `"async": true`, so

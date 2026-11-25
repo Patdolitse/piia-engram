@@ -1518,11 +1518,29 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
 
     settings_path = _settings_path()
     settings: dict = {}
+    # Why the file cannot be used, when it cannot. Nothing is then said about
+    # the hooks in it, and --fix leaves the owner's file exactly as it is.
+    settings_unusable = ""
     if settings_path.is_file():
         try:
             settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except Exception:
-            settings = {}
+            if not isinstance(settings, dict):
+                settings_unusable = "the content is not a JSON object"
+        except json.JSONDecodeError as exc:
+            settings_unusable = f"line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        except Exception as exc:  # unreadable or not UTF-8; no path or content shown
+            settings_unusable = type(exc).__name__
+    if settings_unusable:
+        settings = {}
+        W._safe_print(
+            f"    [!!] Claude Code settings cannot be parsed: {settings_path} "
+            f"({settings_unusable})"
+        )
+        print(
+            "           Engram hooks in it were not checked and the file was not "
+            "changed.\n"
+            "           Correct the file by hand, then run 'engram doctor --fix'."
+        )
 
     hook_specs = (
         # (event, human label, markers, match_mode, injector)
@@ -1569,7 +1587,8 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
     # Claude Code starts a hook itself: a store outside the default location
     # reaches the hook only when its command names it.
     hook_data_dir = W._hook_data_dir(eng.root)
-    for event, label, markers, match_mode, injector in hook_specs:
+    for event, label, markers, match_mode, injector in (
+            () if settings_unusable else hook_specs):
         all_required = match_mode == "all"
         matches = W._matching_event_hooks(
             settings, event, markers, all_required=all_required,

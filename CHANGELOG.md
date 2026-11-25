@@ -20,6 +20,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 - The resume brief no longer loses a project's last session behind unrelated short session records. The brief looks at the 200 newest sessions, and that limit now counts only sessions that have a digest; before, every session file counted, so a project untouched for a few days could come back without its last session.
 
+- `engram doctor` now says so when Claude Code's `settings.json` is not valid JSON: one line with the file path and the position of the error. Before, it reported every Engram hook as missing and `--fix` answered "already up to date". The file is never rewritten in that state.
+
 ## [4.28.0] - 2026-11-25
 
 ### Added
