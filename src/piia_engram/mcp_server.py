@@ -141,6 +141,42 @@ def _start_claude_hook_check() -> threading.Thread | None:
         return None
 
 
+def _start_spool_autodrain():
+    """Start the thread that processes the local hook queue; None when it does not apply.
+
+    Hooks only queue events; without this nothing processed them unless the
+    owner ran ``engram hooks drain``. The thread waits, then works through the
+    queue a few events at a time: session records, digests and review-queue
+    proposals, the same as that command. It is not an AI client's write and it
+    approves nothing. Each event takes the server's write lock, so it never
+    interleaves with a tool call on the shared store handle.
+
+    Not started for a read-only or missing store handle, or when
+    ``ENGRAM_SPOOL_AUTODRAIN=0``. Never raises.
+    """
+    try:
+        from piia_engram.hooks import autodrain
+
+        if _engram is None or getattr(_engram, "_read_only", False) or not autodrain.enabled():
+            return None
+        return autodrain.AutoDrainer(
+            _engram.root, engram=_engram, source="mcp-server",
+            event_guard=lambda: _write_operation_lock,
+            should_stop=lambda: _shutting_down,
+        ).start()
+    except Exception:
+        return None
+
+
+def _stop_spool_autodrain(drainer) -> None:
+    """Tell the queue thread to end; it finishes the event it is on. Never raises."""
+    try:
+        if drainer is not None:
+            drainer.stop()
+    except Exception:
+        pass
+
+
 from piia_engram.beta_tracker import track_event as _track_beta_event
 
 
@@ -1836,15 +1872,21 @@ def main() -> None:
             )
 
         import uvicorn
+        # Hooks only queue their events; the local queue is processed in the
+        # background while the server runs, and the thread ends with it.
+        _queue_thread = None if _is_ephemeral else _start_spool_autodrain()
         try:
             uvicorn.run(starlette_app, host=args.host, port=args.port)
         finally:
             _shutting_down = True
+            _stop_spool_autodrain(_queue_thread)
     else:
+        _queue_thread = None if _is_ephemeral else _start_spool_autodrain()
         try:
             mcp.run(transport="stdio")
         finally:
             _shutting_down = True
+            _stop_spool_autodrain(_queue_thread)
 
 
 if __name__ == "__main__":

@@ -232,6 +232,20 @@ def writeback_enabled() -> bool:
         return False
 
 
+def _drain_hook_queue() -> None:
+    """Process the local hook queue after a scan (bounded; at most once a minute).
+
+    Hooks only queue events. The watcher is already running on the owner's
+    machine, so it works the queue off. Failures never break the scan loop.
+    """
+    try:
+        from piia_engram.hooks import autodrain
+
+        autodrain.watcher_pass()
+    except Exception as exc:  # noqa: BLE001 - fail-soft loop contract
+        _log(f"hook queue pass failed (non-fatal): {exc!r}")
+
+
 def _maybe_writeback(tool: str, summary: str) -> int:
     """Distill a saved checkpoint into staging knowledge proposals (opt-in).
 
@@ -411,4 +425,5 @@ def scan_once(
                 del tool_state[key]
 
     _save_state(state, scanned_tools=set(names))
+    _drain_hook_queue()
     return counters

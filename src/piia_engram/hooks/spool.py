@@ -7,6 +7,7 @@ import os
 import re
 import time
 import uuid
+from contextlib import nullcontext
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
@@ -171,6 +172,16 @@ def enqueue(kind: str, client: str, payload: dict, *, root: Path | None = None,
         return ""
 
 
+def _auto_drain_state(root: Path | None) -> dict:
+    """Whether automatic processing is on in this environment, and its last pass (read-only)."""
+    try:
+        from . import autodrain
+
+        return {"enabled": autodrain.enabled(), "last": autodrain.read_status(root)}
+    except Exception:
+        return {"enabled": False, "last": None}
+
+
 def backlog(root: Path | None = None) -> dict:
     """Metadata only, including absent stores. Never mkdir, lock, or instantiate Engram."""
     from ..connection_report import store_identity
@@ -189,7 +200,8 @@ def backlog(root: Path | None = None) -> dict:
               "cleanup_candidates": {"quarantine": candidate(), "partial": candidate(),
                                      "receipts": candidate(), "age_seconds": CLEANUP_CANDIDATE_AGE_SECONDS,
                                      "read_only": True, "automatic_deletion": False},
-              "receipt_retention": "keep_by_default_for_dedup", "recent_results": [], "drain_hint": ""}
+              "receipt_retention": "keep_by_default_for_dedup", "recent_results": [], "drain_hint": "",
+              "auto_drain": _auto_drain_state(root)}
     try:
         directory = spool_dir(root)
         files = _files(directory)
@@ -382,103 +394,135 @@ def _validate_receipt(receipt: Path, event_id: str) -> None:
         raise ValueError("invalid receipt")
 
 
-def drain(root: Path | None = None, *, dry_run: bool = False, engram=None) -> dict:
+def drain(root: Path | None = None, *, dry_run: bool = False, engram=None,
+          max_events: int | None = None, deadline_seconds: float | None = None,
+          event_guard=None, should_stop=None) -> dict:
+    """Process queued hook events, oldest first.
+
+    ``max_events`` / ``deadline_seconds`` / ``should_stop`` end a pass between
+    two events (``limited`` in the report); the command line passes none of
+    them. ``event_guard`` is a context manager factory entered around each
+    event, for a caller that shares a store handle with other writers.
+
+    A drain is the Owner's local queue being processed, never an AI client's
+    write: called inside an MCP call it leaves that origin first, so its rows
+    are stamped local. What it writes is review-queue input either way.
+    """
+    if not dry_run:
+        from ..write_provenance import ORIGIN_LOCAL, ORIGIN_MCP, current, origin_scope
+
+        if current().get("origin") == ORIGIN_MCP:
+            with origin_scope(ORIGIN_LOCAL):
+                return drain(root, engram=engram, max_events=max_events,
+                             deadline_seconds=deadline_seconds, event_guard=event_guard,
+                             should_stop=should_stop)
     root = store_root(root)
     report = dict(backlog(root), processed=0, duplicates=0, failed=0, quarantined_now=0,
-                  dry_run=dry_run, busy=False)
+                  dry_run=dry_run, busy=False, limited=False)
     if dry_run or not report["pending"] or _DRAINING.get():
         return report
     directory = spool_dir(root)
     token = _DRAINING.set(True)
     codec = QueueCodec(root)
+    deadline = None if deadline_seconds is None else time.monotonic() + deadline_seconds
+    handled = 0
     try:
         with _lock(directory):
             report["quarantined_now"] += _trim(directory)
             for path in _files(directory):
-                event = None
-                phase = "read"
-                try:
-                    event = _read_event(path, codec)
-                    receipt = directory / "receipts" / (event["event_id"] + ".json")
-                    if receipt.exists():
-                        # Validate receipts; corruption must fail closed, never discard work.
-                        _validate_receipt(receipt, event["event_id"])
-                        report["duplicates"] += 1
-                    else:
-                        from ._processor import prepare, process, validate_payload, freeze_checkpoint_provenance
-                        phase = "prepare"
-                        changed = "prepared" not in event
-                        if changed:
-                            event["prepared"] = prepare(event, root, engram)
-                        try:
-                            validate_payload(event)
-                        except (ValueError, TypeError, KeyError, AttributeError) as exc:
-                            raise PoisonEvent("invalid prepared fields") from exc
-                        phase = "provenance"
-                        changed = freeze_checkpoint_provenance(event, root, engram) or changed
-                        phase = "publish"
-                        if changed or (event["schema"] == 1 and required(root)):
-                            # Frozen input replaces the inline source, avoiding a second
-                            # copy of a maximum-size Unicode summary in the envelope.
-                            event["payload"].pop("summary", None)
-                            _publish_event(path, event, codec)
-                        phase = "process"
-                        process(event, root, engram)
-                        phase = "receipt"
-                        receipt.parent.mkdir(exist_ok=True)
-                        _publish(receipt, _json_bytes({"event_id": event["event_id"],
-                                                      "reason": "processed",
-                                                      "processed_at": datetime.now(timezone.utc).isoformat()}))
-                        report["processed"] += 1
-                    path.unlink()  # only after durable receipt
-                except ProtectionError as exc:
-                    report["failed"] += 1
+                if ((max_events is not None and handled >= max_events)
+                        or (deadline is not None and time.monotonic() >= deadline)
+                        or (should_stop is not None and should_stop())):
+                    report["limited"] = True
+                    break
+                handled += 1
+                with (event_guard() if event_guard is not None else nullcontext()):
+                    event = None
+                    phase = "read"
                     try:
-                        _record_result(path, None, exc.code)
-                    except Exception:
-                        pass
-                    log_failure("hook_spool", exc.code, root=root)
-                    if exc.code == "protection-unavailable" and _shared_storage_failure(exc):
-                        break
-                except PoisonEvent:
-                    _quarantine(path, "invalid-event" if phase == "read" else "invalid-prepared-event")
-                    report["quarantined_now"] += 1
-                except Exception as exc:
-                    report["failed"] += 1
-                    from ..transport_errors import transport_failure
-                    failure = transport_failure(exc)
-                    if failure:
-                        report.update(failure)
-                    code = ("transport-unavailable" if failure else
-                            "storage-unavailable" if _shared_storage_failure(exc) else
-                            "transcript-missing" if phase == "prepare" and isinstance(exc, FileNotFoundError) else
-                            "receipt-failed" if phase == "receipt" else "processing-failed")
-                    try:
-                        _record_result(path, event, code)
-                    except Exception:
-                        # Reporting cannot replace the original failure or discard work.
-                        pass
-                    log_failure("hook_spool", "drain deferred (" + type(exc).__name__ + ")", root=root)
-                    if _shared_storage_failure(exc):
-                        break
-                    if phase == "prepare" and isinstance(exc, FileNotFoundError) and event is not None:
+                        event = _read_event(path, codec)
+                        receipt = directory / "receipts" / (event["event_id"] + ".json")
+                        if receipt.exists():
+                            # Validate receipts; corruption must fail closed, never discard work.
+                            _validate_receipt(receipt, event["event_id"])
+                            report["duplicates"] += 1
+                        else:
+                            from ._processor import prepare, process, validate_payload, freeze_checkpoint_provenance
+                            phase = "prepare"
+                            changed = "prepared" not in event
+                            if changed:
+                                event["prepared"] = prepare(event, root, engram)
+                            try:
+                                validate_payload(event)
+                            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                                raise PoisonEvent("invalid prepared fields") from exc
+                            phase = "provenance"
+                            changed = freeze_checkpoint_provenance(event, root, engram) or changed
+                            phase = "publish"
+                            if changed or (event["schema"] == 1 and required(root)):
+                                # Frozen input replaces the inline source, avoiding a second
+                                # copy of a maximum-size Unicode summary in the envelope.
+                                event["payload"].pop("summary", None)
+                                _publish_event(path, event, codec)
+                            phase = "process"
+                            process(event, root, engram)
+                            phase = "receipt"
+                            receipt.parent.mkdir(exist_ok=True)
+                            _publish(receipt, _json_bytes({"event_id": event["event_id"],
+                                                          "reason": "processed",
+                                                          "processed_at": datetime.now(timezone.utc).isoformat()}))
+                            report["processed"] += 1
+                        path.unlink()  # only after durable receipt
+                    except ProtectionError as exc:
+                        report["failed"] += 1
                         try:
-                            if _retry_missing_transcript(path, event, codec):
-                                report["quarantined_now"] += 1
-                        except Exception as retry_exc:
-                            if isinstance(retry_exc, ProtectionError):
-                                try:
-                                    _record_result(path, None, retry_exc.code)
-                                except Exception:
-                                    pass
-                                log_failure("hook_spool", retry_exc.code, root=root)
-                            else:
-                                log_failure("hook_spool", "retry tracking failed (" +
-                                            type(retry_exc).__name__ + ")", root=root)
-                            if _shared_storage_failure(retry_exc):
-                                break
-                    # Input and event-specific processing failures keep their file,
-                    # without a receipt, while healthy events continue this batch.
+                            _record_result(path, None, exc.code)
+                        except Exception:
+                            pass
+                        log_failure("hook_spool", exc.code, root=root)
+                        if exc.code == "protection-unavailable":
+                            report["protection_unavailable"] = True
+                        if exc.code == "protection-unavailable" and _shared_storage_failure(exc):
+                            break
+                    except PoisonEvent:
+                        _quarantine(path, "invalid-event" if phase == "read" else "invalid-prepared-event")
+                        report["quarantined_now"] += 1
+                    except Exception as exc:
+                        report["failed"] += 1
+                        from ..transport_errors import transport_failure
+                        failure = transport_failure(exc)
+                        if failure:
+                            report.update(failure)
+                        code = ("transport-unavailable" if failure else
+                                "storage-unavailable" if _shared_storage_failure(exc) else
+                                "transcript-missing" if phase == "prepare" and isinstance(exc, FileNotFoundError) else
+                                "receipt-failed" if phase == "receipt" else "processing-failed")
+                        try:
+                            _record_result(path, event, code)
+                        except Exception:
+                            # Reporting cannot replace the original failure or discard work.
+                            pass
+                        log_failure("hook_spool", "drain deferred (" + type(exc).__name__ + ")", root=root)
+                        if _shared_storage_failure(exc):
+                            break
+                        if phase == "prepare" and isinstance(exc, FileNotFoundError) and event is not None:
+                            try:
+                                if _retry_missing_transcript(path, event, codec):
+                                    report["quarantined_now"] += 1
+                            except Exception as retry_exc:
+                                if isinstance(retry_exc, ProtectionError):
+                                    try:
+                                        _record_result(path, None, retry_exc.code)
+                                    except Exception:
+                                        pass
+                                    log_failure("hook_spool", retry_exc.code, root=root)
+                                else:
+                                    log_failure("hook_spool", "retry tracking failed (" +
+                                                type(retry_exc).__name__ + ")", root=root)
+                                if _shared_storage_failure(retry_exc):
+                                    break
+                        # Input and event-specific processing failures keep their file,
+                        # without a receipt, while healthy events continue this batch.
     except Exception as exc:
         import portalocker
         if isinstance(exc, portalocker.LockException):

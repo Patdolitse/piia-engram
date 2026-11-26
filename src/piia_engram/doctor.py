@@ -1031,6 +1031,19 @@ def _print_connection_report(root, days: int | None = None) -> None:
     W._safe_print(f"    Cleanup candidates (read-only, 7 days): quarantine {cleanup['quarantine']['count']} "
                   f"({cleanup['quarantine']['bytes']} bytes), partial {cleanup['partial']['count']} "
                   f"({cleanup['partial']['bytes']} bytes); receipts kept for dedup; no automatic deletion")
+    auto = queue.get("auto_drain") or {"enabled": False, "last": None}
+    W._safe_print("    Automatic processing: " + (
+        "on (the MCP server and the watcher process the queue; ENGRAM_SPOOL_AUTODRAIN=0 turns it off)"
+        if auto["enabled"] else
+        "off in this environment (ENGRAM_SPOOL_AUTODRAIN); run 'engram hooks drain' yourself"))
+    last = auto["last"]
+    if last:
+        W._safe_print(
+            f"    Last automatic pass: {last['ran_at']} by {last['source'] or 'unknown'}: "
+            f"{last['processed']} processed, {last['failed']} failed, {last['pending']} left"
+            + (" (more to do)" if last["limited"] else ""))
+    else:
+        W._safe_print("    Last automatic pass: none recorded")
     if queue['drain_hint']:
         W._safe_print("    " + queue['drain_hint'])
 
