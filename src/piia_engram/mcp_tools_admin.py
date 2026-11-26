@@ -1230,6 +1230,12 @@ async def wrap_up_session(
                     k_counts["domains"] = len(S._get_engram().get_domains())
                 except Exception:
                     pass
+                try:
+                    from piia_engram import usage_stats as _usage_stats
+                    _usage_stats.note_knowledge(k_counts)
+                    _usage_stats.flush()
+                except Exception:
+                    pass
                 _tier = os.environ.get("ENGRAM_TOOLS", "core")
                 S._tracker.flush(
                     knowledge_counts=k_counts,

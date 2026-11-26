@@ -1062,6 +1062,12 @@ def _engram_clean_shutdown() -> None:
     except Exception:
         pass
     try:
+        _stats = _usage_stats_module()
+        if _stats is not None:
+            _stats.flush()
+    except Exception:
+        pass
+    try:
         if _engram is not None:
             _engram._mark_clean_exit(last_session_id=_session.session_id)
     except Exception:
@@ -1103,11 +1109,37 @@ def _usage_ping_module():
     return _usage_ping
 
 
+def _usage_stats_module():
+    try:
+        from piia_engram import usage_stats as _usage_stats
+    except ImportError:
+        return None
+    return _usage_stats
+
+
 def _start_usage_ping(client_name: str) -> None:
-    """Daily anonymous usage ping. usage_ping allows one attempt per process."""
+    """Daily anonymous usage ping, then the daily usage counts (background
+    threads; each module allows one attempt per process)."""
     module = _usage_ping_module()
-    if module is not None:
-        module.maybe_send(client_name)
+    thread = module.maybe_send(client_name) if module is not None else None
+    stats = _usage_stats_module()
+    if stats is not None:
+        stats.maybe_send(after=thread)
+
+
+def _record_usage_stats(tool_name: str, success: bool) -> None:
+    """Count the call for the daily usage counts (memory only; never raises)."""
+    try:
+        stats = _usage_stats_module()
+        if stats is None:
+            return
+        category = None
+        if not success:
+            from piia_engram.telemetry import _categorize_exception
+            category = _categorize_exception(sys.exc_info()[1])
+        stats.record(tool_name, success, category)
+    except Exception:
+        pass
 
 
 def _show_usage_notice() -> None:
@@ -1165,6 +1197,7 @@ def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None
     # Daily usage ping (network + a write to the user config dir): only past both
     # governance checks above, so suppressed non-owner calls stay side-effect free.
     _start_usage_ping(_session.client_info.get("name", "") or "unknown")
+    _record_usage_stats(tool_name, success)
     if _tracker is not None:
         _tracker.record(tool_name, success=success)
         _track_count += 1
