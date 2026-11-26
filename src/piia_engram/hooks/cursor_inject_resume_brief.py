@@ -33,7 +33,13 @@ def main() -> int:
             project = payload.extract_project_folder(_read_input())
             brief = Engram(read_only=True).get_resume_brief(
                 project_folder=project, token_budget=_TOKEN_BUDGET)
-            return str(brief.get("markdown", "") or "")
+            markdown = str(brief.get("markdown", "") or "")
+            try:  # upgrade reminder: cached answer only, never a network call
+                from piia_engram.update_check import append_update_notice
+                markdown = append_update_notice(markdown)
+            except Exception:
+                pass
+            return markdown
 
         markdown = read_with_budget(read, "cursor_inject_resume_brief")
         if not markdown.strip():

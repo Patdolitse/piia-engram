@@ -1,4 +1,4 @@
-"""Lightweight, privacy-preserving update reminder for the Engram CLI.
+"""Lightweight, privacy-preserving update reminder for the Engram CLI and the resume brief.
 
 Mirrors the well-loved pip / GitHub-CLI pattern: at most one anonymous check
 per 24h against the PyPI JSON API, cached locally, fail-silent, opt-out via an
@@ -6,12 +6,15 @@ env var, and skipped entirely in non-interactive / CI contexts.
 
 Design constraints specific to Engram:
 
-* **MCP-safe.** This module is only ever called from the human-facing CLI
-  (``piia_engram.setup_wizard:main``). The MCP server (``mcp_server:main``)
-  is a *separate* console-script entry point and never imports this, so the
-  notice can never reach the stdio JSON-RPC channel. Even so, all output here
-  goes to **stderr**, never stdout, so a stray call could not corrupt a
-  protocol stream or a ``--json`` payload.
+* **MCP-safe.** The CLI prints its notice to **stderr**, never stdout, so it
+  cannot corrupt a protocol stream or a ``--json`` payload. The MCP server
+  prints nothing: it only refreshes the cache in a daemon thread, at most once
+  a day and never on its start path (:func:`maybe_refresh_in_background`).
+* **Brief line from the cache only.** The resume brief and the SessionStart
+  hooks call :func:`append_update_notice`, which reads the cached answer and
+  never opens the network. The line is fixed text around two version numbers
+  that must match a strict pattern, so nothing a server sent can be injected
+  into the brief.
 * **Privacy-first.** The only network call is an anonymous ``GET`` to the
   public PyPI JSON endpoint. No user data, identifiers, or telemetry are sent.
   It is still a network call, so it is opt-out (``ENGRAM_NO_UPDATE_CHECK``)
@@ -22,13 +25,18 @@ Design constraints specific to Engram:
 Public surface:
     check_for_update(current, *, force=False) -> str | None
     maybe_print_update_notice(current=None, *, stream=sys.stderr) -> str | None
+    cached_update_notice(current=None) -> str | None        (no network)
+    append_update_notice(markdown) -> str                    (no network)
+    maybe_refresh_in_background() -> threading.Thread | None
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -37,6 +45,9 @@ __all__ = [
     "check_for_update",
     "maybe_print_update_notice",
     "is_disabled",
+    "cached_update_notice",
+    "append_update_notice",
+    "maybe_refresh_in_background",
 ]
 
 # PyPI distribution name (see pyproject.toml [project].name).
@@ -295,5 +306,135 @@ def maybe_print_update_notice(
             return None
         print(format_notice(latest, cur), file=out)
         return latest
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Resume-brief line (cache only) and the MCP server's background refresh
+# ---------------------------------------------------------------------------
+
+# A plain release number and nothing else. Anything a server answered that does
+# not match is neither stored by the refresh nor shown in a brief.
+_NOTICE_VERSION_RE = re.compile(r"\d{1,4}(?:\.\d{1,4}){1,3}")
+_RESUME_CLOSE_TAG = "</engram-resume>"
+
+_refresh_lock = threading.Lock()
+_refresh_started = False  # one attempt per process
+
+
+def _clean_version(value: object) -> str:
+    return value if isinstance(value, str) and _NOTICE_VERSION_RE.fullmatch(value) else ""
+
+
+def _quiet_environment() -> bool:
+    """Where neither the brief line nor the background refresh runs: the
+    reminder's own switches (ENGRAM_NO_UPDATE_CHECK, CI markers), containers,
+    ENGRAM_EPHEMERAL and tests."""
+    if is_disabled():
+        return True
+    try:
+        from . import usage_ping
+
+        return bool(usage_ping._in_container() or usage_ping._flag_on("ENGRAM_EPHEMERAL")
+                    or usage_ping._in_test())
+    except Exception:
+        return True
+
+
+def cached_update_notice(current: Optional[str] = None) -> Optional[str]:
+    """One fixed line when the cached latest release is newer than the installed
+    one, else None. Reads the cache file only: no network, no write, never raises."""
+    try:
+        if _quiet_environment():
+            return None
+        cache = _read_cache()
+        if not isinstance(cache, dict):
+            return None
+        latest = _clean_version(cache.get("latest"))
+        installed = _clean_version(_current_version(current))
+        if not latest or not installed or not _is_newer(latest, installed):
+            return None
+        return (f"[Engram] Engram {latest} is available (installed {installed}): "
+                f"run `pip install -U {_PYPI_PROJECT}` to upgrade.")
+    except Exception:
+        return None
+
+
+def append_update_notice(markdown):
+    """Put the upgrade line at the end of a resume brief (inside its wrapper).
+    Returns the brief unchanged when there is nothing to say or on any error."""
+    try:
+        if not isinstance(markdown, str) or not markdown.strip():
+            return markdown
+        line = cached_update_notice()
+        if not line:
+            return markdown
+        at = markdown.rfind(_RESUME_CLOSE_TAG)
+        if at == -1:
+            return f"{markdown}\n\n{line}"
+        head = markdown[:at].rstrip("\n")
+        return f"{head}\n\n{line}\n{markdown[at:]}"
+    except Exception:
+        return markdown
+
+
+def _attempt_fresh(cache: dict) -> bool:
+    try:
+        last = float(cache.get("last_attempt", 0))
+    except (TypeError, ValueError):
+        return False
+    return (time.time() - last) < _CHECK_INTERVAL_SECONDS
+
+
+def _write_attempt(cache: dict) -> None:
+    """Remember that a refresh was tried, keeping only a clean earlier answer."""
+    try:
+        payload: dict = {"last_attempt": time.time()}
+        try:
+            payload["last_check"] = float(cache.get("last_check", 0))
+        except (TypeError, ValueError):
+            pass
+        latest = _clean_version(cache.get("latest"))
+        if latest:
+            payload["latest"] = latest
+        path = _cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=True) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _refresh(cache: dict) -> None:
+    try:
+        _write_attempt(cache)  # a failed try is not repeated the same day
+        latest = _clean_version(_fetch_latest_from_pypi())
+        if latest:
+            _write_cache(latest)
+    except Exception:
+        pass
+
+
+def maybe_refresh_in_background() -> Optional[threading.Thread]:
+    """Refresh the cached answer in a daemon thread: once per process and at
+    most once a day. For the MCP server, whose users never run the CLI. Prints
+    nothing and never raises."""
+    global _refresh_started
+    try:
+        with _refresh_lock:
+            if _refresh_started:
+                return None
+            _refresh_started = True
+        if _quiet_environment():
+            return None
+        cache = _read_cache()
+        if not isinstance(cache, dict):
+            cache = {}
+        if _cache_fresh(cache) or _attempt_fresh(cache):
+            return None
+        thread = threading.Thread(target=_refresh, args=(cache,), name="engram-update-check",
+                                  daemon=True)
+        thread.start()
+        return thread
     except Exception:
         return None

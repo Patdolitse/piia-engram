@@ -41,7 +41,13 @@ def main() -> int:
             cwd = _read_input().get("cwd", "")
             brief = Engram(read_only=True).get_resume_brief(
                 project_folder=cwd if isinstance(cwd, str) else "", token_budget=1500)
-            return str(brief.get("markdown", "") or "")
+            markdown = str(brief.get("markdown", "") or "")
+            try:  # upgrade reminder: cached answer only, never a network call
+                from piia_engram.update_check import append_update_notice
+                markdown = append_update_notice(markdown)
+            except Exception:
+                pass
+            return markdown
 
         markdown = read_with_budget(read, "auto_inject_resume_brief")
         output = {"continue": True}

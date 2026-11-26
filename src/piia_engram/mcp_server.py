@@ -1127,6 +1127,17 @@ def _start_usage_ping(client_name: str) -> None:
         stats.maybe_send(after=thread)
 
 
+def _start_update_refresh() -> None:
+    """Refresh the cached "newer release" answer for the resume brief: a daemon
+    thread, once per process and at most once a day, never on the start path."""
+    try:
+        from piia_engram import update_check as _update_check
+
+        _update_check.maybe_refresh_in_background()
+    except Exception:
+        pass
+
+
 def _record_usage_stats(tool_name: str, success: bool) -> None:
     """Count the call for the daily usage counts (memory only; never raises)."""
     try:
@@ -1197,6 +1208,7 @@ def _track(tool_name: str, success: bool = True, args_summary: str = "") -> None
     # Daily usage ping (network + a write to the user config dir): only past both
     # governance checks above, so suppressed non-owner calls stay side-effect free.
     _start_usage_ping(_session.client_info.get("name", "") or "unknown")
+    _start_update_refresh()
     _record_usage_stats(tool_name, success)
     if _tracker is not None:
         _tracker.record(tool_name, success=success)

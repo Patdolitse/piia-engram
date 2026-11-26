@@ -180,6 +180,13 @@ async def get_resume_brief(
             )
         else:
             brief["markdown"] = md + perm_section
+        # Upgrade reminder: one fixed line from the cached check (no network here).
+        try:
+            from piia_engram.update_check import append_update_notice
+
+            brief["markdown"] = append_update_notice(brief["markdown"])
+        except Exception:
+            pass
     # Resume brief bundles top lessons/decisions + recent context; owner-only.
     brief = S._gov_rt.maybe_govern_owner_only(
         S._get_engram().root, brief, tool="get_resume_brief"
