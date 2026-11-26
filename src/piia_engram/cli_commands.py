@@ -193,7 +193,7 @@ def _print_review_usage() -> None:
         "  engram review interactive [--operator <name>]   (alias: engram review -i)\n"
         "      one item at a time: a approve, r reject, s supersede, k skip, v full text, q stop;\n"
         "      nothing is written until you confirm the summary with y (needs a terminal)\n"
-        "  engram review show <id>\n"
+        "  engram review show <id> [--json]\n"
         "  engram review approve <id> --yes\n"
         "  engram review archive <id> --yes\n"
         "  engram review reject <identity-id> --yes\n"
@@ -409,7 +409,7 @@ def _print_review_list(rows: list[dict]) -> None:
     print("Use 'engram review approve <id> --yes' or 'engram review archive <id> --yes'.")
 
 
-def _print_review_item(item_type: str, item: dict) -> None:
+def _print_review_item(item_type: str, item: dict, eng=None) -> None:
     if item_type == "identity":
         W._safe_print(f"identity: {item.get('id')} field: {item.get('field')}")
         W._safe_print("old: " + json.dumps(item.get("before", {}), ensure_ascii=False, sort_keys=True))
@@ -435,6 +435,15 @@ def _print_review_item(item_type: str, item: dict) -> None:
     from piia_engram.write_provenance import client_card_line
 
     W._safe_print(client_card_line(item)[2:])
+    if eng is not None and item.get("tier") == "staging" and item.get("pending_supersedes"):
+        # A replacement proposal: show what approving it would replace.
+        from piia_engram import review_cli
+        from piia_engram.dedup_review import safe_id
+
+        target = safe_id(item.get("pending_supersedes")) or "(malformed id)"
+        W._safe_print(f"proposes to supersede: {target} (on approval)")
+        for line in review_cli.supersede_target_lines(eng, item):
+            W._safe_print("  " + line)
     _print_review_quality_detail(item)
     _print_review_evidence_detail(item)
 
@@ -626,7 +635,14 @@ def run_review(argv: list[str] | None = None) -> int:
         if item is None or item_type not in {"lesson", "decision", "identity"}:
             print(f"Review item not found: {args[1]}")
             return 1
-        _print_review_item(item_type, item)
+        if "--json" in args[2:]:
+            replaces = None
+            if item_type != "identity" and item.get("tier") == "staging":
+                replaces = review_cli.supersede_target_info(eng, item)
+            W._safe_print(json.dumps({"type": item_type, "item": item, "would_replace": replaces},
+                                     ensure_ascii=False, indent=2))
+            return 0
+        _print_review_item(item_type, item, eng)
         return 0
 
     if args and args[0] in ("approve", "reject", "archive") and len(args) >= 2:

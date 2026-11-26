@@ -184,14 +184,18 @@ _SUPERSEDE_REASONS = {
 }
 
 
-def supersede_target_lines(eng, row: dict) -> list[str]:
-    """What a pending row would replace, for a review card: the entry and why it was proposed.
+_SUPERSEDE_NOTE = "if the two are unrelated, reject this proposal"
 
-    Empty when the row proposes no replacement. One cleaned line each.
+
+def supersede_target_info(eng, row: dict) -> dict | None:
+    """What a pending row would replace, as data; None when it proposes no replacement.
+
+    ``claim`` is the target on one cleaned line ('' when it is not found) and
+    ``why_proposed`` is '' when the row does not say how the target was chosen.
     """
     target_id = str(row.get("pending_supersedes") or "") if isinstance(row, dict) else ""
     if not target_id:
-        return []
+        return None
 
     def clean(value: Any) -> str:
         return _write_provenance.clean_client_text(value, 160)
@@ -201,16 +205,32 @@ def supersede_target_lines(eng, row: dict) -> list[str]:
     except Exception:
         kind, target = "", None
     if not isinstance(target, dict):
-        lines = ["would replace: (entry not found)"]
+        kind, claim = "", ""
     elif kind == "decision":
-        lines = ["would replace: " + clean(f"{target.get('question') or target.get('title') or ''}"
-                                         f" -> {target.get('choice') or ''}")]
+        claim = clean(f"{target.get('question') or target.get('title') or ''}"
+                      f" -> {target.get('choice') or ''}")
     else:
-        lines = ["would replace: " + clean(target.get("summary") or target.get("title") or "")]
-    reason = _SUPERSEDE_REASONS.get(str(row.get("approval_reason") or ""))
-    if reason:
-        lines.append("why proposed: " + reason)
-    lines.append("if the two are unrelated, reject this proposal")
+        claim = clean(target.get("summary") or target.get("title") or "")
+    return {
+        "id": _dedup_review.safe_id(target_id) or "", "kind": kind or "",
+        "found": isinstance(target, dict), "claim": claim,
+        "why_proposed": _SUPERSEDE_REASONS.get(str(row.get("approval_reason") or ""), ""),
+        "note": _SUPERSEDE_NOTE,
+    }
+
+
+def supersede_target_lines(eng, row: dict) -> list[str]:
+    """What a pending row would replace, for a review card: the entry and why it was proposed.
+
+    Empty when the row proposes no replacement. One cleaned line each.
+    """
+    info = supersede_target_info(eng, row)
+    if info is None:
+        return []
+    lines = ["would replace: " + (info["claim"] if info["found"] else "(entry not found)")]
+    if info["why_proposed"]:
+        lines.append("why proposed: " + info["why_proposed"])
+    lines.append(info["note"])
     return lines
 
 

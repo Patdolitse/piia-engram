@@ -137,6 +137,54 @@ def _candidate_note(result: object) -> str:
     return " · " + message if message else ""
 
 
+def _may_echo_stored_titles() -> bool:
+    """Whether a reply may quote a stored entry's title to this caller.
+
+    Always when governance is off; with it on, only for the owner tier, like
+    every other write reply that echoes stored content.
+    """
+    try:
+        return bool(S._gov_rt.caller_is_owner(S._get_engram().root))
+    except Exception:
+        return False
+
+
+def _proposal_note(result: object, kind: str) -> str:
+    """Suffix for a write reply when the new row is a proposal to replace an entry.
+
+    Tells the AI what ``tier=staging`` alone does not: the row waits for the
+    Owner, which entry it would replace, and that the old one stays in effect
+    until then. Text only; the write is already done.
+    """
+    if not isinstance(result, dict) or result.get("tier") != "staging":
+        return ""
+    target = result.get("pending_supersedes")
+    if not isinstance(target, str) or not target:
+        return ""
+    from piia_engram.dedup_review import safe_id
+    from piia_engram.write_provenance import clean_client_text
+
+    target_id = safe_id(target) or "?"
+    title = ""
+    if _may_echo_stored_titles():
+        try:
+            _kind, row = S._get_engram()._find_item_by_id(target)
+            if isinstance(row, dict):
+                title = clean_client_text(
+                    row.get("question") or row.get("title") or row.get("summary") or "", 80)
+        except Exception:
+            title = ""
+    zh_kind, en_kind = ("决策", "decision") if kind == "decision" else ("教训", "lesson")
+    zh_title = f"「{title}」" if title else ""
+    en_title = f' "{title}"' if title else ""
+    return (
+        f" · 这是待主人批准的取代提案：批准后它将取代{zh_kind} {target_id}{zh_title}；"
+        f"批准前旧{zh_kind}保持有效，请继续按旧{zh_kind}行事。"
+        f" / This is a proposal awaiting the Owner's approval: once approved it replaces "
+        f"{en_kind} {target_id}{en_title}; until then the old {en_kind} stays in effect."
+    )
+
+
 @S.mcp.tool()
 async def memory_store(
     kind: str,
@@ -323,7 +371,8 @@ async def memory_store(
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
-            return f"[Engram] 教训已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}{_candidate_note(result)}"
+            return (f"[Engram] 教训已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}"
+                    f"{_candidate_note(result)}{_proposal_note(result, 'lesson')}")
         elif kind == "decision":
             result = _guarded_add(kind, content, supersede_version, S._get_engram().add_decision, content)
             label = f"{content.get('question', '')} → {content.get('choice', '')}"[:60]
@@ -334,7 +383,8 @@ async def memory_store(
                 # Dedup-reject echoes the matched stored item — gate it (see add_lesson).
                 return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="memory_store"))
             tier = result.get("tier", "staging")
-            return f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}{_candidate_note(result)}"
+            return (f"[Engram] 决策已记录 · tier={tier} · 可召回: {label}{_overflow_note(result)}"
+                    f"{_candidate_note(result)}{_proposal_note(result, 'decision')}")
         else:  # playbook
             result = _guarded_add(
                 kind, content, supersede_version,
@@ -452,7 +502,8 @@ async def add_lesson(
         # title/body-free confirmation.
         return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_lesson"))
     tier = result.get("tier", "staging")
-    return f"[Engram] 教训已记录 · tier={tier} · 可召回: {summary}{_overflow_note(result)}{_candidate_note(result)}"
+    return (f"[Engram] 教训已记录 · tier={tier} · 可召回: {summary}{_overflow_note(result)}"
+            f"{_candidate_note(result)}{_proposal_note(result, 'lesson')}")
 
 
 @S.mcp.tool()
@@ -553,7 +604,8 @@ async def add_decision(
         # gate it like any write-echo (see add_lesson).
         return S._json(S._gov_rt.maybe_govern_write_ack(S._get_engram().root, result, tool="add_decision"))
     tier = result.get("tier", "staging")
-    return f"[Engram] 决策已记录 · tier={tier} · 可召回: {question} → {choice}{_overflow_note(result)}{_candidate_note(result)}"
+    return (f"[Engram] 决策已记录 · tier={tier} · 可召回: {question} → {choice}{_overflow_note(result)}"
+            f"{_candidate_note(result)}{_proposal_note(result, 'decision')}")
 
 
 @S.mcp.tool()
