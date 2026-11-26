@@ -592,7 +592,7 @@ ENGRAM_AUTH_TOKEN=abc123... python -m piia_engram.mcp_server --transport sse --h
 
 **从其它 AI 工具导入：** Engram 不会自己读取其它 AI 工具的记忆或规则文件：MCP server 启动、冷启动、会话收尾都不会。需要时运行 `engram import-memories`：先列出找到的条目（`--dry-run` 只列不写），确认后写入待审区，并在存储目录的 `import_receipts/` 留下导入回执。`ENGRAM_MCP_STARTUP_SYNC` 仍被接受，但已不起作用；`ENGRAM_RECONCILE=0` 会彻底关闭对其它 AI 工具文件的读取。`ENGRAM_EPHEMERAL=1` 会在容器/临时客户端中跳过启动时的配置检查。
 
-MCP 启动从不导入其它工具的记忆，也不改动知识或身份内容；启动和读工具仍可能写入会话检查点、使用记录、审计记录及访问元数据，因此不属于零写入操作。
+MCP 启动从不导入其它工具的记忆，也不批准或改动已审核的知识和身份内容；启动和读工具仍可能写入会话检查点、使用记录、审计记录及访问元数据，因此不属于零写入操作。server 运行期间还会在后台处理 Engram 自己的 hook 队列，效果与 `engram hooks drain` 相同：hook 排队的事件变成会话记录、摘要和待审区里的待审提案。设置 `ENGRAM_SPOOL_AUTODRAIN=0` 可关闭。
 
 ### Tier-2 高级工具（40 个 — 知识管理、审查、导入导出）
 
@@ -797,6 +797,9 @@ engram setup
 
 **升级后 AI 工具显示"MCP server disconnected"，怎么解决？**
 在终端运行 `piia-engram doctor --fix`，然后重启 AI 工具。该命令扫描所有已知 MCP 配置，移除旧版 server 条目并修复失效路径，一步完成。
+
+**Windows 上 `engram doctor` 提示某个 Claude Code hook “cannot start when Git Bash is not installed”，怎么办？**
+这出现在 Python 路径带空格、所在磁盘没有 8.3 短文件名、并且 PATH 上没有 `claude` 命令可供 Engram 判断 Claude Code 版本的时候（桌面版和 VS Code 扩展自带 Claude Code，不会把它放到 PATH 上）。以下任意一种做法都能解决：安装 Git for Windows；或者，如果你的 Claude Code 是 2.1.139 或更新版本（在它的“关于”页面查看），运行 `engram doctor --fix --hook-args`（或 `engram setup --hook-args`），把 hook 写成 `command` + `args`，不经过任何 shell；或者把 Python 装到不带空格的路径后运行 `engram doctor --fix`。PATH 上的 `claude` 报告的版本更旧时，`--hook-args` 会拒绝执行；在其它平台上它不起作用。
 
 **piia-engram 会把数据发到云端吗？**
 你的记忆不会离开你的电脑。Engram 默认每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期）。不发送内容、提示词或文件路径；不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`（CI 和容器环境中自动不发）；`engram telemetry preview` 可查看实际发送内容。Setup 只显示说明，不询问遥测。详细统计默认关闭，需显式运行 `engram telemetry on` 开启本地统计；远程发送（`engram telemetry remote on`）和每周反馈（`engram telemetry feedback on`）需分别开启。Setup 保留已有选择。详见 **[PRIVACY.md](PRIVACY.md)**。

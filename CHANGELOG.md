@@ -8,7 +8,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+
+- The hook queue is now processed automatically, so `engram hooks drain` no longer has to be run by hand: the Engram MCP server works through it in the background while it runs, and the watcher does so after each scan. A pass handles a limited number of events, writes only session records, digests and pending proposals in the review queue, and approves nothing. `ENGRAM_SPOOL_AUTODRAIN=0` turns it off, and `engram doctor` shows whether it is on and what the last automatic pass did. See [Resume and capture diagnostics](docs/resume-capture.md).
+
+- `engram lineage unlink <replacing-id> <replaced-id>` undoes a wrong decision replacement: it removes the relation and brings the replaced decision back into use. It previews by default, shows both decisions, applies with `--commit --yes`, and is a local owner command that AI clients cannot call.
+
+- On Windows, `engram doctor --fix --hook-args` and `engram setup --hook-args` write Claude Code hooks as `command` + `args` when no `claude` command is on PATH to ask for its version (the desktop app and the VS Code extension). This needs Claude Code 2.1.139 or newer; the flag is refused when a `claude` on PATH reports an older version.
+
+### Changed
+
+- **Behavior change:** a decision an AI client adds with `supersedes=<id>` is now always a proposal that waits for your review, in every approval mode. Before, outside strict mode, it replaced the named decision at once, and nothing checked that the two decisions were related. The review card shows the decision it would replace and whether the target was named or inferred.
+
+- **Behavior change:** a decision that only matches another by question (same question, other choice) is now a proposal to replace it for local callers too; before, a local write replaced the earlier decision at once. A local decision that names its target with `supersedes=<id>` still replaces it at once. Two decisions that share a title but state different questions are no longer treated as one replacing the other.
+
 ### Fixed
+
+- `engram doctor` no longer prints a ready-to-run command that retires a decision. When it finds an active decision that is recorded as replaced, it now shows both titles, says not to apply the replacement if the two are unrelated, and prints commands that only preview; `engram doctor --json` carries the same pairs. Until one of them is applied, the replaced decision stays hidden from recall.
+
+- A decision replacement is no longer left half applied: when the step that retires the replaced decision fails, the relation is taken back, and `engram conflicts resolve --action supersede` writes the relation only after the other decision is retired. Before, such a failure could leave an active decision hidden from recall.
+
+- On Windows, the `engram doctor` message for a Claude Code hook that cannot start without Git Bash now lists installing Git for Windows among the ways out.
 
 - On Windows, Claude Code hooks are now registered as `command` + `args`, so Claude Code starts them without a shell. A hook written as one command string did not start when Git Bash was not installed and the Python path contained a space, because PowerShell cannot run the quoted form. This needs Claude Code 2.1.139 or newer: setup asks the `claude` on PATH for its version and keeps the string form when it is older or not found. `engram doctor` points out an Engram hook still written as one string, and `doctor --fix` converts it in place.
 

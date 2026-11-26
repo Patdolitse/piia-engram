@@ -365,11 +365,14 @@ def startup_line(root: Path) -> dict[str, Any]:
     sync = env("ENGRAM_MCP_STARTUP_SYNC")
     return {
         # Not "zero write": a start and reads keep session and access
-        # bookkeeping (session state, audit, read counts). What holds is that
-        # nothing is imported and no knowledge or identity content changes.
+        # bookkeeping (session state, audit, read counts), and the running
+        # server processes Engram's own hook queue into session records and
+        # pending proposals. What holds is that nothing is imported and no
+        # reviewed knowledge or identity content is approved or changed.
         "state": "no_import",
-        "detail": "the MCP server imports nothing from other AI tools at start and changes no "
-                  "knowledge or identity content",
+        "detail": "the MCP server imports nothing from other AI tools at start and approves or "
+                  "changes no reviewed knowledge or identity content; it processes Engram's own "
+                  "hook queue into session records and pending proposals",
         "variables": {
             "ENGRAM_MCP_STARTUP_SYNC": {"value": sync, "meaning": "no effect" if sync else "unset"},
             "ENGRAM_RECONCILE": {"value": reconcile, "meaning": reconcile_meaning},

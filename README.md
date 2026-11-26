@@ -612,7 +612,7 @@ You can also expose composable capability modes such as knowledge management, go
 
 **Importing from other AI tools:** Engram never reads other AI tools' memory or rule files on its own: not at server start, not on cold start, not at session end. Run `engram import-memories` to bring them in; it lists what it found first (`--dry-run` stops there), then adds them to the review queue after you confirm, and writes a receipt to `import_receipts/` in the store. `ENGRAM_MCP_STARTUP_SYNC` is still accepted but no longer does anything; `ENGRAM_RECONCILE=0` turns reading other AI tools' files off entirely. `ENGRAM_EPHEMERAL=1` skips the startup config check in container/ephemeral clients.
 
-MCP startup never imports other tools' memories or changes knowledge or identity content. Startup and read tools may still write session checkpoints, usage records, audit records and access metadata; they are not zero-write operations.
+MCP startup never imports other tools' memories and never approves or changes reviewed knowledge or identity content. Startup and read tools may still write session checkpoints, usage records, audit records and access metadata; they are not zero-write operations. While it runs, the server also processes Engram's own hook queue in the background, as `engram hooks drain` does: the events your hooks queued become session records, digests and pending proposals in the review queue. Set `ENGRAM_SPOOL_AUTODRAIN=0` to turn that off.
 
 ### Tier-1 Core (19 tools — daily workflow)
 
@@ -863,6 +863,9 @@ The setup wizard detects your AI tools without changing their config files by de
 
 **After upgrading, my AI tool shows "MCP server disconnected". How do I fix it?**
 Run `engram doctor --fix` in a terminal, then restart your AI tool. This command scans all known MCP config files, removes outdated server entries, and repairs broken paths in one step.
+
+**On Windows, `engram doctor` says a Claude Code hook "cannot start when Git Bash is not installed". What do I do?**
+That happens when the Python path contains a space, the drive has no 8.3 short names, and no `claude` command is on PATH to tell Engram which Claude Code you run (the desktop app and the VS Code extension bring their own). Any one of these fixes it: install Git for Windows; or, if your Claude Code is 2.1.139 or newer (see its About page), run `engram doctor --fix --hook-args` (or `engram setup --hook-args`), which writes the hooks as `command` + `args` so no shell is involved; or install Python in a path without a space and run `engram doctor --fix`. `--hook-args` refuses when a `claude` on PATH reports an older version, and does nothing on other platforms.
 
 **Does piia-engram send data to the cloud?**
 Your memories never leave your machine. Engram sends one anonymous usage ping a day by default (random install ID, version, OS, Python version, AI client name, date). No content, prompts or file paths are sent; IP addresses are not stored. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (it is off in CI and in containers); `engram telemetry preview` shows the exact payload. Setup shows an informational notice without asking about telemetry. Detailed statistics stay off unless explicitly enabled with `engram telemetry on`; remote sending (`engram telemetry remote on`) and weekly feedback (`engram telemetry feedback on`) require separate opt-ins. Setup preserves existing choices. See **[PRIVACY.md](PRIVACY.md)**.

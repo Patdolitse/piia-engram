@@ -124,7 +124,8 @@ paths and extended Windows paths are private; only the affected field is omitted
 
 The object travels in `payload.task_checkpoint` under `hooks/spool/`. Deferred
 preparation freezes it with canonical text; retries do not reread the source to
-repair or replace that snapshot. After an explicit `engram hooks drain --json`,
+repair or replace that snapshot. After the queue is processed (automatically by
+the MCP server or the watcher, or with `engram hooks drain --json`),
 the canonical retained fields appear in `contexts/claude_code/<session>.md` and
 as `task_checkpoint` in the adjacent `session_digest.v1` JSON sidecar. A valid
 snapshot remains processable if the transcript changes or disappears, even below
@@ -151,7 +152,8 @@ preference remains an independent feature using its own available transcript
 input; it is not enabled by task capture and never derives from the frozen object.
 Capture outcomes and processing receipts are separate: a receipt means processed,
 not complete, reviewed or adopted. Direct automatic continuity still requires a
-consumer; these hooks do not drain their own queue.
+consumer; these hooks do not drain their own queue. The MCP server and the
+watcher process it in the background, or you run `engram hooks drain`.
 
 ## Timing and PreCompact limitation
 

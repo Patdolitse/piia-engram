@@ -252,7 +252,31 @@ You stay in control of staged items at any time:
 - A decision an AI adds that answers the same question as a reviewed decision
   with a different choice is a proposal to replace it (`pending_supersedes`),
   in every approval mode: the reviewed decision stays in use until you approve
-  the new one. Decisions you add locally keep linking the replacement at once.
+  the new one. The same holds when the AI names the decision to replace with
+  `supersedes=<id>`: it is a proposal in every approval mode, because nothing
+  checks that the two decisions are related. A decision you add locally that
+  only matches by question (same question, other choice) is a proposal too; one
+  you add locally with `supersedes=<id>` replaces that decision at once. When
+  two decisions share a title but state different questions, no replacement is
+  inferred. The review card of such a proposal shows the decision it would
+  replace and whether the target was named or inferred; reject it if the two
+  are unrelated.
+- If a decision was replaced by one that has nothing to do with it,
+  `engram lineage unlink <replacing-id> <replaced-id>` removes that relation
+  and brings the replaced decision back into use. It previews by default and
+  shows both decisions; `--commit --yes` applies it. It only restores a
+  decision that this relation retired (status `superseded` by that decision, or
+  retired by `engram conflicts resolve --action supersede` for that pair); a
+  decision you marked outdated yourself stays outdated. A pin the decision had
+  is not put back (`engram pin <id>` does that), revision history of a single
+  decision cannot be unlinked, and the command is not available to AI clients.
+  `engram doctor` prints this preview command, with both titles, when it finds
+  an active decision that is recorded as replaced. To see where such a relation
+  came from, search the store's `audit.log` for the replaced id: a line ending
+  in `(decision thread)` means it was written when the replacing decision was
+  added, `(pending edge written on promotion)` means a proposal was approved in
+  review, and a `knowledge/conflict_resolutions` line means
+  `engram conflicts resolve` was run.
 - Playbook ids are chosen by Engram: an id an AI sends with a new playbook is
   ignored, and an insert never takes over an existing id.
 - Playbooks always require explicit review before trusted use; Engram never
@@ -478,7 +502,7 @@ Claude Code Stop/PreCompact/PostCompact and Cursor stop/sessionEnd write hooks n
 
 Write-hook stdin is limited to 128 KiB and a one-second read deadline after module loading. An open pipe, oversized input or read error produces a best-effort local diagnostic and exit status 0, without publishing an incomplete event.
 
-Process the queue when convenient:
+The queue is processed automatically while the Engram MCP server or the watcher runs (see [Resume and capture diagnostics](resume-capture.md); `ENGRAM_SPOOL_AUTODRAIN=0` turns that off). You can also process it yourself at any time:
 
 ```sh
 engram hooks drain --dry-run --json
@@ -487,7 +511,7 @@ engram hooks drain --json
 engram doctor --json
 ```
 
-`--dry-run` reports counts only and writes nothing. A normal drain processes oldest events first; repeated event IDs do not create duplicate proposals or archival entries. The command returns 1 on a retryable processing failure or a busy processor, 2 for invalid arguments, otherwise 0. A successful drain can still report quarantined malformed events; inspect that count. Doctor reports pending count/bytes, oldest pending age in seconds, quarantine count and incomplete files without draining. Existing local staging extraction paths (including enabled watcher writeback) also attempt a drain. MCP startup and MCP tool calls never drain; if those are your only operations, run the local drain command yourself.
+`--dry-run` reports counts only and writes nothing. A normal drain processes oldest events first; repeated event IDs do not create duplicate proposals or archival entries. The command returns 1 on a retryable processing failure or a busy processor, 2 for invalid arguments, otherwise 0. A successful drain can still report quarantined malformed events; inspect that count. Doctor reports pending count/bytes, oldest pending age in seconds, quarantine count and incomplete files without draining. The Engram MCP server processes the queue from a background thread and the watcher after each scan, a bounded number of events at a time; existing local staging extraction paths also attempt a drain. MCP tool calls themselves never drain. With `ENGRAM_SPOOL_AUTODRAIN=0`, run the local drain command yourself.
 
 Events live under `<store>/hooks/spool/`, with a cap of 1,000 pending events or 16 MiB and a 128 KiB event limit. Overflow moves the oldest pending files to `quarantine/` with reason sidecars; malformed events go there too. Concurrent publishers can briefly exceed the pending cap while the spool maintenance lock is busy; the next publisher/drain enforces it. Quarantine and completion receipts are retained and excluded from that cap. Inspect quarantine explicitly; keep receipts to preserve event-ID dedup. Interrupted `.partial` files are counted separately and retained for inspection. Store/disk errors leave pending events available for retry; if publication itself fails, the hook records a best-effort diagnostic in `<store>/logs/hooks.log`, or `<store-name>.hooks.log` beside an inaccessible store. If both locations are unwritable, local capture cannot be guaranteed.
 

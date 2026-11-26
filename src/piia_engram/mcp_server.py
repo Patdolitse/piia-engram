@@ -1818,8 +1818,10 @@ def main() -> None:
         _run_startup_auto_migrate()
 
     # The server start never reads other AI tools' memory or config files and
-    # never writes memory content: importing them is the explicit
-    # `engram import-memories` command. ENGRAM_MCP_STARTUP_SYNC and
+    # never writes their content as memory: importing them is the explicit
+    # `engram import-memories` command. (Engram's own hook queue is processed
+    # in the background while the server runs; see _start_spool_autodrain.)
+    # ENGRAM_MCP_STARTUP_SYNC and
     # ENGRAM_RECONCILE are still accepted but no longer change the start.
     for _warning in _startup_env_warnings():
         print(f"[engram] warning: {_warning}", file=sys.stderr)

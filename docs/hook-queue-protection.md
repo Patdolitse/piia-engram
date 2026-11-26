@@ -108,8 +108,11 @@ They need no key, decryption, KDF, lock or policy creation, preserve unrelated
 diagnostics when encrypted-store checks fail, and never migrate or consume work.
 Actual drain retains the existing staging gates, per-operation deduplication,
 archive markers and checkpoint provenance. A durable processing receipt means
-neither Owner approval nor confirmed host adoption. No new automatic drain,
-network path or background service is introduced.
+neither Owner approval nor confirmed host adoption. Queue protection adds no
+network path. The automatic processing done by the MCP server and the watcher
+(see [Resume and capture diagnostics](resume-capture.md)) is the same drain: it
+needs the queue key in that process's environment, and a process without the
+key leaves protected events untouched for one that has it.
 
 ## Compatibility and remaining plaintext
 

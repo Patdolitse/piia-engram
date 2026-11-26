@@ -135,6 +135,13 @@ a content-change hint when a dismissed pair has changed since dismissal.
 previews by default. Writes require `--commit --yes`; `supersede` and `archive`
 also require `--keep <id>` to identify the retained decision.
 
+`engram lineage unlink <replacing-id> <replaced-id>` is the owner-only way back
+when a decision was replaced by an unrelated one: it removes that `supersedes`
+relation and restores the replaced decision. It previews by default, shows both
+decisions, and writes only with `--commit --yes`; `--note TEXT` and `--json`
+are accepted. `engram doctor` prints both preview commands (replace, unlink)
+with the two titles and never a ready-to-run write.
+
 ## 决策冲突治理
 
 `engram conflicts list [--json]` 是 owner-only 的 active 决策冲突只读视图，
@@ -144,6 +151,12 @@ also require `--keep <id>` to identify the retained decision.
 `engram conflicts resolve <id1> <id2> --action supersede|archive|dismiss`
 默认只预览不写入。实际写入必须加 `--commit --yes`；`supersede` 和 `archive`
 还必须用 `--keep <id>` 指明保留哪条决策。
+
+一条决策被无关的决策取代时，用 owner-only 的
+`engram lineage unlink <取代者id> <被取代id>` 撤销：它删除这条 `supersedes` 关系，
+并恢复被取代的决策。默认只预览并显示两条决策，加 `--commit --yes` 才写入；
+支持 `--note TEXT` 和 `--json`。`engram doctor` 会带上两条标题打印两个预览命令
+（取代、撤销），不再给出可直接执行的写入命令。
 
 ## Evidence labels
 

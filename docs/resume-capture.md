@@ -68,7 +68,9 @@ work; it identifies a local root, not an account or shared-store permission.
   `transcript-missing-retry-limit`, `storage-unavailable`, `processing-failed`,
   `receipt-failed`, `transport-unavailable`, `unknown`, and the closed crypto
   failure codes in the [queue protection guide](hook-queue-protection.md);
-- read-only cleanup candidates older than seven days, summarized as counts and bytes.
+- read-only cleanup candidates older than seven days, summarized as counts and bytes;
+- whether automatic processing is on, and the last automatic pass: when, by which
+  process (`mcp-server` or `watcher`), and how many events it processed, failed and left.
 
 These diagnostics never echo summaries, transcript locations, exception text, event
 IDs or bodies. Older envelopes without result metadata have no reported result;
@@ -90,9 +92,32 @@ engram hooks drain --dry-run --json
 engram hooks drain --json
 ```
 
-Doctor, ordinary reads, MCP startup and MCP-origin extraction do not auto-drain.
-There is no background service. A diagnostic or dry-run does not create an absent
-store, acquire its queue lock, or consume events.
+The queue is processed automatically by two processes that are already running on
+your machine:
+
+- the Engram MCP server, from a background thread: a first pass 15 seconds after it
+  starts (`ENGRAM_SPOOL_AUTODRAIN_DELAY_S` changes that), then one every ten minutes,
+  sooner while a backlog is being worked off;
+- the watcher (`engram watcher`), after each scan, at most once a minute.
+
+One automatic pass handles at most 50 events or runs for 20 seconds, oldest first, so
+a large backlog is cleared over several passes and never holds the store. It writes
+what `engram hooks drain` writes: session records, digests and pending proposals in
+the review queue. It is never recorded as an AI client's write, and it approves
+nothing: every proposal still waits for your `engram review`, in every approval mode.
+A read-only server starts no queue thread. When the queue key of a protected queue is
+not available to the server, it stops trying for that process and leaves the events
+for a process that has the key. After a pass in which every event failed, the next
+one waits longer (doubling, up to two hours).
+
+Set `ENGRAM_SPOOL_AUTODRAIN=0` to turn automatic processing off: in the `env` of the
+Engram MCP entry for the server, and in the watcher's environment for the watcher.
+Then only `engram hooks drain` processes the queue. `engram doctor` shows whether it
+is on in the environment doctor runs in and what the last automatic pass did (time,
+which process, counts).
+
+Doctor, ordinary reads and MCP tool calls themselves do not drain. A diagnostic or
+dry-run does not create an absent store, acquire its queue lock, or consume events.
 
 Retention keeps the existing pending cap (1,000 events / 16 MiB; 128 KiB per event).
 This is **not a total disk-use cap**: quarantine, partial evidence and receipts can

@@ -8,7 +8,27 @@
 
 ## [Unreleased]
 
+### 新增
+
+- hook 队列现在会自动处理，不再需要手动运行 `engram hooks drain`：Engram MCP server 运行期间在后台处理，watcher 在每次扫描后处理。每轮处理的事件数量有上限，只写入会话记录、摘要和待审区里的待审提案，不批准任何内容。`ENGRAM_SPOOL_AUTODRAIN=0` 可关闭；`engram doctor` 会显示它是否开启以及最近一轮自动处理的情况。详见[接续与捕获诊断](docs/resume-capture.zh-CN.md)。
+
+- `engram lineage unlink <取代者id> <被取代id>` 可以撤销一条错误的决策取代关系：删除这条关系，并让被取代的决策恢复使用。默认只预览并显示两条决策，加 `--commit --yes` 才执行；这是本地 Owner 命令，AI 客户端不能调用。
+
+- 在 Windows 上，当 PATH 上没有 `claude` 命令可供查询版本时（桌面版和 VS Code 扩展），`engram doctor --fix --hook-args` 和 `engram setup --hook-args` 会把 Claude Code hook 写成 `command` + `args`。需要 Claude Code 2.1.139 或更新版本；PATH 上的 `claude` 报告更旧的版本时会拒绝执行。
+
+### 变更
+
+- **行为变化：**AI 客户端用 `supersedes=<id>` 添加的决策，现在在任何审批模式下都是等待你审核的提案。此前在非严格模式下，它会立即取代被指名的决策，而且没有任何机制检查这两条决策是否相关。审核卡片会显示它要取代的那条决策，以及目标是被指名的还是推断出来的。
+
+- **行为变化：**只是按问题匹配到另一条决策（问题相同、选择不同）的决策，现在对本地调用方也是取代提案；此前本地写入会立即取代旧决策。本地用 `supersedes=<id>` 指名目标的决策仍然立即取代。两条决策标题相同但问题不同时，不再被当作一条取代另一条。
+
 ### 修复
+
+- `engram doctor` 不再打印可直接执行、会让一条决策退役的命令。发现一条仍在用、却被记录为已被取代的决策时，它现在显示两条的标题，提示“两条无关就不要执行取代”，并只给出预览命令；`engram doctor --json` 带有同样的配对信息。在其中一条命令被执行之前，被取代的那条决策不会出现在召回里。
+
+- 决策取代不再停在一半：让被取代决策退役的那一步失败时，取代关系会被撤回；`engram conflicts resolve --action supersede` 也改为先让另一条决策退役，再写入取代关系。此前这类失败可能留下一条仍在用、却不出现在召回里的决策。
+
+- 在 Windows 上，`engram doctor` 对“没有 Git Bash 就无法启动”的 Claude Code hook 给出的提示，现在把安装 Git for Windows 也列为解决办法之一。
 
 - 在 Windows 上，Claude Code hook 现在以 `command` + `args` 形式登记，由 Claude Code 直接启动，不经过 shell。此前写成一条命令字符串的 hook，在没有安装 Git Bash 且 Python 路径含空格时无法启动，因为 PowerShell 不能执行带引号的写法。这需要 Claude Code 2.1.139 或更新版本：setup 会向 PATH 上的 `claude` 查询版本，版本较旧或找不到时保留字符串写法。`engram doctor` 会指出仍写成一条字符串的 Engram hook，`doctor --fix` 原地转换。
 

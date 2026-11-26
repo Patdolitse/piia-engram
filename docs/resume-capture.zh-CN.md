@@ -26,7 +26,8 @@ Claude Code 和 Cursor 的 SessionStart hook 注入的正是这份简报，这�
 - pending 数量/字节和最旧年龄；
 - quarantine 数量及字节（包含原因文件）；spool、quarantine 和 receipts 目录中的 partial 数量/字节；receipt 数量/字节；
 - 从既有事件 envelope、隔离原因和 receipt 取得最近最多 20 项封闭结果码：`processed`、`duplicate`、`invalid-event`、`invalid-prepared-event`、`pending-cap`、`transcript-missing`、`transcript-missing-age-limit`、`transcript-missing-retry-limit`、`storage-unavailable`、`processing-failed`、`receipt-failed`、`transport-unavailable` 或 `unknown`；
-- 超过七天的只读清理候选，仅汇总数量与字节。
+- 超过七天的只读清理候选，仅汇总数量与字节；
+- 自动处理是否开启，以及最近一轮自动处理：时间、由哪个进程执行（`mcp-server` 或 `watcher`）、处理了多少条、失败多少条、还剩多少条。
 
 诊断不回显摘要、转录位置、异常原文、事件 ID 或正文。没有结果元数据的旧 envelope 不显示结果；未知或不可读的结果元数据标为 `unknown`。结果只是本地证据，不证明宿主消费。无法读取本地文件时可报告 `metadata-unavailable`。数量是只读快照，并发捕获期间可能变化。
 
@@ -39,7 +40,16 @@ engram hooks drain --dry-run --json
 engram hooks drain --json
 ```
 
-doctor、普通读取、MCP 启动及 MCP 来源提取不自动 drain，没有后台服务。诊断和 dry-run 不创建不存在的存储、不取得队列锁、不消费事件。
+队列由两个本来就在你机器上运行的进程自动处理：
+
+- Engram MCP server 的后台线程：启动 15 秒后处理第一轮（`ENGRAM_SPOOL_AUTODRAIN_DELAY_S` 可调整），之后每十分钟一轮，清理积压期间会更快；
+- watcher（`engram watcher`）：每次扫描后处理一轮，最多每分钟一次。
+
+一轮自动处理最多 50 条事件或 20 秒，按最旧优先，所以大量积压会分几轮清完，不会长时间占用存储。它写入的内容与 `engram hooks drain` 相同：会话记录、摘要和待审区里的待审提案。它不会被记为 AI 客户端的写入，也不批准任何内容：每条提案仍要等你用 `engram review` 审核，任何审批模式下都是如此。只读方式打开的 server 不启动队列线程。受保护队列的密钥对 server 不可用时，该进程不再重试，事件留给持有密钥的进程。某一轮全部失败后，下一轮会等更久（逐次加倍，最长两小时）。
+
+设置 `ENGRAM_SPOOL_AUTODRAIN=0` 可关闭自动处理：server 需要写在 Engram MCP 条目的 `env` 里，watcher 需要写在 watcher 的运行环境里。关闭后只有 `engram hooks drain` 处理队列。`engram doctor` 会显示在 doctor 所在环境里自动处理是否开启，以及最近一轮自动处理的情况（时间、哪个进程、数量）。
+
+doctor、普通读取和 MCP 工具调用本身不处理队列。诊断和 dry-run 不创建不存在的存储、不取得队列锁、不消费事件。
 
 留存维持现有 pending 上限（1,000 条 / 16 MiB，单事件 128 KiB）。这**不是总磁盘占用上限**，quarantine、partial 和 receipt 可占额外空间；并发维护期间 pending 可暂时超限。quarantine/partial 的清理候选只供本地检查，不是删除授权；人工处置前须保留恢复证据并核对正在进行的写入。诊断不自动删除任何内容。receipt 默认保留以维持去重，在该政策中不成为清理候选。
 

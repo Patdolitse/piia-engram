@@ -196,8 +196,21 @@ staged 条目始终在你掌控之中：
   改步骤、标题、触发词等）也是提案：在你批准新版本之前，已批准的版本照常可用、不被改动。待审手册也不能被执行：`playbook_execution` 返回 `not_approved`，`get_playbooks`
   列出时标上 `pending_untrusted`。你在本地添加的手册（例如 `engram playbook install`）不受影响。
 - AI 新增的决策如果与一条已审核决策问题相同、选择不同，在任何审批模式下都是取代它的提案
-  （`pending_supersedes`）：你批准新决策之前，已审核的那条照常使用。你在本地添加的决策仍会立即
-  建立取代关系。
+  （`pending_supersedes`）：你批准新决策之前，已审核的那条照常使用。AI 用 `supersedes=<id>`
+  指名要取代哪条决策时同样如此：任何审批模式下都是提案，因为没有任何机制检查这两条决策是否相关。
+  你在本地添加的决策如果只是按问题匹配（问题相同、选择不同），也是提案；你在本地用
+  `supersedes=<id>` 指名的，会立即取代那条决策。两条决策标题相同但问题不同时，不会推断取代关系。
+  这类提案的审核卡片会显示它要取代的那条决策，以及目标是被指名的还是推断出来的；两条无关就拒绝。
+- 如果一条决策被一条与它无关的决策取代了，`engram lineage unlink <取代者id> <被取代id>`
+  会删除这条关系，并让被取代的决策恢复使用。默认只预览，并显示两条决策；加 `--commit --yes`
+  才执行。它只恢复由这条关系退役的决策（状态为被该决策 `superseded`，或由针对这一对的
+  `engram conflicts resolve --action supersede` 退役）；你自己标为 outdated 的决策保持 outdated。
+  决策原有的钉选不会自动恢复（用 `engram pin <id>`），单条决策自身的修订历史不能解除，
+  AI 客户端不能调用这个命令。`engram doctor` 发现一条仍在用、却被记录为已被取代的决策时，
+  会带上两条标题打印这个预览命令。想知道这条关系是怎么来的，可在存储目录的 `audit.log`
+  里搜索被取代的 id：以 `(decision thread)` 结尾的行表示它是在取代者写入时建立的，
+  `(pending edge written on promotion)` 表示一条提案在审核中被批准，
+  `knowledge/conflict_resolutions` 的行表示运行过 `engram conflicts resolve`。
 - Playbook 的 id 由 Engram 生成：AI 随新 playbook 发来的 id 会被忽略，新增也不会占用已有的 id。
 - Playbook 在被信任使用前始终需要显式审查；Engram 绝不悄悄执行流程——它把步骤
   作为被动参考交给你的 AI 工具，并追踪上报的执行结果。
@@ -381,7 +394,7 @@ Claude Code 的 Stop/PreCompact/PostCompact 和 Cursor 的 stop/sessionEnd 写�
 
 写入型 hook 的 stdin 上限为 128 KiB，模块加载后的读取期限为一秒。管道一直打开、输入超限或读取失败时，尽力记录本地诊断并以状态码 0 退出，不发布不完整事件。
 
-在方便时处理队列：
+Engram MCP server 或 watcher 运行期间会自动处理队列（见[接续与捕获诊断](resume-capture.zh-CN.md)；`ENGRAM_SPOOL_AUTODRAIN=0` 可关闭）。你也可以随时自己处理：
 
 ```sh
 engram hooks drain --dry-run --json
@@ -390,7 +403,7 @@ engram hooks drain --json
 engram doctor --json
 ```
 
-`--dry-run` 只报告数量，不写入任何内容。正常处理按最旧事件优先；相同事件 ID 重放不会重复生成提案或归档记录。可重试失败或处理器忙时命令返回 1，用法错误返回 2，其余返回 0。成功处理也可能报告已隔离的坏事件，请检查该数量。Doctor 只读报告待处理数量/字节数、最旧事件年龄（秒）、隔离数量和不完整文件，不处理队列。已有本地 staging 提取路径（包括已启用的 watcher 回写）也会尝试处理队列。MCP 启动和 MCP 工具调用均不处理；如果只使用这些操作，请自行运行本地 drain 命令。
+`--dry-run` 只报告数量，不写入任何内容。正常处理按最旧事件优先；相同事件 ID 重放不会重复生成提案或归档记录。可重试失败或处理器忙时命令返回 1，用法错误返回 2，其余返回 0。成功处理也可能报告已隔离的坏事件，请检查该数量。Doctor 只读报告待处理数量/字节数、最旧事件年龄（秒）、隔离数量和不完整文件，不处理队列。Engram MCP server 的后台线程和 watcher 的每次扫描都会处理队列，每次处理的事件数量有上限；已有本地 staging 提取路径也会尝试处理。MCP 工具调用本身不处理队列。设置了 `ENGRAM_SPOOL_AUTODRAIN=0` 时，请自行运行本地 drain 命令。
 
 事件位于 `<store>/hooks/spool/`，待处理上限为 1,000 条或 16 MiB，单事件上限为 128 KiB。超限时最旧文件进入 `quarantine/` 并附原因文件；格式错误事件也进入该目录。并发发布期间，维护锁忙可能造成短暂超限，下一次发布或 drain 会恢复上限。隔离文件和完成凭据保留，不计入待处理上限。请显式检查隔离内容，保留凭据以维持事件 ID 去重。中断留下的 `.partial` 文件单独计数，保留供检查。存储锁、磁盘或处理异常会保留待处理事件供下次重试；若发布本身失败，hook 尽力在 `<store>/logs/hooks.log` 记录诊断，存储不可访问时回退到存储同级的 `<store-name>.hooks.log`。两处均不可写时，无法保证捕获成功。
 

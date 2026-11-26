@@ -96,7 +96,7 @@ Windows 盘符路径无论使用正斜杠、反斜杠还是混合分隔符，以
 均视为隐私内容；只省略受影响的字段。
 
 对象位于 `hooks/spool/` 事件的 `payload.task_checkpoint` 中，准备阶段冻结对象和规范文本。
-重试不会通过重读 transcript 修补该快照。显式运行 `engram hooks drain --json` 后，
+重试不会通过重读 transcript 修补该快照。队列被处理后（MCP server 或 watcher 自动处理，或运行 `engram hooks drain --json`），
 保留的五字段规范文本进入 `contexts/claude_code/<session>.md`，类型化对象进入相邻
 `session_digest.v1` JSON 的 `task_checkpoint` 字段。
 即使源文件在处理前被修改或删除、消息数量低于旧阈值，合法快照仍可处理。
