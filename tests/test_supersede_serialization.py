@@ -72,15 +72,21 @@ def test_local_writer_cannot_enter_replacement_transaction(tmp_path, monkeypatch
             return result
         monkeypatch.setattr(mcp_tools_write, "_supersede_refusal", guard)
     else:
-        original_commit = eng._commit_version_edge
-        def commit(*args, **kwargs):
+        # An AI client's replacement is a proposal: what it persists is the
+        # held row, inside the same locked write.
+        original_hold = eng._hold_for_owner
+        def hold(*args, **kwargs):
             interleave()
-            return original_commit(*args, **kwargs)
-        monkeypatch.setattr(eng, "_commit_version_edge", commit)
+            return original_hold(*args, **kwargs)
+        monkeypatch.setattr(eng, "_hold_for_owner", hold)
     response = _replace(server, old, batch=batch)
     assert outcomes == ["locked"], (outcomes, response)
     prior = eng._find_item_by_id(old["id"])[1]
-    assert int(prior.get("version") or 1) == 1 and prior["status"] == "superseded"
+    assert int(prior.get("version") or 1) == 1 and prior["status"] == "active"
+    rows = json.loads((eng._knowledge_dir / "decisions.json").read_text(encoding="utf-8"))
+    proposal = next(row for row in rows if row["id"] != old["id"])
+    assert proposal["tier"] == "staging" and proposal["pending_supersedes"] == old["id"]
+    assert proposal["approval_reason"] == "explicit_supersede"
 
 
 @pytest.mark.parametrize("writer", ["pin", "version"])

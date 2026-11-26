@@ -19,6 +19,13 @@ def _decision(eng, question, choice, **kw):
     return d["id"]
 
 
+def _revise(eng, question, choice, **kw):
+    """A same-question revision: a proposal until the Owner approves it."""
+    new_id = _decision(eng, question, choice, **kw)
+    assert eng.promote_knowledge(new_id)["status"] == "promoted"
+    return new_id
+
+
 # ── basic lookup ──────────────────────────────────────────────────────────
 
 class TestDecisionHistoryBasic:
@@ -74,7 +81,7 @@ class TestRevisionHistory:
     def test_two_revisions_chronological(self, tmp_path):
         eng = Engram(root=tmp_path)
         v1 = _decision(eng, "deploy target", "Heroku")
-        v2 = _decision(eng, "deploy target", "AWS")
+        v2 = _revise(eng, "deploy target", "AWS")
         h = eng.get_decision_history("deploy target")
         assert h["found"] is True
         assert h["revision_count"] == 2
@@ -92,8 +99,8 @@ class TestRevisionHistory:
     def test_three_revisions_chain(self, tmp_path):
         eng = Engram(root=tmp_path)
         v1 = _decision(eng, "language", "Python")
-        v2 = _decision(eng, "language", "Go")
-        v3 = _decision(eng, "language", "Rust")
+        v2 = _revise(eng, "language", "Go")
+        v3 = _revise(eng, "language", "Rust")
         h = eng.get_decision_history("language")
         assert h["revision_count"] == 3
         ids = [r["id"] for r in h["revisions"]]
@@ -161,7 +168,7 @@ class TestHistoryPersistence:
     def test_history_survives_reload(self, tmp_path):
         eng = Engram(root=tmp_path)
         _decision(eng, "cache strategy", "Redis")
-        _decision(eng, "cache strategy", "Memcached")
+        _revise(eng, "cache strategy", "Memcached")
         # Fresh instance
         eng2 = Engram(root=tmp_path)
         h = eng2.get_decision_history("cache strategy")

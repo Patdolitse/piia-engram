@@ -189,9 +189,21 @@ def test_a_rejected_decision_never_writes_its_pending_edge(engram: Engram):
     assert _supersedes_edges(engram) == set()
 
 
-def test_a_reviewed_decision_writes_its_edge_at_once(engram: Engram):
+def test_an_inferred_replacement_waits_for_review_even_when_sent_as_reviewed(engram: Engram):
+    # Same question, other choice: a proposal for every caller; the edge is
+    # written when the Owner approves it.
     old = _decision(engram, "JSON lines", tier="verified")["id"]
     new = _decision(engram, "SQLite", tier="verified")["id"]
+    assert _supersedes_edges(engram) == set()
+    assert _active_row(engram, "decision", new)["pending_supersedes"] == old
+    assert engram.promote_knowledge(new)["status"] == "promoted"
+    assert _supersedes_edges(engram) == {(new, old)}
+    assert "pending_supersedes" not in _active_row(engram, "decision", new)
+
+
+def test_a_reviewed_decision_that_names_its_target_writes_its_edge_at_once(engram: Engram):
+    old = _decision(engram, "JSON lines", tier="verified")["id"]
+    new = _decision(engram, "SQLite", tier="verified", supersedes=old)["id"]
     assert _supersedes_edges(engram) == {(new, old)}
     assert "pending_supersedes" not in _active_row(engram, "decision", new)
 

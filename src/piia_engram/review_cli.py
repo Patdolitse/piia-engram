@@ -178,6 +178,42 @@ def _pending(eng, lookup: dict[str, dict[str, dict]] | None = None) -> list[tupl
     return rows
 
 
+_SUPERSEDE_REASONS = {
+    "explicit_supersede": "named by the proposing tool; nothing checked that the two are related",
+    "inferred_supersede": "inferred: same question, different choice",
+}
+
+
+def supersede_target_lines(eng, row: dict) -> list[str]:
+    """What a pending row would replace, for a review card: the entry and why it was proposed.
+
+    Empty when the row proposes no replacement. One cleaned line each.
+    """
+    target_id = str(row.get("pending_supersedes") or "") if isinstance(row, dict) else ""
+    if not target_id:
+        return []
+
+    def clean(value: Any) -> str:
+        return _write_provenance.clean_client_text(value, 160)
+
+    try:
+        kind, target = eng._find_item_by_id(target_id)
+    except Exception:
+        kind, target = "", None
+    if not isinstance(target, dict):
+        lines = ["would replace: (entry not found)"]
+    elif kind == "decision":
+        lines = ["would replace: " + clean(f"{target.get('question') or target.get('title') or ''}"
+                                         f" -> {target.get('choice') or ''}")]
+    else:
+        lines = ["would replace: " + clean(target.get("summary") or target.get("title") or "")]
+    reason = _SUPERSEDE_REASONS.get(str(row.get("approval_reason") or ""))
+    if reason:
+        lines.append("why proposed: " + reason)
+    lines.append("if the two are unrelated, reject this proposal")
+    return lines
+
+
 def _card(n: int, kind: str, row: dict, eng, lookup: dict[str, dict] | None = None) -> list[str]:
     root = eng.root
     if kind == "identity":
@@ -221,6 +257,7 @@ def _card(n: int, kind: str, row: dict, eng, lookup: dict[str, dict] | None = No
     if row.get("pending_supersedes"):
         target = _dedup_review.safe_id(row.get("pending_supersedes")) or "(malformed id)"
         lines.append(f"- relation: SUPERSEDES {target} (proposed; checked again on approval)")
+        lines.extend("- " + line for line in supersede_target_lines(eng, row))
         if _target_is_pinned(eng, row.get("pending_supersedes")):
             lines.append("- note: the target is a PINNED entry; approving this replaces it and removes the pin")
     if kind == "playbook":

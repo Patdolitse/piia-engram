@@ -484,11 +484,12 @@ async def add_decision(
 
     决策链（Decision Thread）：同一问题改选方案时，新决策是取代旧决策的提案
     （pending_supersedes），在任何审批模式下都等主人用 engram review 批准，批准前旧决策照常使用。
-    也可显式传 supersedes 参数指定被取代的旧决策 ID。
+    也可显式传 supersedes 参数指定被取代的旧决策 ID；这同样是提案，主人批准前旧决策照常使用。
     Decision thread: when the same question gets a different choice than a reviewed
     decision, the new one is a proposal to replace it (pending_supersedes) that waits for
     the Owner's engram review in every approval mode; the old one stays in use until then.
-    You may also explicitly pass supersedes with the old ID.
+    You may also explicitly pass supersedes with the old ID; that is a proposal too, and
+    the old decision stays in use until the Owner approves it.
 
     Args:
         question: 决策的问题，如"数据库选型"。 / Decision question, such as 'database choice'.
@@ -497,7 +498,7 @@ async def add_decision(
         source_tool: 记录来源工具，如 'claude_code', 'codex'（可选，建议填写）。 / Source tool, such as 'claude_code' or 'codex' (optional but recommended).
         project: 关联项目（可选）。 / Related project (optional).
         domain: 技术领域（可选），可填多个，逗号分隔，如 'architecture,database'。 / Technical domain (optional); may contain multiple comma-separated labels such as 'architecture,database'.
-        supersedes: 被本决策取代的旧决策 ID（可选）。填写后自动在决策链中建立 supersedes 关系。 / ID of the old decision this one replaces (optional). Creates a supersedes edge in the decision thread.
+        supersedes: 本决策提议取代的旧决策 ID（可选）。取代提案总是进入待审，主人批准后旧决策才被取代；只填确实被本决策取代的那一条。 / ID of the old decision this one proposes to replace (optional). A replacement is always a proposal that waits for the Owner; the old decision is superseded only on approval. Name only the decision this one really replaces.
         supersedes_expected_version: 填写 supersedes 时必填：旧决策的当前版本号（读取结果中的 version）。缺失 → version_required，不匹配 → version_conflict，均零写入。 / Required with supersedes: the old decision's current version (version in a read result). Missing -> version_required; mismatch -> version_conflict; both write nothing.
         source_agent: 产生/校验此决策的 agent 身份（可选）。 / Agent identity that produced or validated this decision (optional).
         run_id: 产生此决策的工作流/会话运行 ID（可选）。 / Workflow/session run id that produced this decision (optional).

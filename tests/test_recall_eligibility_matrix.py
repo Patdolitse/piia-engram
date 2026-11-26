@@ -642,6 +642,8 @@ def test_decision_auto_supersede_hides_the_old_choice(tmp_path, monkeypatch):
     old_id = first.get("id") or first.get("decision_id")
     new_id = second.get("id") or second.get("decision_id")
     assert old_id and new_id and old_id != new_id, (first, second)
+    # Same question, other choice: a proposal until the Owner approves it.
+    assert eng.promote_knowledge(new_id)["status"] == "promoted"
 
     context = _run(m.get_user_context())
     assert "MXCHOICENEW" in context and "MXCHOICEOLD" not in context

@@ -173,12 +173,15 @@ def _claim_fields(kind: str, row: dict) -> list[tuple[str, Any]]:
     return [("summary", row.get("summary")), ("detail", row.get("detail"))]
 
 
-def _chain_lines(row: dict, edges: list[dict]) -> list[str]:
+def _chain_lines(row: dict, edges: list[dict], eng=None) -> list[str]:
     item_id = str(row.get("id") or "")
     lines = []
     pending = _dedup_review.safe_id(row.get("pending_supersedes"))
     if pending:
         lines.append(t(f"  提议取代：{pending}（批准后生效）", f"  proposes to supersede: {pending} (on approval)"))
+        if eng is not None:
+            lines.extend("    " + _one_line(line, 200)[0]
+                         for line in _review_cli.supersede_target_lines(eng, row))
     olds = sorted({_dedup_review.safe_id(e.get("dst")) for e in edges
                    if e.get("rel") == "supersedes" and e.get("src") == item_id} - {""})
     news = sorted({_dedup_review.safe_id(e.get("src")) for e in edges
@@ -237,7 +240,7 @@ def card(n: int, total: int, kind: str, row: dict, *, eng, lookup: dict[str, dic
     if notes:
         lines.append(t("提示：", "flags: ") + "; ".join(notes))
     lines.extend(_dedup_review.card_lines(kind, row, lookup.get(kind) or {}))
-    lines.extend(_chain_lines(row, edges))
+    lines.extend(_chain_lines(row, edges, eng))
     if _review_cli._target_is_pinned(eng, row.get("pending_supersedes")):
         lines.append(t("  注意：取代目标是已钉住条目；批准后它被取代并自动解钉",
                        "  note: the target is a pinned entry; approving replaces it and removes the pin"))

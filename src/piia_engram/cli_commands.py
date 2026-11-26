@@ -5196,12 +5196,19 @@ def _run_conflicts_resolve(eng, args: list[str]) -> tuple[int, dict]:
         # (the caller-facing add_relation refuses supersedes).
         from piia_engram.governance_store import RelationStore as _RS
 
-        relation_added = _RS(eng.root).add_relation(keep, "supersedes", other)
-        # The superseded decision loses its pin first, audited as superseded.
         from piia_engram import pinning as _pinning
 
-        _pinning.auto_unpin(eng, other, reason="superseded", by=keep)
+        # The superseded decision loses its pin first, audited as superseded.
+        unpinned = _pinning.auto_unpin(eng, other, reason="superseded", by=keep)
+        # Retire before the relation: it is written only once the other
+        # decision is out of use, so a refused update leaves no hidden active
+        # decision (and the pin it had is put back).
         archive = eng.update_decision(other, {"status": "outdated"})
+        if archive.get("error"):
+            if unpinned:
+                _pinning.pin(eng, other)
+            return 1, {**payload, "status": "failed", "error": archive["error"]}
+        relation_added = _RS(eng.root).add_relation(keep, "supersedes", other)
         store.record(first, second, action=action, keep=keep, note=str(opts["note"] or ""))
         payload["changed"] = bool(relation_added or archive.get("status") == "outdated")
     elif action == "archive":
@@ -5305,7 +5312,7 @@ def run_lineage(argv: list[str] | None = None) -> int:
     root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
     apply = opts["commit"] and opts["yes"]
     # Look first through a read-only handle: a refused request leaves the store as it was.
-    payload = Engram(root=root, read_only=True).unlink_decision_lineage(ids[0], ids[1])
+    payload = Engram(root=root, read_only=True).preview_decision_lineage_unlink(ids[0], ids[1])
     if apply and not payload.get("error"):
         payload = Engram(root=root).unlink_decision_lineage(
             ids[0], ids[1], dry_run=False, note=opts["note"])

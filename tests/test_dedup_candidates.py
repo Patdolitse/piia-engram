@@ -161,8 +161,12 @@ def test_same_question_other_choice_still_revises(eng):
 
     from piia_engram.governance_store import RelationStore
 
+    # A revision, not a duplicate candidate: a proposal to replace the first,
+    # and the relation is written when the Owner approves it.
     assert "duplicate_candidate" not in second
-    assert second["tier"] == "verified"
+    assert second["tier"] == "staging" and second["pending_supersedes"] == first["id"]
+    assert RelationStore(eng.root).all_edges() == []
+    assert eng.promote_knowledge(second["id"])["status"] == "promoted"
     edges = RelationStore(eng.root).all_edges()
     assert {"src": second["id"], "rel": "supersedes", "dst": first["id"]}.items() <= next(
         e for e in edges if e["src"] == second["id"]

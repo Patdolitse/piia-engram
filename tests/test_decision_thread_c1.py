@@ -19,6 +19,13 @@ def _decision(eng, question, choice, **kw):
     return d["id"]
 
 
+def _revise(eng, question, choice, **kw):
+    """A same-question revision: a proposal until the Owner approves it."""
+    new_id = _decision(eng, question, choice, **kw)
+    assert eng.promote_knowledge(new_id)["status"] == "promoted"
+    return new_id
+
+
 def _thread_order(eng, seed_id):
     """Return (ordered_ids, heads, active_ids) from the thread."""
     t = eng.get_decision_thread(seed_id)
@@ -66,8 +73,8 @@ class TestAutoSupersedes:
     def test_different_choice_creates_supersedes_edge(self, tmp_path):
         eng = Engram(root=tmp_path)
         old_id = _decision(eng, "database choice", "MySQL")
-        new_id = _decision(eng, "database choice", "PostgreSQL")
-        # The new decision should auto-supersede the old one
+        new_id = _revise(eng, "database choice", "PostgreSQL")
+        # Once approved, the new decision supersedes the old one
         t = eng.get_decision_thread(new_id)
         assert t["found"] is True
         ids, heads, active = _thread_order(eng, new_id)
@@ -92,8 +99,8 @@ class TestAutoSupersedes:
         """Three successive choice changes on the same question → linear chain."""
         eng = Engram(root=tmp_path)
         v1 = _decision(eng, "deploy target", "Heroku")
-        v2 = _decision(eng, "deploy target", "AWS")
-        v3 = _decision(eng, "deploy target", "Fly.io")
+        v2 = _revise(eng, "deploy target", "AWS")
+        v3 = _revise(eng, "deploy target", "Fly.io")
         ids, heads, active = _thread_order(eng, v1)
         # All three in the thread
         assert set(ids) == {v1, v2, v3}
@@ -199,7 +206,7 @@ class TestPersistence:
     def test_auto_supersedes_persists(self, tmp_path):
         eng = Engram(root=tmp_path)
         _decision(eng, "lang", "Python")
-        new_id = _decision(eng, "lang", "Rust")
+        new_id = _revise(eng, "lang", "Rust")
         # Fresh instance
         eng2 = Engram(root=tmp_path)
         t = eng2.get_decision_thread(new_id)

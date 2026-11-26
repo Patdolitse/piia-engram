@@ -130,8 +130,44 @@ class KnowledgeOpsMixin:
             seen.add(node)
             stack.extend(adjacency.get(node, []))
         added = store.add_relation(head_id, "supersedes", snapshot_id)
-        self._retire_superseded_decision(snapshot_id, head_id)
+        try:
+            self._retire_superseded_decision(snapshot_id, head_id)
+        except Exception:
+            if not (added and self._roll_back_unretired_edge(head_id, snapshot_id)):
+                raise
+            return False
+        if added and self._roll_back_unretired_edge(head_id, snapshot_id):
+            return False
         return added
+
+    def _roll_back_unretired_edge(self, head_id: str, old_id: str) -> bool:
+        """Take back a just-written edge whose predecessor was not retired.
+
+        A reviewed successor's edge hides its predecessor from recall. When
+        the predecessor is still an active decision after the retirement step
+        (the step failed), the edge would leave a hidden active decision, so
+        the edge goes and the predecessor stays in use. Revision snapshots and
+        an unreviewed successor are left alone: nothing is hidden there.
+        """
+        from .governance_store import RelationStore
+
+        try:
+            stored = _read_json(self._knowledge_dir / "decisions.json")
+        except Exception:
+            return False
+        rows = {row.get("id"): row for row in (stored if isinstance(stored, list) else [])
+                if isinstance(row, dict)}
+        old, new = rows.get(old_id), rows.get(head_id)
+        if (old is None or old.get("snapshot_of") or old.get("status") not in {"active", "current"}
+                or new is None or not _recall_policy.is_trusted(new)):
+            return False
+        if not RelationStore(self.root).remove_relation(head_id, "supersedes", old_id):
+            return False
+        self._audit.log(
+            "write", "knowledge/relations",
+            detail=f"{head_id} supersedes {old_id} rolled back (predecessor not retired)",
+        )
+        return True
 
     def _retire_superseded_decision(self, old_id: str, new_id: str) -> None:
         """Synchronize an active decision after its reviewed successor's edge lands."""
@@ -223,6 +259,22 @@ class KnowledgeOpsMixin:
                 continue
         return False
 
+    @staticmethod
+    def _lineage_owner_only(successor_id: str, predecessor_id: str) -> dict:
+        return {"schema": 1, "action": "lineage_unlink", "successor": successor_id,
+                "predecessor": predecessor_id, "changed": False, "error": "owner_cli_only",
+                "message": "Only the Owner's local 'engram lineage unlink' removes a supersedes relation."}
+
+    def preview_decision_lineage_unlink(self, successor_id: str, predecessor_id: str) -> dict:
+        """What ``unlink_decision_lineage`` would do. Reads only; refused for an AI client."""
+        successor_id, predecessor_id = str(successor_id or ""), str(predecessor_id or "")
+        if _review_boundary.mcp_origin():
+            return self._lineage_owner_only(successor_id, predecessor_id)
+        plan = self._lineage_unlink_plan(successor_id, predecessor_id)
+        if not plan.get("error"):
+            plan.update(dry_run=True, status="preview", restored=False)
+        return plan
+
     def unlink_decision_lineage(
         self, successor_id: str, predecessor_id: str, *, dry_run: bool = True, note: str = "",
     ) -> dict:
@@ -242,15 +294,10 @@ class KnowledgeOpsMixin:
         from .storage import hold_directory_lock
 
         successor_id, predecessor_id = str(successor_id or ""), str(predecessor_id or "")
-        if _review_boundary.mcp_origin():
-            return {"schema": 1, "action": "lineage_unlink", "successor": successor_id,
-                    "predecessor": predecessor_id, "changed": False, "error": "owner_cli_only",
-                    "message": "Only the Owner's local 'engram lineage unlink' removes a supersedes relation."}
         if dry_run:
-            plan = self._lineage_unlink_plan(successor_id, predecessor_id)
-            if not plan.get("error"):
-                plan.update(dry_run=True, status="preview", restored=False)
-            return plan
+            return self.preview_decision_lineage_unlink(successor_id, predecessor_id)
+        if _review_boundary.mcp_origin():
+            return self._lineage_owner_only(successor_id, predecessor_id)
         with hold_directory_lock(self._knowledge_dir, timeout=30):
             plan = self._lineage_unlink_plan(successor_id, predecessor_id)
             if plan.get("error"):

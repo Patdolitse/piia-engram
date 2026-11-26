@@ -1714,6 +1714,19 @@ class Engram(
             new_row.pop(key, None)
         self._refresh_labeling(new_row)
 
+    def _same_decision_question(self, new_row: dict, existing: dict) -> bool:
+        """Whether two decisions matched by title also ask the same question.
+
+        True when either row states no ``question`` (the title is then all
+        there is to compare), else when the questions are as similar as the
+        duplicate threshold asks of the titles.
+        """
+        new_question = str(new_row.get("question") or "").strip()
+        old_question = str(existing.get("question") or "").strip()
+        if not new_question or not old_question:
+            return True
+        return self._bigram_similarity(new_question, old_question) >= SIMILARITY_DUPLICATE_THRESHOLD
+
     def _supersede_target_row(
         self, new_row: dict, target_id: str, active: list[dict] | None = None
     ) -> dict | None:
@@ -3126,8 +3139,10 @@ class Engram(
                     # Owner as a duplicate candidate, never refused.
                     self._hold_duplicate_candidate(new_decision, best_match, best_sim, result_box)
                 # Different choice or supplement — fall through to related tier.
-                # Same question + different choice → the new decision supersedes the old.
-                if choices_differ:
+                # Same question + different choice → the new decision proposes to
+                # supersede the old. A shared title is not enough when both rows
+                # also state a question: the questions must match as well.
+                if choices_differ and self._same_decision_question(new_decision, best_match):
                     auto_supersedes_target = best_match.get("id")
 
             # A same-question decision that this batch just moved to the archive
@@ -3173,13 +3188,17 @@ class Engram(
                     raw_predecessor = next((row for row in _read_json(path) if row.get("id") == target), predecessor)
                     if not _recall_policy.is_trusted(raw_predecessor):
                         self._hold_for_owner(new_decision, "untrusted_supersede_target")
-            # An AI's decision that would replace a reviewed one by inference
-            # (same question, other choice) is a proposal in every approval
-            # mode: no edge without the Owner, and no version guard is skipped.
+                    elif new_decision.get("supersedes"):
+                        # The AI chose the target and nothing checks that the two
+                        # are related: the Owner sees both before one replaces the
+                        # other, in every approval mode.
+                        self._hold_for_owner(new_decision, "explicit_supersede")
+            # A decision that would replace a reviewed one by inference (same
+            # question, other choice) is a proposal for every caller and in
+            # every approval mode: no edge without the Owner's review.
             if (
                 auto_supersedes_target
                 and not new_decision.get("supersedes")
-                and _pinning.mcp_origin()
                 and _capacity.pool_of(new_decision) == _capacity.POOL_V
             ):
                 inferred = self._supersede_target_row(new_decision, target, decisions)
@@ -3239,13 +3258,13 @@ class Engram(
                         # caller-facing add_relation now refuses supersedes).
                         from .governance_store import RelationStore as _RS
 
-                        self._commit_version_edge(str(new_decision["id"]), str(supersedes_id))
-                        self._audit.log(
-                            "write",
-                            "knowledge/relations",
-                            detail=f"{new_decision['id']} supersedes {supersedes_id} (decision thread)",
-                        )
-                        self._unpin_superseded(str(supersedes_id), str(new_decision["id"]))
+                        if self._commit_version_edge(str(new_decision["id"]), str(supersedes_id)):
+                            self._audit.log(
+                                "write",
+                                "knowledge/relations",
+                                detail=f"{new_decision['id']} supersedes {supersedes_id} (decision thread)",
+                            )
+                            self._unpin_superseded(str(supersedes_id), str(new_decision["id"]))
                 except Exception:
                     pass  # edge is advisory; the decision itself is the hard write
 
@@ -3704,7 +3723,8 @@ STORE_WRITE_METHODS = frozenset({
     "restore_lifecycle_archive", "restore_playbook", "revalidate_anchors", "revoke_caller",
     "rollback_playbook_scope_migration", "save_agent_context", "save_execution_plan",
     "save_project_snapshot", "save_user_portrait", "set_caller_trust",
-    "soft_archive_knowledge_tier", "unlink_knowledge", "update_decision", "update_domain",
+    "soft_archive_knowledge_tier", "unlink_decision_lineage", "unlink_knowledge", "update_decision",
+    "update_domain",
     "update_execution_step", "update_knowledge", "update_lesson", "update_playbook",
     "update_preferences", "update_profile", "update_quality_standards", "update_tool",
     "update_trust_boundaries", "update_work_style", "recover_identity_proposals", "migrate_project_snapshot",
@@ -3730,7 +3750,8 @@ READ_ONLY_SAFE_METHODS = frozenset({
     "get_unclean_exit_marker", "get_work_style", "is_pending_playbook", "list_agent_sessions",
     "list_playbooks_for_management", "list_projects", "list_tools", "list_user_portraits",
     "mcp_entry_version", "mcp_existing_write_guard", "mcp_supersede_guard",
-    "pending_playbook_count", "preview_session_digest_backfill", "render_portrait_growth",
+    "pending_playbook_count", "preview_decision_lineage_unlink", "preview_session_digest_backfill",
+    "render_portrait_growth",
     "render_user_portrait", "render_user_portrait_html", "review_knowledge", "search_knowledge",
     "suggest_merges", "tombstoned_but_pending", "unfinished_playbook_replacement",
 })

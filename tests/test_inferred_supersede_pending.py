@@ -3,8 +3,9 @@ different choice) waits for the Owner, in every approval mode.
 
 Over MCP the new decision is a pending proposal with pending_supersedes=<old
 id>; no supersedes edge is written and the reviewed decision stays in use
-until the Owner approves the replacement. Local writes keep the automatic
-decision-thread edge.
+until the Owner approves the replacement. A local write that infers the
+replacement waits the same way; a local write that names its target in
+``supersedes`` keeps the immediate decision-thread edge.
 """
 
 from __future__ import annotations
@@ -69,9 +70,19 @@ def test_mcp_inferred_replacement_is_a_pending_proposal(eng, monkeypatch, tmp_pa
     assert {(e["src"], e["dst"]) for e in _edges(eng)} == {(new["id"], old["id"])}
 
 
-def test_local_inferred_replacement_keeps_the_automatic_edge(eng):
+def test_local_inferred_replacement_waits_for_the_owner_too(eng):
     old = eng.add_decision({"question": "Which test runner does the repo use?", "choice": "unittest"})
     new = eng.add_decision({"question": "Which test runner does the repo use?", "choice": "pytest"})
+    row = _row(eng, new["id"])
+    assert row["tier"] == "staging" and row["approval_reason"] == "inferred_supersede"
+    assert row["pending_supersedes"] == old["id"]
+    assert _edges(eng) == []
+
+
+def test_local_replacement_that_names_its_target_keeps_the_immediate_edge(eng):
+    old = eng.add_decision({"question": "Which test runner does the repo use?", "choice": "unittest"})
+    new = eng.add_decision({"question": "Which runner do the tests go through?", "choice": "pytest",
+                            "supersedes": old["id"]})
     assert _row(eng, new["id"])["tier"] == "verified"
     assert {(e["src"], e["dst"]) for e in _edges(eng)} == {(new["id"], old["id"])}
 

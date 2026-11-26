@@ -4381,6 +4381,37 @@ def _run_doctor_cli(args: list[str]) -> int:
     return run_doctor(fix=fix, days=days)
 
 
+def _with_setup_hook_args(func):
+    """``engram setup --hook-args``: take the flag out, write hooks as command + args.
+
+    Both setup routes then see only the arguments they know. ``sys.argv`` is
+    put back when the command returns.
+    """
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        argv = sys.argv[1:]
+        if not (argv and argv[0] == "setup" and HOOK_ARGS_FLAG in argv):
+            return func(*args, **kwargs)
+        refusal = hook_args_refusal()
+        if refusal:
+            print(f"engram setup: {refusal}", file=sys.stderr)
+            sys.exit(2)
+        if not _hook_shell_is_git_bash():
+            print(f"engram setup: {_hook_args_notice()}", file=sys.stderr)
+        original = sys.argv
+        sys.argv = [original[0]] + [arg for arg in argv if arg != HOOK_ARGS_FLAG]
+        try:
+            with forced_exec_hooks():
+                return func(*args, **kwargs)
+        finally:
+            sys.argv = original
+
+    return wrapper
+
+
+@_with_setup_hook_args
 @_in_cli_origin
 def main() -> None:
     """CLI entry: setup / doctor / repair-encoding / telemetry / governance."""
@@ -4390,23 +4421,6 @@ def main() -> None:
         from piia_engram.replay_row_repair import run_cli
 
         sys.exit(run_cli(args[1:]))
-    # ``engram setup --hook-args``: taken out here, so both setup routes see
-    # the arguments they know and write hooks as command + args.
-    if args and args[0] == "setup" and HOOK_ARGS_FLAG in args:
-        args = [arg for arg in args if arg != HOOK_ARGS_FLAG]
-        refusal = hook_args_refusal()
-        if refusal:
-            print(f"engram setup: {refusal}", file=sys.stderr)
-            sys.exit(2)
-        if not _hook_shell_is_git_bash():
-            print(f"engram setup: {_hook_args_notice()}", file=sys.stderr)
-        with forced_exec_hooks():
-            return _dispatch_cli(args)
-    return _dispatch_cli(args)
-
-
-def _dispatch_cli(args: list[str]) -> None:
-    """Run one ``engram`` command line (``args`` without the program name)."""
     # Scriptable setup must dispatch before notices, cache writes or pings.
     agent_options = {"--non-interactive", "--apply", "--clients", "--lang", "--json", "--help", "-h"}
     if args and args[0] == "setup" and any(
