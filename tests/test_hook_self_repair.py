@@ -125,13 +125,24 @@ class TestProblemCheck:
         assert W.claude_hook_problems(windows=False) == []
         assert path.read_bytes() == before  # read-only
 
-    def test_healthy_forms_are_not_reported(self, claude_config):
-        _write(claude_config, {"hooks": {"Stop": [{"hooks": [
-            {"type": "command", "command": RUNNABLE},
-            {"type": "command", "command": WIN_PY, "args": ["-m", STOP]},
-            {"type": "command", "command": f'"{WIN_PY}" -m {STOP}'},
-        ]}]}})
+    #: A bare forward-slash path, command + args, and a quoted path. The last
+    #: one starts only through Git Bash, so what is reported depends on whether
+    #: one is found: the tests say which, instead of asking the machine.
+    HEALTHY_WITH_GIT_BASH = {"hooks": {"Stop": [{"hooks": [
+        {"type": "command", "command": RUNNABLE},
+        {"type": "command", "command": WIN_PY, "args": ["-m", STOP]},
+        {"type": "command", "command": f'"{WIN_PY}" -m {STOP}'},
+    ]}]}}
+
+    def test_healthy_forms_are_not_reported(self, claude_config, monkeypatch):
+        monkeypatch.setattr(W, "_git_bash_found", lambda: True)
+        _write(claude_config, self.HEALTHY_WITH_GIT_BASH)
         assert W.claude_hook_problems(windows=True) == []
+
+    def test_a_quoted_path_is_reported_where_no_git_bash_is_found(self, claude_config, monkeypatch):
+        monkeypatch.setattr(W, "_git_bash_found", lambda: False)
+        _write(claude_config, self.HEALTHY_WITH_GIT_BASH)
+        assert W.claude_hook_problems(windows=True) == ["Stop"]
 
     @pytest.mark.parametrize("content", ["{not json", "[]", '{"hooks": 3}', ""])
     def test_unreadable_settings_report_nothing(self, claude_config, content):
