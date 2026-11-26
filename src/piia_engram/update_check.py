@@ -59,8 +59,12 @@ _CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 # Hard cap on the network call so the CLI never visibly stalls.
 _NETWORK_TIMEOUT_SECONDS = 1.5
 
-# Env markers that mean "automation / CI" — skip the reminder there.
-_CI_ENV_MARKERS = ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILD_NUMBER", "TF_BUILD")
+# Env markers that mean "automation / CI" — skip the reminder there. A superset of
+# the daily ping's list (usage_ping._CI_VARS), so both are off in the same places.
+_CI_ENV_MARKERS = ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILD_NUMBER", "TF_BUILD",
+                   "BUILDKITE", "JENKINS_URL", "CIRCLECI", "TEAMCITY_VERSION")
+# Larger answers than this are treated as a failed check.
+_MAX_RESPONSE_BYTES = 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +110,9 @@ def is_disabled() -> bool:
 
     Disabled when:
     * ``ENGRAM_NO_UPDATE_CHECK`` is set to a truthy value, or
-    * a CI / automation env marker is present.
+    * a CI / automation env marker is present, or
+    * the process runs in a container or with ``ENGRAM_EPHEMERAL`` set (the
+      same test the daily ping uses).
 
     (The non-TTY check lives in :func:`maybe_print_update_notice` so that
     :func:`check_for_update` itself stays usable from tests and from
@@ -118,6 +124,13 @@ def is_disabled() -> bool:
     for marker in _CI_ENV_MARKERS:
         if os.environ.get(marker, "").strip():
             return True
+    try:
+        from . import usage_ping
+
+        if usage_ping._in_container() or usage_ping._flag_on("ENGRAM_EPHEMERAL"):
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -210,7 +223,10 @@ def _fetch_latest_from_pypi() -> Optional[str]:
         with urlopen(req, timeout=_NETWORK_TIMEOUT_SECONDS) as resp:
             if not (200 <= resp.status < 300):
                 return None
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read(_MAX_RESPONSE_BYTES + 1)
+            if len(raw) > _MAX_RESPONSE_BYTES:
+                return None
+            data = json.loads(raw.decode("utf-8"))
         version = str(data.get("info", {}).get("version", "")).strip()
         return version or None
     except Exception:
@@ -328,16 +344,15 @@ def _clean_version(value: object) -> str:
 
 
 def _quiet_environment() -> bool:
-    """Where neither the brief line nor the background refresh runs: the
-    reminder's own switches (ENGRAM_NO_UPDATE_CHECK, CI markers), containers,
-    ENGRAM_EPHEMERAL and tests."""
+    """Where neither the brief line nor the background refresh runs: wherever
+    the reminder is disabled (ENGRAM_NO_UPDATE_CHECK, CI markers, containers,
+    ENGRAM_EPHEMERAL) and in tests."""
     if is_disabled():
         return True
     try:
         from . import usage_ping
 
-        return bool(usage_ping._in_container() or usage_ping._flag_on("ENGRAM_EPHEMERAL")
-                    or usage_ping._in_test())
+        return bool(usage_ping._in_test())
     except Exception:
         return True
 

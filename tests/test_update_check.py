@@ -28,9 +28,13 @@ def _isolated_root(tmp_path, monkeypatch):
 @pytest.fixture
 def _enabled_env(monkeypatch):
     """Clear every gate so the reminder is allowed to run."""
+    from piia_engram import usage_ping
+
     monkeypatch.delenv("ENGRAM_NO_UPDATE_CHECK", raising=False)
-    for marker in uc._CI_ENV_MARKERS:
+    for marker in (*uc._CI_ENV_MARKERS, "ENGRAM_EPHEMERAL", "KUBERNETES_SERVICE_HOST"):
         monkeypatch.delenv(marker, raising=False)
+    # The same on a laptop, in a CI runner and inside a container image.
+    monkeypatch.setattr(usage_ping, "_in_container", lambda: False)
 
 
 class _FakeTTY(io.StringIO):

@@ -375,3 +375,53 @@ def test_the_refresh_is_not_on_the_server_start_path():
     assert "_start_update_refresh()" in track_body
     main_body = source.split("\ndef main(", 1)[1].split("\ndef ", 1)[0]
     assert "_start_update_refresh" not in main_body and "update_check" not in main_body
+
+
+# --- the documented off conditions hold for every caller ---------------------------------
+
+
+def test_the_check_knows_every_ci_marker_the_ping_knows():
+    assert set(up._CI_VARS) <= set(uc._CI_ENV_MARKERS)
+    assert {"TEAMCITY_VERSION", "JENKINS_URL", "BUILD_NUMBER"} <= set(uc._CI_ENV_MARKERS)
+
+
+@pytest.mark.parametrize("var", sorted({*up._CI_VARS, *uc._CI_ENV_MARKERS, "ENGRAM_EPHEMERAL"}))
+def test_ci_markers_and_ephemeral_disable_the_check_everywhere(notice, pypi, monkeypatch, var):
+    assert uc.is_disabled() is False  # control: the cleared environment is not "disabled"
+    monkeypatch.setenv(var, "1")
+    assert uc.is_disabled() is True
+    _cache(notice, "9.9.9", age=30 * 3600)
+    assert uc.cached_update_notice() is None
+    assert uc.check_for_update("4.29.0") is None
+    assert _run_refresh() is None
+    assert pypi.requests == []
+
+
+def test_a_container_disables_the_check_everywhere(notice, pypi, monkeypatch):
+    monkeypatch.setattr(up, "_in_container", lambda: True)
+    assert uc.is_disabled() is True
+    _cache(notice, "9.9.9", age=30 * 3600)
+    assert uc.check_for_update("4.29.0") is None and uc.cached_update_notice() is None
+
+    class Tty:
+        def isatty(self):
+            return True
+
+        def write(self, text):
+            raise AssertionError("nothing may be printed in a container")
+
+    assert uc.maybe_print_update_notice("4.29.0", stream=Tty()) is None
+    assert _run_refresh() is None and pypi.requests == []
+    # A caller that asks on purpose (force=True) still gets an answer; `engram doctor`
+    # itself looks at is_disabled() first and reports the check as disabled.
+    assert uc.check_for_update("4.29.0", force=True) == "9.9.9"
+    assert len(pypi.requests) == 1
+
+
+def test_an_oversized_answer_is_treated_as_a_failure(notice, pypi):
+    pypi.body = json.dumps({"info": {"version": "9.9.9"}, "pad": "x" * (1024 * 1024)})
+    assert uc._fetch_latest_from_pypi() is None
+    assert _run_refresh() is not None
+    assert uc.cached_update_notice() is None
+    pypi.body = json.dumps({"info": {"version": "9.9.9"}, "pad": "x" * (512 * 1024)})  # control
+    assert uc._fetch_latest_from_pypi() == "9.9.9"
