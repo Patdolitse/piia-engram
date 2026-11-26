@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Added
 
-- The hook queue is now processed automatically, so `engram hooks drain` no longer has to be run by hand: the Engram MCP server works through it in the background while it runs, and the watcher does so after each scan. A pass handles a limited number of events, writes only session records, digests and pending proposals in the review queue, and approves nothing. `ENGRAM_SPOOL_AUTODRAIN=0` turns it off, and `engram doctor` shows whether it is on and what the last automatic pass did. See [Resume and capture diagnostics](docs/resume-capture.md).
+- The hook queue is now processed automatically, so `engram hooks drain` no longer has to be run by hand: the Engram MCP server works through it in the background while it runs, and the watcher does so after each scan. A pass handles a limited number of events, steps over events that keep failing so they cannot hold up the rest, lets a waiting tool call go first between two events, writes only session records, digests and pending proposals in the review queue, and approves nothing. `ENGRAM_SPOOL_AUTODRAIN=0` turns it off, and `engram doctor` shows what the last automatic pass did. See [Resume and capture diagnostics](docs/resume-capture.md).
 
 - `engram lineage unlink <replacing-id> <replaced-id>` undoes a wrong decision replacement: it removes the relation and brings the replaced decision back into use. It previews by default, shows both decisions, applies with `--commit --yes`, and is a local owner command that AI clients cannot call.
 
@@ -29,6 +29,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - A decision replacement is no longer left half applied: when the step that retires the replaced decision fails, the relation is taken back, and `engram conflicts resolve --action supersede` writes the relation only after the other decision is retired. Before, such a failure could leave an active decision hidden from recall.
 
 - On Windows, the `engram doctor` message for a Claude Code hook that cannot start without Git Bash now lists installing Git for Windows among the ways out.
+
+- A project file that is not valid UTF-8 no longer makes every queued Claude Code Stop event of that project fail when the queue is processed; the project snapshot now reads such files leniently.
 
 - On Windows, Claude Code hooks are now registered as `command` + `args`, so Claude Code starts them without a shell. A hook written as one command string did not start when Git Bash was not installed and the Python path contained a space, because PowerShell cannot run the quoted form. This needs Claude Code 2.1.139 or newer: setup asks the `claude` on PATH for its version and keeps the string form when it is older or not found. `engram doctor` points out an Engram hook still written as one string, and `doctor --fix` converts it in place.
 

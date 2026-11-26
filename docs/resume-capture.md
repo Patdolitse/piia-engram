@@ -100,21 +100,34 @@ your machine:
   sooner while a backlog is being worked off;
 - the watcher (`engram watcher`), after each scan, at most once a minute.
 
-One automatic pass handles at most 50 events or runs for 20 seconds, oldest first, so
-a large backlog is cleared over several passes and never holds the store. It writes
-what `engram hooks drain` writes: session records, digests and pending proposals in
-the review queue. It is never recorded as an AI client's write, and it approves
-nothing: every proposal still waits for your `engram review`, in every approval mode.
-A read-only server starts no queue thread. When the queue key of a protected queue is
-not available to the server, it stops trying for that process and leaves the events
-for a process that has the key. After a pass in which every event failed, the next
-one waits longer (doubling, up to two hours).
+One automatic pass takes at most 50 events out of the queue or runs for 20 seconds,
+oldest first, so a large backlog is cleared over several passes. In the MCP server each
+event is processed under the server's write lock; between two events the queue thread
+lets a waiting tool call go first, so a tool call waits for the one event being
+processed (usually well under a second, longer for a large transcript), not for the
+pass. A pass writes what `engram hooks drain` writes: session records, digests and
+pending proposals in the review queue. It is never recorded as an AI client's write,
+and it approves nothing: every proposal still waits for your `engram review`, in every
+approval mode. A read-only server starts no queue thread.
+
+An event that fails stays in the queue and does not count toward the 50. The process
+sets it aside for 30 minutes and goes on to the events behind it, so events that keep
+failing cannot hold up the rest; `engram hooks drain` always tries every event. After a
+pass in which nothing got through, the next one waits longer (doubling, up to two
+hours). When the key of a protected queue is not available to the process (no
+`ENGRAM_SECRET` in its environment, or no salt file), it leaves the events untouched
+and looks again after two hours.
 
 Set `ENGRAM_SPOOL_AUTODRAIN=0` to turn automatic processing off: in the `env` of the
 Engram MCP entry for the server, and in the watcher's environment for the watcher.
-Then only `engram hooks drain` processes the queue. `engram doctor` shows whether it
-is on in the environment doctor runs in and what the last automatic pass did (time,
-which process, counts).
+The queue is then processed by `engram hooks drain`, and by the watcher's opt-in
+writeback (`ENGRAM_WATCHER_WRITEBACK=1`) if you enabled it: that older path drains the
+queue whenever it stages items and does not read this switch.
+
+`engram doctor` cannot see the server's or the watcher's environment. It says whether
+the switch is set in the terminal doctor runs in, and reports the last automatic pass
+that was recorded: when, by which process, the counts, or that it stopped because the
+queue key was not available to that process.
 
 Doctor, ordinary reads and MCP tool calls themselves do not drain. A diagnostic or
 dry-run does not create an absent store, acquire its queue lock, or consume events.

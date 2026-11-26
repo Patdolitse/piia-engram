@@ -45,9 +45,13 @@ engram hooks drain --json
 - Engram MCP server 的后台线程：启动 15 秒后处理第一轮（`ENGRAM_SPOOL_AUTODRAIN_DELAY_S` 可调整），之后每十分钟一轮，清理积压期间会更快；
 - watcher（`engram watcher`）：每次扫描后处理一轮，最多每分钟一次。
 
-一轮自动处理最多 50 条事件或 20 秒，按最旧优先，所以大量积压会分几轮清完，不会长时间占用存储。它写入的内容与 `engram hooks drain` 相同：会话记录、摘要和待审区里的待审提案。它不会被记为 AI 客户端的写入，也不批准任何内容：每条提案仍要等你用 `engram review` 审核，任何审批模式下都是如此。只读方式打开的 server 不启动队列线程。受保护队列的密钥对 server 不可用时，该进程不再重试，事件留给持有密钥的进程。某一轮全部失败后，下一轮会等更久（逐次加倍，最长两小时）。
+一轮自动处理最多从队列里处理掉 50 条事件，或运行 20 秒，按最旧优先，所以大量积压会分几轮清完。在 MCP server 里，每条事件在 server 的写锁内处理；两条事件之间，队列线程会让正在等待的工具调用先执行，所以一次工具调用最多等当前这一条事件（通常远不到一秒，transcript 很大时会更久），而不是等整轮。一轮写入的内容与 `engram hooks drain` 相同：会话记录、摘要和待审区里的待审提案。它不会被记为 AI 客户端的写入，也不批准任何内容：每条提案仍要等你用 `engram review` 审核，任何审批模式下都是如此。只读方式打开的 server 不启动队列线程。
 
-设置 `ENGRAM_SPOOL_AUTODRAIN=0` 可关闭自动处理：server 需要写在 Engram MCP 条目的 `env` 里，watcher 需要写在 watcher 的运行环境里。关闭后只有 `engram hooks drain` 处理队列。`engram doctor` 会显示在 doctor 所在环境里自动处理是否开启，以及最近一轮自动处理的情况（时间、哪个进程、数量）。
+处理失败的事件留在队列里，不计入这 50 条。该进程会把它搁置 30 分钟，先处理排在它后面的事件，所以持续失败的事件挡不住其它事件；`engram hooks drain` 则每次都会尝试所有事件。某一轮一条都没处理成时，下一轮会等更久（逐次加倍，最长两小时）。受保护队列的密钥对该进程不可用时（它的环境里没有 `ENGRAM_SECRET`，或没有 salt 文件），事件原样保留，两小时后再看。
+
+设置 `ENGRAM_SPOOL_AUTODRAIN=0` 可关闭自动处理：server 需要写在 Engram MCP 条目的 `env` 里，watcher 需要写在 watcher 的运行环境里。关闭后，队列由 `engram hooks drain` 处理；如果你启用了 watcher 的回写（`ENGRAM_WATCHER_WRITEBACK=1`），这条更早就有的路径在写入待审条目时也会处理队列，它不读这个开关。
+
+`engram doctor` 看不到 server 或 watcher 的环境。它会说明在 doctor 所在的终端里这个开关是否被设置，并报告记录下来的最近一轮自动处理：时间、哪个进程、数量，或者因为该进程拿不到队列密钥而停止。
 
 doctor、普通读取和 MCP 工具调用本身不处理队列。诊断和 dry-run 不创建不存在的存储、不取得队列锁、不消费事件。
 

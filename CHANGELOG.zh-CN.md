@@ -10,7 +10,7 @@
 
 ### 新增
 
-- hook 队列现在会自动处理，不再需要手动运行 `engram hooks drain`：Engram MCP server 运行期间在后台处理，watcher 在每次扫描后处理。每轮处理的事件数量有上限，只写入会话记录、摘要和待审区里的待审提案，不批准任何内容。`ENGRAM_SPOOL_AUTODRAIN=0` 可关闭；`engram doctor` 会显示它是否开启以及最近一轮自动处理的情况。详见[接续与捕获诊断](docs/resume-capture.zh-CN.md)。
+- hook 队列现在会自动处理，不再需要手动运行 `engram hooks drain`：Engram MCP server 运行期间在后台处理，watcher 在每次扫描后处理。每轮处理的事件数量有上限，会先越过持续失败的事件以免它们挡住其它事件，两条事件之间让等待中的工具调用先执行，只写入会话记录、摘要和待审区里的待审提案，不批准任何内容。`ENGRAM_SPOOL_AUTODRAIN=0` 可关闭；`engram doctor` 会显示最近一轮自动处理的情况。详见[接续与捕获诊断](docs/resume-capture.zh-CN.md)。
 
 - `engram lineage unlink <取代者id> <被取代id>` 可以撤销一条错误的决策取代关系：删除这条关系，并让被取代的决策恢复使用。默认只预览并显示两条决策，加 `--commit --yes` 才执行；这是本地 Owner 命令，AI 客户端不能调用。
 
@@ -29,6 +29,8 @@
 - 决策取代不再停在一半：让被取代决策退役的那一步失败时，取代关系会被撤回；`engram conflicts resolve --action supersede` 也改为先让另一条决策退役，再写入取代关系。此前这类失败可能留下一条仍在用、却不出现在召回里的决策。
 
 - 在 Windows 上，`engram doctor` 对“没有 Git Bash 就无法启动”的 Claude Code hook 给出的提示，现在把安装 Git for Windows 也列为解决办法之一。
+
+- 项目里有不是合法 UTF-8 的文件时，处理队列不再让该项目排队的每一条 Claude Code Stop 事件都失败；项目快照现在会宽容地读取这类文件。
 
 - 在 Windows 上，Claude Code hook 现在以 `command` + `args` 形式登记，由 Claude Code 直接启动，不经过 shell。此前写成一条命令字符串的 hook，在没有安装 Git Bash 且 Python 路径含空格时无法启动，因为 PowerShell 不能执行带引号的写法。这需要 Claude Code 2.1.139 或更新版本：setup 会向 PATH 上的 `claude` 查询版本，版本较旧或找不到时保留字符串写法。`engram doctor` 会指出仍写成一条字符串的 Engram hook，`doctor --fix` 原地转换。
 

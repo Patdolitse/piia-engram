@@ -205,6 +205,9 @@ staged 条目始终在你掌控之中：
   会删除这条关系，并让被取代的决策恢复使用。默认只预览，并显示两条决策；加 `--commit --yes`
   才执行。它只恢复由这条关系退役的决策（状态为被该决策 `superseded`，或由针对这一对的
   `engram conflicts resolve --action supersede` 退役）；你自己标为 outdated 的决策保持 outdated。
+  如果还有别的决策也被记录为取代它，命令会列出来：那条关系也删除之前，它仍然不出现在召回里。
+  被取代的决策已被留存策略移入归档时，会从归档里恢复；归档里那条如果是你用
+  `engram conflicts resolve` 退役的，需要先运行 `engram retention restore <id>`，命令会这样提示。
   决策原有的钉选不会自动恢复（用 `engram pin <id>`），单条决策自身的修订历史不能解除，
   AI 客户端不能调用这个命令。`engram doctor` 发现一条仍在用、却被记录为已被取代的决策时，
   会带上两条标题打印这个预览命令。想知道这条关系是怎么来的，可在存储目录的 `audit.log`

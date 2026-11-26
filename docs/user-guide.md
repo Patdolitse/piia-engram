@@ -267,7 +267,12 @@ You stay in control of staged items at any time:
   shows both decisions; `--commit --yes` applies it. It only restores a
   decision that this relation retired (status `superseded` by that decision, or
   retired by `engram conflicts resolve --action supersede` for that pair); a
-  decision you marked outdated yourself stays outdated. A pin the decision had
+  decision you marked outdated yourself stays outdated. If another decision is
+  also recorded as replacing it, the command names it: the decision stays hidden
+  until that relation is removed too. A replaced decision that retention has
+  moved to the archive comes back from there; one in the archive that you
+  retired with `engram conflicts resolve` needs `engram retention restore <id>`
+  first, as the command says. A pin the decision had
   is not put back (`engram pin <id>` does that), revision history of a single
   decision cannot be unlinked, and the command is not available to AI clients.
   `engram doctor` prints this preview command, with both titles, when it finds
