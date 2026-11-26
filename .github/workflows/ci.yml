@@ -34,7 +34,7 @@ jobs:
         with:
           node-version: 22
       - name: Worker tests
-        run: node worker/test/smoke.mjs && node worker/test/usage.mjs && node worker/test/session.mjs
+        run: node worker/test/smoke.mjs && node worker/test/usage.mjs && node worker/test/session.mjs && node worker/test/counts.mjs
       - name: Run full suite with JUnit output
         env:
           ENGRAM_TEST: "1"

@@ -10,7 +10,7 @@ const FIELDS = ['schema', 'install_id', 'version', 'os', 'python', 'client', 'da
 const OS_VALUES = new Set(['windows', 'macos', 'linux', 'other']);
 const CLIENTS = new Set(['claude_code', 'claude_desktop', 'codex', 'cursor', 'windsurf', 'vscode',
   'cline', 'zed', 'gemini', 'opencode', 'cli', 'other', 'unknown']);
-const RETENTION_DAYS = 400;
+const RETENTION_DAYS = 395; // under 13 months
 
 export function dayOffset(day, delta) {
   const [y, m, d] = day.split('-').map(Number);
@@ -326,7 +326,7 @@ border-radius:6px;white-space:nowrap;opacity:0;transition:opacity .08s;z-index:1
 ${tile('今日活跃安装', fmt(stats.dau), '今天（UTC）发过信号的安装', 'hero')}
 ${tile('近 7 天活跃', fmt(stats.wau))}
 ${tile('近 30 天活跃', fmt(stats.mau))}
-${tile('近 400 天安装', fmt(stats.total), '数据只保留 400 天')}
+${tile('近 395 天安装', fmt(stats.total), '数据只保留 395 天')}
 ${tile('PyPI 近 30 天下载', stats.pypi_30d == null ? '—' : fmt(stats.pypi_30d), '不等于安装数')}
 ${tile('月留存', rate === null ? '—' : `${rate}%`, `上月 ${fmt(retention.last_month)} 个，本月仍在 ${fmt(retention.kept)} 个`, 'wide', meter)}
 </div>

@@ -176,7 +176,7 @@ const statsFor = async (days, fetchPypi) => {
 {
   const { stats } = await statsFor(30, async () => ({ daily: [{ date: dayOffset(today, -1), downloads: 9000 }], recent: {} }));
   const html = renderUsage(stats);
-  check('page says installs seen in the last 400 days', html.includes('近 400 天安装') && !html.includes('累计'));
+  check('page says installs seen in the last 395 days', html.includes('近 395 天安装') && !html.includes('累计'));
   check('page notes the partial current month', html.includes('月初'));
   check('page says active installs', html.includes('活跃安装'));
   check('page escapes values', html.includes('4.22.0&lt;b&gt;') && !html.includes('4.22.0<b>'));
@@ -289,7 +289,7 @@ const statsFor = async (days, fetchPypi) => {
   const db = mockDB();
   await purgeOldPings({ DB: db }, '2026-10-06');
   const del = db.calls.find((c) => /DELETE FROM pings WHERE day < \?/.test(c.sql));
-  check('retention deletes pings older than 400 days', !!del && del.vals[0] === dayOffset('2026-10-06', -400));
+  check('retention deletes pings older than 395 days', !!del && del.vals[0] === dayOffset('2026-10-06', -395));
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

@@ -3,6 +3,7 @@
  *
  * POST /v1/events  — 接收匿名使用数据（公开，无需认证）
  * POST /v1/ping    — 每日匿名使用信号（公开，无需认证）
+ * POST /v1/counts  — 每日匿名使用计数（公开，无需认证；COUNTS_MODE=off 时返回 410）
  * GET  /           — 使用统计首页（活跃安装，?days=7|30|90，密码保护）
  * GET  /usage      — 同首页（密码保护）
  * GET  /v1/usage   — 使用统计 JSON（?days=7|30|90，需登录）
@@ -12,6 +13,7 @@
  */
 
 import { handlePing, getUsageStats, renderUsage, purgeOldPings } from './usage.js';
+import { handleCounts, purgeOldCounts } from './counts.js';
 import { sessionValid, deleteSession, attemptLogin, sessionCookie, purgeAuth, SESSION_MAX_AGE } from './session.js';
 
 const CORS_HEADERS = {
@@ -1326,6 +1328,9 @@ export default {
     if (url.pathname === '/v1/ping' && request.method === 'POST') {
       return handlePing(request, env);
     }
+    if (url.pathname === '/v1/counts' && request.method === 'POST') {
+      return handleCounts(request, env);
+    }
     if (url.pathname === '/v1/health') {
       return new Response(JSON.stringify({ status: 'ok', service: 'engram-telemetry' }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -1415,6 +1420,6 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(Promise.all([purgeOldPings(env), purgeAuth(env)]));
+    ctx.waitUntil(Promise.all([purgeOldPings(env), purgeOldCounts(env), purgeAuth(env)]));
   },
 };
