@@ -17,13 +17,13 @@ Engram sends anonymous usage counts once a day by default so we can see which to
 
 - **What it sends:** which of Engram's tools were used, each with a count bucket (`0`, `1_4`, `5_9`, `10_24`, `25_99`, `100_plus`) rather than an exact number; error categories (six fixed labels) with a count bucket; rough memory-size buckets for lessons, decisions and domains; the Engram version and whether it changed; your OS family; the Python version; the tool tier; a coarse install-age bucket; the date; and an ID that changes every day.
 - **What it leaves out:** the install ID of the daily ping. The daily ID is derived from a random key that never leaves your machine. With few users, a row could still be matched to a ping from the same day by version, OS and Python version, so we do not claim the two can never be linked.
-- **When:** once a UTC day has ended, the next session sends one row for that day. A day without use sends nothing. Counts wait in a `piia-engram` folder under your user config directory, never in your memory store, and are deleted after sending, after seven days, or when you turn telemetry off.
+- **When:** once a UTC day has ended, the next session sends one row for that day. A day without use sends nothing. Counts wait in a `piia-engram` folder under your user config directory, never in your memory store. They are deleted after sending, after seven days, and at once when you run `engram telemetry off` or `engram telemetry remote off`; if you turn telemetry off with an environment variable instead, they are removed the next time the Engram MCP server runs.
 - **Where:** `https://telemetry.piia-engram.com/v1/counts` (`ENGRAM_TELEMETRY_URL` replaces it), in the background; a failed send is skipped silently and never affects a tool.
 
 ## Both signals
 
 - **What they never send:** No lesson / decision / playbook content, no prompts, no file paths, no account or email, no command arguments, no error text, no domain or project names. IP addresses are not stored (as with any web request, your IP is visible to the server in transit).
-- **Turn them off:** `engram telemetry off` (`engram telemetry remote off` also does it), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`. They are off in CI, containers and tests, and stay off if you ever turned the statistics or their remote sending off, including a "no" in an earlier `engram setup`. `ENGRAM_TELEMETRY_REMOTE=0` turns off the counts only. Setup does not ask about telemetry or change existing choices.
+- **Turn them off:** `engram telemetry off` (`engram telemetry remote off` also does it), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`. They are off in CI, containers and tests, and stay off if you ever turned the statistics or their remote sending off, including a "no" in an earlier `engram setup`. `ENGRAM_TELEMETRY_REMOTE=0` turns off the counts only. After an earlier refusal of the statistics, the counts stay off until you run `engram telemetry on` or `engram telemetry remote on` with this version or a later one. Setup does not ask about telemetry or change existing choices.
 - **See them:** `engram telemetry status` shows whether each is on and which setting decided it; `engram telemetry preview` prints the exact payloads.
 - **Retention:** 395 days.
 
@@ -35,7 +35,7 @@ Engram sends anonymous usage counts once a day by default so we can see which to
 
 ## Update check
 
-The `engram` command and the MCP server ask PyPI for the latest version at most once a day (the command only in interactive terminals, the server in the background). When a newer release exists, the resume brief ends with a one-line upgrade reminder. The request carries no data about you. `ENGRAM_NO_UPDATE_CHECK=1` turns the check and the reminder off.
+The `engram` command and the MCP server ask PyPI for the latest version at most once a day (the command only in interactive terminals, the server in the background). When a newer release exists, the resume brief ends with a one-line upgrade reminder. The request carries no data about you. `ENGRAM_NO_UPDATE_CHECK=1` turns the check and the reminder off; they do not run in CI, containers or tests. `DO_NOT_TRACK` does not control this check.
 
 See [PRIVACY.md](../PRIVACY.md) for storage and retention details.
 
@@ -58,7 +58,7 @@ Engram 默认每天发送一次匿名使用计数，用于了解哪些工具被�
 
 - **发送内容：** 用了哪些 Engram 工具及其次数分桶（不是精确数字）、错误类别及分桶、记忆规模分桶、版本及是否变化、系统、Python 主次版本、工具层级、安装时长分桶、日期，以及一个每天更换的 ID。
 - **不包含：** 每日信号的安装 ID。每日 ID 由一个只保存在本机的随机密钥派生。用户数量少时，一行计数仍可能凭版本、系统和 Python 版本与同一天的信号对上，因此我们不声称两者无法关联。
-- **时间：** 一个 UTC 日结束后，下一次使用时发送该日的一行；没有使用的日子不发送。待发计数保存在用户配置目录下的 `piia-engram` 文件夹，不在记忆库中；发送后、满七天或关闭遥测时删除。
+- **时间：** 一个 UTC 日结束后，下一次使用时发送该日的一行；没有使用的日子不发送。待发计数保存在用户配置目录下的 `piia-engram` 文件夹，不在记忆库中；发送后或满七天删除，运行 `engram telemetry off` 时立即删除，用环境变量关闭时在 Engram MCP server 下次运行时删除。
 - **去向：** 后台发送至 `https://telemetry.piia-engram.com/v1/counts`（可用 `ENGRAM_TELEMETRY_URL` 替换）；发送失败静默跳过。
 
 ### 两种信号共同的规则
@@ -74,6 +74,6 @@ Engram 默认每天发送一次匿名使用计数，用于了解哪些工具被�
 
 ### 更新检查
 
-`engram` 命令和 MCP server 每天最多向 PyPI 查询一次新版本。有新版本时，续接简报末尾会多一行升级提醒。请求不携带任何关于你的数据。`ENGRAM_NO_UPDATE_CHECK=1` 可关闭检查和提醒。
+`engram` 命令和 MCP server 每天最多向 PyPI 查询一次新版本。有新版本时，续接简报末尾会多一行升级提醒。请求不携带任何关于你的数据。`ENGRAM_NO_UPDATE_CHECK=1` 可关闭检查和提醒；CI、容器和测试环境中不检查。`DO_NOT_TRACK` 不控制这项检查。
 
 存储和保留期详见[隐私说明](../PRIVACY.md)。

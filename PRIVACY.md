@@ -89,7 +89,7 @@ Apart from those, the only exception is the optional `read_web_content` tool, wh
 
 Engram sends one anonymous usage ping a day by default so the project knows how many installs are active. It contains a random install ID (created on your machine, stored in a `piia-engram` folder under your user config directory; `engram telemetry reset-id` makes a new one), the Engram version, OS family, Python major.minor version, the AI client name and the date. No content, prompts or file paths are sent. It never contains account details, command arguments or error text; IP addresses are not stored (the server sees the source IP in transit); pings are kept for 395 days.
 
-- **Off when:** `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests; or if you explicitly turned the statistics or their remote sending off before 4.23.0 (including a "no" in an earlier `engram setup`). From 4.23.0, setup does not ask about telemetry or change either preference, including earlier opt-outs. `engram telemetry on` turns it back on (together with the daily usage counts and the local statistics log).
+- **Off when:** `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests; or if you explicitly turned the statistics or their remote sending off before 4.23.0 (including a "no" in an earlier `engram setup`). From 4.23.0, setup does not ask about telemetry or change either preference, including earlier opt-outs. `engram telemetry on` turns it back on; run with this version or a later one, it also turns on the daily usage counts (see below) and the local statistics log.
 - **Transparent:** `engram telemetry status` shows whether it is on and why; `engram telemetry preview` prints the exact payload.
 - **Endpoint:** `https://telemetry.piia-engram.com/v1/ping`, at most once per UTC day, in the background; a failed send is skipped silently.
 
@@ -103,9 +103,9 @@ Engram 默认每天发送一次匿名使用信号：随机安装 ID、版本、�
 
 ### Update check
 
-The `engram` command checks PyPI for a newer version at most once a day, only in interactive terminals and never in CI; `engram doctor` also checks on each run. The MCP server makes the same check in the background, at most once a day and never while it starts, so that people who only use an AI client hear about new releases too: when a newer release exists, the resume brief ends with one fixed line naming the new and the installed version and the upgrade command. The brief itself and the session-start hooks only read the stored answer and make no request. The request is a plain download of the public package information and carries no data about you. `ENGRAM_NO_UPDATE_CHECK=1` turns the check and the reminder off; neither runs in CI, containers or tests.
+The `engram` command checks PyPI for a newer version at most once a day, only in interactive terminals and never in CI; `engram doctor` also checks on each run. The MCP server makes the same check in the background, at most once a day and never while it starts, so that people who only use an AI client hear about new releases too: when a newer release exists, the resume brief ends with one fixed line naming the new and the installed version and the upgrade command. The brief itself and the session-start hooks only read the stored answer and make no request. The request is a plain download of the public package information and carries no data about you. `ENGRAM_NO_UPDATE_CHECK=1` turns the check and the reminder off; neither runs in CI, containers or tests. `DO_NOT_TRACK` does not control this check, because it sends nothing about you; use `ENGRAM_NO_UPDATE_CHECK=1`.
 
-更新检查（中文）：`engram` 命令与 MCP server 每天最多向 PyPI 查询一次新版本（server 在后台查询，不在启动时）。有新版本时，续接简报末尾会多一行固定格式的升级提醒。请求不携带任何关于你的数据。`ENGRAM_NO_UPDATE_CHECK=1` 可关闭检查和提醒；CI、容器和测试环境中不检查。
+更新检查（中文）：`engram` 命令与 MCP server 每天最多向 PyPI 查询一次新版本（server 在后台查询，不在启动时）。有新版本时，续接简报末尾会多一行固定格式的升级提醒。请求不携带任何关于你的数据。`ENGRAM_NO_UPDATE_CHECK=1` 可关闭检查和提醒；CI、容器和测试环境中不检查。`DO_NOT_TRACK` 不控制这项检查（它不发送任何关于你的数据），请使用 `ENGRAM_NO_UPDATE_CHECK=1`。
 
 ### Daily usage counts (on by default)
 
@@ -144,10 +144,10 @@ The row does not carry the install ID of the daily ping. With few users, a row c
 - Every value is either a fixed label, a bucket, or a number in a fixed format; a row with anything else is not sent, and the server rejects it too
 - A tool name that is not one of Engram's registered tools is counted as `other`
 - `engram telemetry status` shows whether the counts are on and which setting decided it; `engram telemetry preview` shows the exact next row
-- Counts wait in a `piia-engram` folder under your user config directory (`stats-spool/`), never in your memory store, and are deleted after sending, after seven days, or when you turn telemetry off
+- Counts wait in a `piia-engram` folder under your user config directory (`stats-spool/`), never in your memory store. They are deleted after sending, after seven days, and at once when you run `engram telemetry off` or `engram telemetry remote off`; if you turn telemetry off with an environment variable instead, they are removed the next time the Engram MCP server runs
 - The send runs in the background; a failed send is skipped silently and never affects a tool
 
-- **Off when:** exactly when the daily ping is off — `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests — and also with `ENGRAM_TELEMETRY_REMOTE=0`, or if you ever turned the statistics or their remote sending off, whether through a command or a "no" in an earlier `engram setup`.
+- **Off when:** exactly when the daily ping is off — `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests — and also with `ENGRAM_TELEMETRY_REMOTE=0`, or if you ever turned the statistics or their remote sending off, whether through a command or a "no" in an earlier `engram setup`. After such a refusal the counts stay off until you run `engram telemetry on` or `engram telemetry remote on` with this version or a later one; an `on` given to an earlier version turned on the ping only and does not count.
 - **Endpoint:** `https://telemetry.piia-engram.com/v1/counts` (`ENGRAM_TELEMETRY_URL` replaces it). Rows are kept for 395 days.
 
 #### 每日匿名使用计数（中文）
@@ -156,7 +156,7 @@ Engram 默认每天发送一次匿名使用计数：用了哪些工具、大致�
 
 **行为变化：** 此前这些计数只在显式开启后发送，现在默认发送。以前退出过的选择继续有效。
 
-查看：`engram telemetry status`（显示状态与原因）、`engram telemetry preview`（显示实际载荷）；关闭：`engram telemetry off`、`ENGRAM_TELEMETRY=0`、`DO_NOT_TRACK=1` 或 `NO_TELEMETRY=1`。CI、容器和测试环境自动不发。
+查看：`engram telemetry status`（显示状态与原因）、`engram telemetry preview`（显示实际载荷）；关闭：`engram telemetry off`、`ENGRAM_TELEMETRY=0`、`DO_NOT_TRACK=1` 或 `NO_TELEMETRY=1`。CI、容器和测试环境自动不发。运行 `engram telemetry off` 会立即删除待发计数；用环境变量关闭时，待发计数在 Engram MCP server 下次运行时删除。以前拒绝过统计或远程发送的，需用本版本或更新版本运行 `engram telemetry on` 才会开启计数。
 
 ### Optional local statistics log
 
