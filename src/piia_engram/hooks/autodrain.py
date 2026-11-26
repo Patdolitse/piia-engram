@@ -45,6 +45,7 @@ WATCHER_MIN_GAP_SECONDS = 60.0
 _OFF = {"0", "false", "off", "no"}
 _STATUS_KEYS = ("processed", "duplicates", "failed", "quarantined", "pending", "busy", "limited")
 _last_watcher_pass: float | None = None
+_watcher_key_unavailable = False
 
 
 def enabled() -> bool:
@@ -223,11 +224,15 @@ class AutoDrainer:
 
 def watcher_pass(now: Callable[[], float] = time.monotonic) -> dict | None:
     """The watcher's pass after a scan: at most one a minute in this process."""
-    global _last_watcher_pass
-    if not enabled():
+    global _last_watcher_pass, _watcher_key_unavailable
+    if not enabled() or _watcher_key_unavailable:
         return None
     moment = now()
     if _last_watcher_pass is not None and moment - _last_watcher_pass < WATCHER_MIN_GAP_SECONDS:
         return None
     _last_watcher_pass = moment
-    return run_pass(None, source="watcher")
+    report = run_pass(None, source="watcher")
+    if report and report.get("protection_unavailable"):
+        # This process cannot open the protected queue; leave it to one that can.
+        _watcher_key_unavailable = True
+    return report

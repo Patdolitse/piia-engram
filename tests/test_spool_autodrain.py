@@ -391,6 +391,7 @@ class TestWatcher:
     def watcher_env(self, store, monkeypatch):
         monkeypatch.setenv("ENGRAM_DIR", str(store.root))
         monkeypatch.setattr(autodrain, "_last_watcher_pass", None)
+        monkeypatch.setattr(autodrain, "_watcher_key_unavailable", False)
         return store
 
     def test_a_scan_processes_the_queue(self, watcher_env):
@@ -558,6 +559,19 @@ class TestProtectedQueueWithoutItsKey:
         assert report["protection_unavailable"] is True
         assert _pending(protected) == 1  # untouched, for a process that has the key
         assert autodrain.next_wait(report, 600.0) is None
+
+    def test_the_watcher_stops_trying_in_that_process(self, protected, monkeypatch):
+        monkeypatch.setattr(autodrain, "_last_watcher_pass", None)
+        monkeypatch.setattr(autodrain, "_watcher_key_unavailable", False)
+        monkeypatch.delenv("ENGRAM_SECRET")
+        clock = [0.0]
+
+        first = autodrain.watcher_pass(now=lambda: clock[0])
+        clock[0] += 3600
+        second = autodrain.watcher_pass(now=lambda: clock[0])
+
+        assert first["protection_unavailable"] is True and second is None
+        assert _pending(protected) == 1
 
     def test_with_the_secret_the_same_queue_is_processed(self, protected):
         # Negative control.
