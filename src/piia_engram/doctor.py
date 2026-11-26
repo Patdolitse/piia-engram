@@ -1221,9 +1221,8 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
         problems += 1
 
     finding = decision_consistency_check(eng)
-    print(f"    [{finding['status']}] Decision consistency: {finding['detail']}")
+    _print_decision_consistency(finding)
     if finding["hint"]:
-        print("         Local repair: " + finding["hint"])
         problems += 1
 
     # 2.5 v4.21 capacity: pools, archive, interrupted imports (read-only)
@@ -1716,9 +1715,15 @@ def _run_functional_checks(*, fix: bool = False, days: int | None = None) -> int
                     "installed: its interpreter path has a space"
                 )
                 print(
-                    "           Either update Claude Code and make 'claude' available "
-                    "on PATH, or install\n"
-                    "           Python in a path without a space; then run "
+                    "           Any one of these makes it start:\n"
+                    "           - install Git for Windows;\n"
+                    "           - with Claude Code 2.1.139 or newer, run "
+                    "'engram doctor --fix --hook-args'\n"
+                    "             (the desktop app and the VS Code extension show "
+                    "their version on their\n"
+                    "             About page; with 'claude' on PATH a plain "
+                    "'engram doctor --fix' is enough);\n"
+                    "           - install Python in a path without a space, then run "
                     "'engram doctor --fix'."
                 )
 
@@ -1981,8 +1986,41 @@ def _print_resume_budget_check(root: Path) -> None:
         )
 
 
+def _print_decision_consistency(finding: dict) -> None:
+    """The decision consistency finding as doctor prints it: commands only preview."""
+    from piia_engram import setup_wizard as W
+
+    print(f"    [{finding['status']}] Decision consistency: {finding['detail']}")
+    pairs = finding.get("pairs") or []
+    if not pairs:
+        if finding["hint"]:
+            W._safe_print("         " + finding["hint"])
+        return
+    for pair in pairs:
+        W._safe_print(
+            f"         \"{pair['predecessor_title']}\" [{pair['predecessor']}] is hidden from recall:")
+        W._safe_print(
+            f"         \"{pair['successor_title']}\" [{pair['successor']}] is recorded as replacing it.")
+        W._safe_print("         If the two are unrelated, do not apply the replacement.")
+        for command in pair["preview_commands"]:
+            W._safe_print("         Preview (writes nothing): " + command)
+
+
+def _decision_title(row: dict | None) -> str:
+    """A decision's title as one short printable line."""
+    from .write_provenance import clean_client_text
+
+    row = row or {}
+    return clean_client_text(row.get("title") or row.get("question") or "", 80)
+
+
 def decision_consistency_check(eng) -> dict:
-    """Read-only diagnostic for historical active predecessors; never repairs."""
+    """Read-only diagnostic for historical active predecessors; never repairs.
+
+    Each pair names both decisions and gives commands that only preview: the
+    ``supersedes`` edge behind a pair may be wrong, so nothing here can be
+    pasted to retire a decision.
+    """
     from . import recall_policy, version_chain
     from .governance_store import validate_edges
 
@@ -2002,7 +2040,8 @@ def decision_consistency_check(eng) -> dict:
         lineage_rows = eng._lineage_authority_rows("decision")
     except (ValueError, UnicodeError, OSError):
         return {"name": "decision_consistency", "status": "WARN", "predecessors": [],
-                "read_only": True, "detail": "Decision consistency inputs cannot be decoded",
+                "read_only": True, "pairs": [],
+                "detail": "Decision consistency inputs cannot be decoded",
                 "hint": "Check local decision/relation backups before repairing; no files were changed."}
     reviewed = {str(row["id"]) for row in lineage_rows if row.get("id") and recall_policy.is_reviewed_lineage_source(row)}
     index = recall_policy.build_supersede_index(version_chain.honored_edges(edges, reviewed))
@@ -2014,11 +2053,34 @@ def decision_consistency_check(eng) -> dict:
             seen.add(successor)
             successor = index.successor(successor)
         return successor
-    hints = [f"engram conflicts resolve {current_successor(old)} {old} --action supersede --keep {current_successor(old)} --commit --yes" for old in predecessors]
+    by_id = {str(row["id"]): row for row in lineage_rows if row.get("id")}
+    by_id.update({str(row["id"]): row for row in rows if row.get("id")})
+    pairs = []
+    for old in predecessors:
+        new = current_successor(old)
+        pairs.append({
+            "predecessor": old, "predecessor_title": _decision_title(by_id.get(old)),
+            "successor": new, "successor_title": _decision_title(by_id.get(new)),
+            "preview_commands": _decision_pair_previews(new, old),
+        })
+    hints = [
+        f"\"{pair['predecessor_title']}\" [{pair['predecessor']}] is hidden from recall because "
+        f"\"{pair['successor_title']}\" [{pair['successor']}] is recorded as replacing it. "
+        "If the two are unrelated, do not apply the replacement. Preview (writes nothing): "
+        + " | ".join(pair["preview_commands"])
+        for pair in pairs
+    ]
     return {"name": "decision_consistency", "status": "WARN" if predecessors else "PASS",
-            "predecessors": predecessors, "read_only": True,
+            "predecessors": predecessors, "read_only": True, "pairs": pairs,
             "detail": f"{len(predecessors)} active predecessor(s) with reviewed successors",
             "hint": "; ".join(hints)}
+
+
+def _decision_pair_previews(successor: str, predecessor: str) -> list[str]:
+    """Commands for one pair. Without ``--commit --yes`` each only previews."""
+    return [
+        f"engram conflicts resolve {successor} {predecessor} --action supersede --keep {successor}",
+    ]
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@ from piia_engram.storage import NOT_ADDED_STATUSES as _NOT_ADDED
 from piia_engram import claude_code_mcp as _claude_code_mcp
 
 import importlib.util
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import wraps
 import hashlib
 import json
@@ -981,6 +983,52 @@ def _hook_shell_is_git_bash() -> bool:
 #: directly without a shell").
 _EXEC_HOOK_MIN_CLAUDE = (2, 1, 139)
 
+#: ``engram doctor --fix --hook-args`` / ``engram setup --hook-args``: the
+#: owner says that their Claude Code knows ``args``. For the desktop app and
+#: the VS Code extension, which put no ``claude`` on PATH to ask.
+HOOK_ARGS_FLAG = "--hook-args"
+_FORCED_EXEC_HOOKS: ContextVar[bool] = ContextVar("engram_forced_exec_hooks", default=False)
+
+
+@contextmanager
+def forced_exec_hooks():
+    """Inside this block Windows hooks are written as ``command`` + ``args``."""
+    token = _FORCED_EXEC_HOOKS.set(True)
+    try:
+        yield
+    finally:
+        _FORCED_EXEC_HOOKS.reset(token)
+
+
+def hook_args_refusal(windows: bool | None = None) -> str:
+    """Why ``--hook-args`` cannot be honored, or ``""``.
+
+    Only a ``claude`` on PATH that answers with a version older than
+    ``_EXEC_HOOK_MIN_CLAUDE`` refuses: that Claude Code would run the
+    interpreter alone. A version that cannot be told is the owner's word.
+    """
+    if windows is None:
+        windows = _hook_shell_is_git_bash()
+    if not windows:
+        return ""
+    version = _claude_code_mcp.cli_version()
+    if version is None or version >= _EXEC_HOOK_MIN_CLAUDE:
+        return ""
+    needed = ".".join(str(part) for part in _EXEC_HOOK_MIN_CLAUDE)
+    found = ".".join(str(part) for part in version)
+    return (
+        f"{HOOK_ARGS_FLAG} needs Claude Code {needed} or newer; the 'claude' on PATH "
+        f"is {found}. Update Claude Code first. Nothing was written."
+    )
+
+
+def _hook_args_notice() -> str:
+    """What to tell an owner who passes ``--hook-args`` off Windows."""
+    return (
+        f"{HOOK_ARGS_FLAG} applies only on Windows; elsewhere Claude Code runs the "
+        "hook command as written. Ignored."
+    )
+
 
 def _claude_code_exec_hooks(windows: bool | None = None) -> bool:
     """Whether to register hooks as ``command`` + ``args`` (no shell).
@@ -991,13 +1039,16 @@ def _claude_code_exec_hooks(windows: bool | None = None) -> bool:
     program itself. A Claude Code older than ``_EXEC_HOOK_MIN_CLAUDE`` does
     not know ``args`` and would run ``command`` alone, so this is true only
     when the ``claude`` on PATH reports a new enough version; when it is
-    missing or cannot be asked, the string form stays. Other platforms keep
-    the string form, which ``sh -c`` runs as written.
+    missing or cannot be asked, the string form stays unless the owner asked
+    for ``args`` (``forced_exec_hooks``). Other platforms keep the string
+    form, which ``sh -c`` runs as written.
     """
     if windows is None:
         windows = _hook_shell_is_git_bash()
     if not windows:
         return False
+    if _FORCED_EXEC_HOOKS.get():
+        return True
     version = _claude_code_mcp.cli_version()
     return version is not None and version >= _EXEC_HOOK_MIN_CLAUDE
 
@@ -4289,9 +4340,10 @@ def _in_cli_origin(func):
 
 
 def _run_doctor_cli(args: list[str]) -> int:
-    """engram doctor [--fix] [--days N] [--json]; 2 on a usage error."""
+    """engram doctor [--fix [--hook-args]] [--days N] [--json]; 2 on a usage error."""
     fix = "--fix" in args
     as_json = "--json" in args
+    hook_args = HOOK_ARGS_FLAG in args
     days = None
     raw = None
     for index, arg in enumerate(args):
@@ -4310,10 +4362,22 @@ def _run_doctor_cli(args: list[str]) -> int:
     if as_json and fix:
         print("engram doctor: --json only reports; run --fix separately", file=sys.stderr)
         return 2
+    if hook_args and not fix:
+        print(f"engram doctor: {HOOK_ARGS_FLAG} changes hooks; use it with --fix", file=sys.stderr)
+        return 2
     if as_json:
         from piia_engram.doctor import run_doctor_json
 
         return run_doctor_json(days=days)
+    if hook_args:
+        refusal = hook_args_refusal()
+        if refusal:
+            print(f"engram doctor: {refusal}", file=sys.stderr)
+            return 2
+        if not _hook_shell_is_git_bash():
+            print(f"engram doctor: {_hook_args_notice()}", file=sys.stderr)
+        with forced_exec_hooks():
+            return run_doctor(fix=fix, days=days)
     return run_doctor(fix=fix, days=days)
 
 
@@ -4326,6 +4390,23 @@ def main() -> None:
         from piia_engram.replay_row_repair import run_cli
 
         sys.exit(run_cli(args[1:]))
+    # ``engram setup --hook-args``: taken out here, so both setup routes see
+    # the arguments they know and write hooks as command + args.
+    if args and args[0] == "setup" and HOOK_ARGS_FLAG in args:
+        args = [arg for arg in args if arg != HOOK_ARGS_FLAG]
+        refusal = hook_args_refusal()
+        if refusal:
+            print(f"engram setup: {refusal}", file=sys.stderr)
+            sys.exit(2)
+        if not _hook_shell_is_git_bash():
+            print(f"engram setup: {_hook_args_notice()}", file=sys.stderr)
+        with forced_exec_hooks():
+            return _dispatch_cli(args)
+    return _dispatch_cli(args)
+
+
+def _dispatch_cli(args: list[str]) -> None:
+    """Run one ``engram`` command line (``args`` without the program name)."""
     # Scriptable setup must dispatch before notices, cache writes or pings.
     agent_options = {"--non-interactive", "--apply", "--clients", "--lang", "--json", "--help", "-h"}
     if args and args[0] == "setup" and any(
@@ -4532,6 +4613,8 @@ def main() -> None:
             "  engram doctor           Check config health (all AI tools; no writes to the memory\n"
             "                          store; the version check may go online and write its cache)\n"
             "  engram doctor --fix     Auto-repair any issues found\n"
+            "  engram doctor --fix --hook-args  Windows: write Claude Code hooks as command + args\n"
+            "                          (needs Claude Code 2.1.139+; 'engram setup --hook-args' too)\n"
             "  engram doctor --days N  Look back N days (1-3650, default 14) for client calls\n"
             "  engram doctor --json    Connections + hook backlog, as JSON (read-only)\n"
             "  engram migrate-project <project> [--apply --yes] [--prefer nested|top-level]\n"
