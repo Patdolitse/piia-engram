@@ -6,7 +6,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.29.0] - 2026-11-26
 
 ### Added
 
@@ -49,6 +49,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - On Windows, `engram doctor` no longer reports "hook does not name the data directory" when `ENGRAM_DIR` is set for the account or the machine and points at the data directory, because hooks inherit it. A directory set only in the MCP entry is still reported.
 
 - On Windows, when a hook has to be written as one command string (no `claude` on PATH, or a Claude Code older than 2.1.139) and the Python path contains a space, the hook now uses the 8.3 short path, which Git Bash, PowerShell and cmd.exe all start; the quoted form did not start without Git Bash. Where the volume has no short names the quoted form stays, and `engram doctor` reports that this hook cannot start without Git Bash and what to do. `doctor --fix` rewrites an existing quoted hook when a short path exists.
+
+### Release Evidence
+
+See the [release evidence declarations](release-evidence/README.md) for the checks required before publication.
 
 ## [4.28.0] - 2026-11-25
 
