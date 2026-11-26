@@ -153,6 +153,149 @@ class KnowledgeOpsMixin:
             return rows
         self._update_entries(self._knowledge_dir / "decisions.json", "decision", retire)
 
+    # -- owner repair: undo a wrong ``supersedes`` edge between two decisions --
+
+    def _lineage_unlink_plan(self, successor_id: str, predecessor_id: str) -> dict:
+        """What ``unlink_decision_lineage`` would do; reads only."""
+        from .governance_store import RelationStore, ResolutionStore, conflict_pair_key
+
+        def title(row: dict | None) -> str:
+            row = row or {}
+            return _write_provenance.clean_client_text(row.get("title") or row.get("question") or "", 80)
+
+        def choice(row: dict | None) -> str:
+            return _write_provenance.clean_client_text((row or {}).get("choice") or "", 80)
+
+        plan: dict[str, Any] = {
+            "schema": 1, "action": "lineage_unlink",
+            "successor": successor_id, "predecessor": predecessor_id, "changed": False,
+        }
+        edge = {"src": successor_id, "rel": "supersedes", "dst": predecessor_id}
+        if not successor_id or not predecessor_id or edge not in RelationStore(self.root).all_edges():
+            return {**plan, "error": "edge_not_found",
+                    "message": "No 'supersedes' relation runs from the first id to the second."}
+        raw = _read_json(self._knowledge_dir / "decisions.json")
+        rows = {str(row.get("id")): row for row in (raw if isinstance(raw, list) else [])
+                if isinstance(row, dict) and row.get("id")}
+        old, new = rows.get(predecessor_id), rows.get(successor_id)
+        archived = None if old is not None else self._archive_current_rows("decision").get(predecessor_id)
+        if any((row or {}).get("snapshot_of") for row in (old, new, archived)):
+            return {**plan, "error": "version_snapshot",
+                    "message": "This relation is the revision history of one decision and stays."}
+        if old is None:
+            return {**plan, "error": "predecessor_archived",
+                    "message": "The replaced decision is no longer in the active file; nothing was changed."}
+        status = str((old or {}).get("status") or ("active" if old else ""))
+        record = ResolutionStore(self.root).all_records().get(
+            conflict_pair_key(successor_id, predecessor_id)) or {}
+        restore, reason = False, ""
+        if status == "superseded":
+            restore = str(old.get("superseded_by") or "") == successor_id
+            reason = "" if restore else "superseded_by_another"
+        elif status == "outdated":
+            restore = record.get("action") == "supersede" and record.get("keep") == successor_id
+            reason = "" if restore else "outdated_by_owner"
+        elif status not in {"active", "current"}:
+            reason = "status_kept"
+        plan.update(
+            edge=True, predecessor_status=status, restore=restore, reason=reason,
+            predecessor_title=title(old), predecessor_choice=choice(old),
+            successor_title=title(new), successor_choice=choice(new),
+            was_pinned=self._was_unpinned_by(predecessor_id, successor_id),
+        )
+        return plan
+
+    def _was_unpinned_by(self, old_id: str, new_id: str) -> bool:
+        """Whether the audit log says ``old_id`` lost its pin when ``new_id`` replaced it."""
+        for name in ("audit.log.1", "audit.log"):
+            try:
+                with open(self.root / name, encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        if "pin/auto_unpin" not in line or old_id not in line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except ValueError:
+                            continue
+                        if entry.get("id") == old_id and entry.get("by") in ("", None, new_id):
+                            return True
+            except OSError:
+                continue
+        return False
+
+    def unlink_decision_lineage(
+        self, successor_id: str, predecessor_id: str, *, dry_run: bool = True, note: str = "",
+    ) -> dict:
+        """Owner repair: remove a wrong ``successor supersedes predecessor`` edge.
+
+        The predecessor comes back as an active decision when this relation is
+        what retired it: its status is ``superseded`` by this successor, or it
+        is ``outdated`` and ``engram conflicts resolve --action supersede``
+        recorded this pair. Any other status stays as it is and only the edge
+        goes. A pin the predecessor lost is not put back. The pair is recorded
+        as ``unlinked`` so an import does not bring the edge back.
+
+        Local owner command only: refused for an AI client (MCP origin).
+        ``dry_run`` (the default) reads and reports; nothing is written.
+        """
+        from .governance_store import RelationStore, ResolutionStore
+        from .storage import hold_directory_lock
+
+        successor_id, predecessor_id = str(successor_id or ""), str(predecessor_id or "")
+        if _review_boundary.mcp_origin():
+            return {"schema": 1, "action": "lineage_unlink", "successor": successor_id,
+                    "predecessor": predecessor_id, "changed": False, "error": "owner_cli_only",
+                    "message": "Only the Owner's local 'engram lineage unlink' removes a supersedes relation."}
+        if dry_run:
+            plan = self._lineage_unlink_plan(successor_id, predecessor_id)
+            if not plan.get("error"):
+                plan.update(dry_run=True, status="preview", restored=False)
+            return plan
+        with hold_directory_lock(self._knowledge_dir, timeout=30):
+            plan = self._lineage_unlink_plan(successor_id, predecessor_id)
+            if plan.get("error"):
+                return plan
+            before_status = plan["predecessor_status"]
+            box = {"restored": False, "old": None, "new": None}
+
+            def restore(rows: list[dict]) -> list[dict]:
+                for row in rows:
+                    if row.get("id") == successor_id:
+                        box["new"] = dict(row)
+                    if row.get("id") != predecessor_id:
+                        continue
+                    box["old"] = dict(row)
+                    if not plan["restore"] or row.get("snapshot_of"):
+                        continue
+                    row["status"] = "active"
+                    for name in ("superseded_by", "superseded_at", "retired_at"):
+                        row.pop(name, None)
+                    row["last_updated"] = _now_iso()
+                    fixed = self._ensure_fields(dict(row), "decision")
+                    row.clear()
+                    row.update(fixed)
+                    box["restored"] = True
+                    box["old"] = dict(row)
+                return rows
+
+            # The Owner is correcting a mistake: the verified cap does not stand in the way.
+            self._update_entries(
+                self._knowledge_dir / "decisions.json", "decision", restore,
+                capacity_ctx=_capacity.CapacityContext(
+                    owner_override=True, keep_ids=frozenset({predecessor_id, successor_id})),
+            )
+            RelationStore(self.root).remove_relation(successor_id, "supersedes", predecessor_id)
+            ResolutionStore(self.root).record(
+                box["new"] or {"id": successor_id}, box["old"] or {"id": predecessor_id},
+                action="unlinked", note=str(note or ""))
+        restored = "->active" if box["restored"] else " (kept)"
+        self._audit.log(
+            "write", "knowledge/relations",
+            detail=f"lineage unlink {successor_id} supersedes {predecessor_id} restored={before_status}{restored}",
+        )
+        plan.update(dry_run=False, status="applied", changed=True, restored=box["restored"])
+        return plan
+
     _HISTORY_BODY_FIELDS: dict[str, tuple[str, ...]] = {
         "lesson": ("summary", "detail", "domain"),
         "decision": ("title", "question", "choice", "reasoning", "alternatives"),

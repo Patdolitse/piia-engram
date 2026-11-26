@@ -1069,6 +1069,22 @@ class ImportExportMixin:
         a pinned entry. Local edges are kept as they are.
         """
         counts = {"added": 0}
+        # A relation the Owner removed with ``engram lineage unlink`` stays removed.
+        from .governance_store import ResolutionStore
+
+        unlinked = {
+            (str(record.get("id1")), str(record.get("id2")))
+            for record in ResolutionStore(self.root).all_records().values()
+            if record.get("action") == "unlinked"
+        }
+        if unlinked:
+            if relations_in is not None:
+                relations_in = [
+                    edge for edge in relations_in
+                    if not (edge.get("rel") == "supersedes"
+                            and (str(edge.get("src")), str(edge.get("dst"))) in unlinked)
+                ]
+            new_edges = [(src, dst) for src, dst in new_edges if (str(src), str(dst)) not in unlinked]
         if pinned_ids:
             if relations_in is not None:
                 relations_in = [

@@ -4271,7 +4271,7 @@ _QUIET_COMMANDS = (
     "dock-portrait", "dock-archived", "dock-list", "dock-playbooks", "dock-get-lang",
     "dock-onboard-scan", "weekly",
     "migrate-project", "preview", "status", "sessions", "anchors", "management",
-    "privacy", "backup-plan", "recall", "conflicts", "integrity", "dashboard",
+    "privacy", "backup-plan", "recall", "conflicts", "lineage", "integrity", "dashboard",
     "release-check", "telemetry-validate", "grants", "audit", "verify-ledger", "stats",
     "review", "confirm", "playbook", "onboard", "onboard-accept", "repair-encoding",
     "recover-json", "import", "retention", "lifecycle", "merge", "reconcile",
@@ -4546,6 +4546,10 @@ def _dispatch_cli(args: list[str]) -> None:
         sys.exit(_run_merge(args[1:]))
     elif args[0] == "conflicts":
         sys.exit(run_conflicts(args[1:]))
+    elif args[0] == "lineage":
+        from piia_engram.cli_commands import run_lineage
+
+        sys.exit(run_lineage(args[1:]))
     elif args[0] == "reconcile":
         sys.exit(_run_reconcile(args[1:]))
     elif args[0] == "import-memories":
@@ -4670,6 +4674,8 @@ def _dispatch_cli(args: list[str]) -> None:
             "  engram weekly           Past-7-days recap: counts, top domains, growth, 1 resurfaced memory (--json)\n"
             "  engram lifecycle        Metadata-only decay/archive proposal (never deletes)\n"
             "  engram conflicts        决策冲突 list/resolve / decision conflicts list/resolve\n"
+            "  engram lineage unlink <new-id> <old-id>  撤销错误的决策取代关系 / undo a wrong decision\n"
+            "                          replacement (preview; --commit --yes applies)\n"
             "  engram integrity        Read-only integrity scan + self-heal proposals\n"
             "  engram dashboard        Non-technical owner control view (--html/--json)\n"
             "  engram release-check    Read-only release readiness report (no publish)\n"

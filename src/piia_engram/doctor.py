@@ -2080,6 +2080,7 @@ def _decision_pair_previews(successor: str, predecessor: str) -> list[str]:
     """Commands for one pair. Without ``--commit --yes`` each only previews."""
     return [
         f"engram conflicts resolve {successor} {predecessor} --action supersede --keep {successor}",
+        f"engram lineage unlink {successor} {predecessor}",
     ]
 
 

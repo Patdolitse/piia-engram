@@ -5235,6 +5235,91 @@ def _render_conflict_resolve_text(payload: dict) -> str:
     )
 
 
+def _print_lineage_usage() -> None:
+    print(
+        "Usage / 用法:\n"
+        "  engram lineage unlink <successor-id> <predecessor-id> [--commit] [--yes] [--note TEXT] [--json]\n"
+        "      Remove a wrong 'supersedes' relation between two decisions and bring the\n"
+        "      replaced one back. Preview by default; --commit --yes applies.\n"
+        "      / 删除两条决策之间错误的取代关系，并恢复被取代的那条。默认只预览；--commit --yes 才写入。\n"
+    )
+
+
+def _render_lineage_text(payload: dict) -> str:
+    if payload.get("error"):
+        return f"{payload['error']}: {payload.get('message', '')}\n"
+    new, old = payload["successor"], payload["predecessor"]
+    lines = [
+        f"Lineage unlink / 取消取代关系: status={payload.get('status')}",
+        f"  replaced / 被取代: [{old}] \"{payload.get('predecessor_title', '')}\""
+        f" -> {payload.get('predecessor_choice', '')} (status: {payload.get('predecessor_status', '')})",
+        f"  replacing / 取代者: [{new}] \"{payload.get('successor_title', '')}\""
+        f" -> {payload.get('successor_choice', '')}",
+    ]
+    applied = payload.get("status") == "applied"
+    lines.append(("  Removed" if applied else "  Would remove") + f" the relation {new} supersedes {old}.")
+    if payload.get("restored") or (not applied and payload.get("restore")):
+        lines.append(("  Restored" if applied else "  Would restore") + f" [{old}] as an active decision.")
+    else:
+        lines.append(f"  [{old}] keeps its status ({payload.get('reason') or 'already active'}).")
+    if payload.get("was_pinned"):
+        lines.append(f"  [{old}] was pinned before it was replaced; pin it again with 'engram pin {old}' if wanted.")
+    if payload.get("status") == "preview":
+        lines.append("  Preview only, nothing written. Add --commit --yes to apply. / 仅预览，未写入。")
+    elif payload.get("status") == "confirmation_required":
+        lines.append("  Nothing written. Add --yes to confirm. / 未写入，加 --yes 确认。")
+    return "\n".join(lines) + "\n"
+
+
+def run_lineage(argv: list[str] | None = None) -> int:
+    """Owner-only: ``engram lineage unlink`` (preview unless ``--commit --yes``)."""
+    from piia_engram.core import Engram
+
+    args = list(argv or [])
+    if not args or args[0] in {"-h", "--help"}:
+        _print_lineage_usage()
+        return 0
+    if args[0] != "unlink":
+        print(f"Unknown lineage command: {args[0]} / 未知 lineage 命令：{args[0]}")
+        _print_lineage_usage()
+        return 2
+    ids = [arg for arg in args[1:3] if not arg.startswith("--")]
+    opts = {"commit": False, "yes": False, "json": False, "note": ""}
+    rest, i, problem = args[1 + len(ids):], 0, ""
+    while i < len(rest) and not problem:
+        arg = rest[i]
+        if arg in {"--commit", "--yes", "--json"}:
+            opts[arg[2:]] = True
+            i += 1
+        elif arg == "--note" and i + 1 < len(rest):
+            opts["note"] = rest[i + 1]
+            i += 2
+        else:
+            problem = arg
+    if len(ids) != 2 or problem:
+        if problem:
+            print(f"Unknown or incomplete lineage unlink option: {problem} / 未知或不完整的选项：{problem}")
+        _print_lineage_usage()
+        return 2
+
+    root = Path(os.environ.get("ENGRAM_DIR", "") or Path.home() / ".engram")
+    apply = opts["commit"] and opts["yes"]
+    # Look first through a read-only handle: a refused request leaves the store as it was.
+    payload = Engram(root=root, read_only=True).unlink_decision_lineage(ids[0], ids[1])
+    if apply and not payload.get("error"):
+        payload = Engram(root=root).unlink_decision_lineage(
+            ids[0], ids[1], dry_run=False, note=opts["note"])
+    rc = 1 if payload.get("error") else 0
+    if opts["commit"] and not opts["yes"] and not payload.get("error"):
+        payload.update(status="confirmation_required", requires_confirmation=True, dry_run=False)
+        rc = 1
+    if opts["json"]:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(_render_lineage_text(payload), end="")
+    return rc
+
+
 def run_conflicts(argv: list[str] | None = None) -> int:
     """Read/list and owner-confirm decision-conflict resolutions."""
     from piia_engram.core import Engram
