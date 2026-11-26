@@ -145,21 +145,60 @@ def test_an_explicit_false_turns_it_off(stats):
     assert us.decision() == (False, "earlier opt-out")
 
 
-@pytest.mark.parametrize("cfg", [
+_REFUSALS = [
     {"enabled": False},
     {"remote_enabled": False},
     {"enabled": False, "opted_out_at": "2026-01-01T00:00:00+00:00"},
     {"enabled": True, "remote_enabled": False, "remote_opted_out_at": "2026-01-01T00:00:00+00:00"},
-    {"enabled": True, "legacy_ping_opted_out_at": "2026-01-01T00:00:00+00:00"},
     {"enabled": False, "remote_enabled": False},
-])
+    {"enabled": True, "remote_enabled": False},
+]
+
+
+@pytest.mark.parametrize("cfg", _REFUSALS)
 def test_earlier_opt_outs_stay_off_until_an_explicit_on(stats, cfg):
     _spool(stats)
     _store_config(stats, cfg)
     assert us.decision()[0] is False
     assert us.drain() == 0 and stats.stub.requests == []
-    # `engram telemetry on` is a new consent.
+    # 4.23 / 4.24 wrote {"enabled": true} for `engram telemetry on`, which then meant
+    # the ping and the local log only. That is not a consent to the counts.
+    _spool(stats)
+    (stats.dir / "usage_ping.json").write_text(
+        json.dumps({"enabled": True, "changed_at": "2026-10-10"}), encoding="utf-8")
+    assert up.decision() == (True, "default")  # the ping keeps its own rule
+    assert us.decision() == (False, "earlier opt-out")
+    assert us.drain() == 0 and stats.stub.requests == []
+    # The same call without the marker, as an older client would make it.
     up.set_enabled(True)
+    assert us.decision() == (False, "earlier opt-out")
+    # Only this version's `on` / `remote on` records a consent to the counts.
+    up.set_enabled(True, counts_consent=True)
+    assert json.loads((stats.dir / "usage_ping.json").read_text(encoding="utf-8"))[
+        "counts_consent"] == "stats/2"
+    assert us.decision() == (True, "default")
+    up.set_enabled(False)
+    assert "counts_consent" not in (stats.dir / "usage_ping.json").read_text(encoding="utf-8")
+
+
+def test_a_consent_marker_without_enabled_does_not_count(stats):
+    _store_config(stats, {"remote_enabled": False})
+    (stats.dir).mkdir(parents=True, exist_ok=True)
+    (stats.dir / "usage_ping.json").write_text(
+        json.dumps({"counts_consent": "stats/2"}), encoding="utf-8")
+    assert us.decision() == (False, "earlier opt-out")
+    (stats.dir / "usage_ping.json").write_text(
+        json.dumps({"enabled": True, "counts_consent": "stats/1"}), encoding="utf-8")
+    assert us.decision() == (False, "earlier opt-out")
+
+
+def test_a_statistics_opt_in_after_an_old_ping_opt_out_is_not_a_refusal(stats):
+    """`legacy_ping_opted_out_at` is the ping's history; the same config has the
+    statistics and their remote sending turned on by the user."""
+    _store_config(stats, {"enabled": True, "remote_enabled": True,
+                          "legacy_ping_opted_out_at": "2026-01-01T00:00:00+00:00"})
+    assert us.decision() == (False, "earlier opt-out")  # the ping's own layer
+    up.set_enabled(True)  # old-format on: the ping is back, and nothing here refused the counts
     assert us.decision() == (True, "default")
 
 
@@ -359,7 +398,8 @@ def test_install_age_and_adoption_are_coarse(stats):
     assert _bodies(stats)[0]["install_age"] == "first_day"
     assert _bodies(stats)[0]["adoption"] == "first"
     state = json.loads((stats.dir / "usage_stats.json").read_text(encoding="utf-8"))
-    assert state == {"first_seen": "2026-11-18", "last_version": "4.29.0", "last_sent": TODAY}
+    assert state == {"first_seen": "2026-11-18", "last_version": "4.29.0", "last_sent": TODAY,
+                     "last_attempt": TODAY}
     assert us._install_age("2026-11-01", "2026-11-05") == "2_7_days"
     assert us._install_age("2026-10-01", "2026-11-05") == "31_plus_days"
     assert us._install_age("garbage", "2026-11-05") == "unknown"
@@ -384,15 +424,21 @@ def test_buckets():
 # --- failures never reach the tool ------------------------------------------------
 
 
-@pytest.mark.parametrize("status", [500, 404, 302])
-def test_a_refused_send_keeps_the_counts_for_later(stats, status):
+@pytest.mark.parametrize("status", [500, 404, 302, 422])
+def test_a_refused_send_keeps_the_counts_and_waits_for_the_next_day(stats, monkeypatch, status):
     path = _spool(stats)
     stats.stub.status = status
     assert us.drain() == 0
     assert path.exists() and len(stats.stub.requests) == 1
-    stats.stub.status = 204  # control: the same file goes out once the server answers
+    state = json.loads((stats.dir / "usage_stats.json").read_text(encoding="utf-8"))
+    assert state["last_attempt"] == TODAY and "last_sent" not in state
+    stats.stub.status = 204
+    assert us.drain() == 0  # same UTC day: a new process does not send it again
+    assert len(stats.stub.requests) == 1 and path.exists()
+    monkeypatch.setattr(us, "_today", lambda: "2026-11-21")  # control: the next day it goes out
+    monkeypatch.setattr(up, "_today", lambda: "2026-11-21")
     assert us.drain() == 1
-    assert not path.exists()
+    assert not path.exists() and len(stats.stub.requests) == 2
 
 
 def test_an_unreachable_server_is_silent(stats, monkeypatch, capsys):
@@ -407,11 +453,40 @@ def test_an_unreachable_server_is_silent(stats, monkeypatch, capsys):
     assert out.out == "" and out.err == ""
 
 
-def test_410_drops_the_counts(stats):
+def test_410_drops_the_counts_and_stops_sending_for_thirty_days(stats, monkeypatch):
     path = _spool(stats)
     stats.stub.status = 410
     assert us.drain() == 0
     assert not path.exists() and len(stats.stub.requests) == 1
+    state = json.loads((stats.dir / "usage_stats.json").read_text(encoding="utf-8"))
+    assert state["counts_endpoint_gone_at"] == TODAY
+    assert us.status()["endpoint_gone_since"] == TODAY
+
+    def on(day):
+        monkeypatch.setattr(us, "_today", lambda: day)
+        monkeypatch.setattr(up, "_today", lambda: day)
+        _spool(stats, day=us._day_offset(day, -1))
+        return us.drain()
+
+    stats.stub.status = 204  # even if the server accepts again, the client stays quiet
+    assert on("2026-11-21") == 0 and on("2026-12-19") == 0
+    assert len(stats.stub.requests) == 1
+    assert on("2026-12-20") == 2  # thirty days later it tries again (two waiting days)
+    assert len(stats.stub.requests) == 3
+    state = json.loads((stats.dir / "usage_stats.json").read_text(encoding="utf-8"))
+    assert "counts_endpoint_gone_at" not in state
+
+
+def test_a_second_410_after_thirty_days_restarts_the_wait(stats, monkeypatch):
+    _spool(stats)
+    stats.stub.status = 410
+    assert us.drain() == 0
+    monkeypatch.setattr(us, "_today", lambda: "2026-12-20")
+    monkeypatch.setattr(up, "_today", lambda: "2026-12-20")
+    _spool(stats, day="2026-12-19")
+    assert us.drain() == 0 and len(stats.stub.requests) == 2
+    state = json.loads((stats.dir / "usage_stats.json").read_text(encoding="utf-8"))
+    assert state["counts_endpoint_gone_at"] == "2026-12-20"
 
 
 def test_an_oversized_row_is_dropped_unsent(stats, monkeypatch):
@@ -477,6 +552,7 @@ def test_nothing_is_printed_on_success_or_failure(stats, capsys):
     _spool(stats, day="2026-11-18")
     state = json.loads((stats.dir / "usage_stats.json").read_text(encoding="utf-8"))
     state.pop("last_sent")
+    state.pop("last_attempt", None)
     (stats.dir / "usage_stats.json").write_text(json.dumps(state), encoding="utf-8")
     assert us.drain() == 0
     us.status()
@@ -548,7 +624,7 @@ def test_a_day_rollover_closes_the_old_day(stats, monkeypatch):
 def test_status_says_why(stats, monkeypatch):
     _spool(stats)
     assert us.status() == {"will_send": True, "decided_by": "default", "endpoint": stats.stub.url,
-                           "last_sent": "", "pending_days": 1}
+                           "last_sent": "", "pending_days": 1, "endpoint_gone_since": ""}
     monkeypatch.setenv("NO_TELEMETRY", "1")
     assert us.status()["will_send"] is False and us.status()["decided_by"] == "NO_TELEMETRY"
 
@@ -723,3 +799,73 @@ def test_the_notice_names_the_counts_in_both_languages():
     for text in (up.NOTICE_EN, up.NOTICE_ZH):
         assert "engram telemetry off" in text and "DO_NOT_TRACK=1" in text
         assert "\n" not in text
+
+
+# --- turning it off removes what was waiting, at once ----------------------------------
+
+
+@pytest.mark.parametrize("args", [["off"], ["disable"], ["remote", "off"], ["remote", "disable"]])
+def test_cli_off_removes_the_waiting_counts_at_once(stats, monkeypatch, tmp_path, capsys, args):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    paths = [_spool(stats), _spool(stats, day=TODAY)]
+    other = stats.spool / "notes.txt"  # not a spool file: left alone
+    other.write_text("x", encoding="utf-8")
+    us.record("get_resume_brief", True)
+    _cli(args, capsys)
+    assert [p.exists() for p in paths] == [False, False] and other.exists()
+    assert us._pending == {}
+    assert stats.stub.requests == []
+
+
+def test_cli_status_and_preview_leave_the_waiting_counts_alone(stats, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    path = _spool(stats)
+    _cli(["status"], capsys)
+    _cli(["preview"], capsys)
+    assert path.exists()
+
+
+def test_cli_on_records_the_consent_and_remote_on_does_too(stats, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    _store_config(stats, {"enabled": True, "remote_enabled": False,
+                          "remote_opted_out_at": "2026-01-01T00:00:00+00:00"})
+    (stats.dir).mkdir(parents=True, exist_ok=True)
+    (stats.dir / "usage_ping.json").write_text(json.dumps({"enabled": True}), encoding="utf-8")
+    assert us.decision() == (False, "earlier opt-out")
+    out = _cli(["status"], capsys)
+    assert "Daily usage counts: OFF (decided by: earlier opt-out)" in out
+    for args in (["on"], ["remote", "on"]):
+        (stats.dir / "usage_ping.json").write_text(json.dumps({"enabled": True}), encoding="utf-8")
+        _cli(args, capsys)
+        assert us.decision() == (True, "default"), args
+
+
+# --- the local key ---------------------------------------------------------------------
+
+
+def test_the_key_file_is_private_and_created_once(stats):
+    import os
+    import stat
+    import sys
+
+    first = us._secret()
+    path = stats.dir / "stats_secret"
+    assert first and path.read_text(encoding="utf-8") == first and us._secret() == first
+    if sys.platform != "win32":
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+def test_a_key_created_by_another_process_at_the_same_moment_is_the_one_used(stats, monkeypatch):
+    other = "ab" * 32
+    real_open = us.os.open
+
+    def racing_open(path, flags, mode=0o777):
+        if str(path).endswith("stats_secret"):
+            # Another process wins the race between our read and our create.
+            stats.dir.mkdir(parents=True, exist_ok=True)
+            (stats.dir / "stats_secret").write_text(other, encoding="utf-8")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(us.os, "open", racing_open)
+    assert us._secret() == other
+    assert (stats.dir / "stats_secret").read_text(encoding="utf-8") == other

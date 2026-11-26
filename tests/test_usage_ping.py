@@ -863,7 +863,7 @@ def test_a_ping_setting_that_cannot_be_saved_is_reported_and_the_rest_still_runs
         tele_cli, ping, monkeypatch, capsys, args, expected):
     from piia_engram import telemetry
 
-    def cannot_save(enabled):
+    def cannot_save(enabled, **kwargs):
         raise OSError("read-only folder")
 
     monkeypatch.setattr(up, "set_enabled", cannot_save)

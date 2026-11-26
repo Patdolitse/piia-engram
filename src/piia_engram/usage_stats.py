@@ -10,7 +10,9 @@ sent: no content, prompts, arguments, file paths or error text.
 Off whenever the daily ping is off (``usage_ping.decision``: DO_NOT_TRACK /
 NO_TELEMETRY, ENGRAM_TELEMETRY=0, ``engram telemetry off``, an earlier opt-out,
 CI, containers, ENGRAM_EPHEMERAL, tests), and also with ENGRAM_TELEMETRY_REMOTE=0
-or any explicit ``false`` in a store's ``telemetry_config.json``.
+or any explicit ``false`` in a store's ``telemetry_config.json``. Only an
+``engram telemetry on`` / ``remote on`` from a version that has these counts
+(it records a consent marker) overrides such a refusal.
 
 Counts wait in ``stats-spool/`` under the per-user config directory (never in a
 memory store), one small file per process and day. Nothing here raises, writes
@@ -26,6 +28,7 @@ import os
 import re
 import sys
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,6 +44,7 @@ MAX_BODY_BYTES = 8192
 MAX_SPOOL_FILES = 200
 MAX_AGE_DAYS = 7
 MAX_DAYS_PER_RUN = 2
+GONE_QUIET_DAYS = 30  # after a 410 from the endpoint
 FLUSH_EVERY = 10
 OTHER_TOOL = "other"
 
@@ -134,6 +138,17 @@ def _explicit_false_in_a_store() -> bool:
     return False
 
 
+def _consented() -> bool:
+    """True after an ``engram telemetry on`` / ``remote on`` that covered the counts.
+
+    ``enabled: true`` alone is not enough: versions before the counts wrote it
+    for an ``on`` that turned on the ping and the local log only.
+    """
+    settings = usage_ping._load_settings()
+    return (settings.get("enabled") is True
+            and settings.get("counts_consent") == usage_ping.COUNTS_CONSENT)
+
+
 def decision() -> tuple[bool, str]:
     """(on, deciding layer). Every layer that turns the daily ping off wins first."""
     on, layer = usage_ping.decision()
@@ -141,8 +156,7 @@ def decision() -> tuple[bool, str]:
         return False, layer
     if os.environ.get("ENGRAM_TELEMETRY_REMOTE", "").strip().lower() in _OFF_VALUES:
         return False, "ENGRAM_TELEMETRY_REMOTE"
-    # An explicit `engram telemetry on` is a new consent and wins over older flags.
-    if usage_ping._load_settings().get("enabled") is not True and _explicit_false_in_a_store():
+    if _explicit_false_in_a_store() and not _consented():
         return False, "earlier opt-out"
     return True, "default"
 
@@ -270,6 +284,25 @@ def _delete(paths: list[Path]) -> None:
             pass
 
 
+def purge_spool() -> int:
+    """Remove every waiting count (files and this process's memory). Used when
+    telemetry is turned off. Returns the number of files removed; never raises."""
+    removed = 0
+    try:
+        with _lock:
+            _pending.clear()
+        for paths in _spool_files().values():
+            for path in paths:
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return removed
+
+
 def _nonneg(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
@@ -339,7 +372,26 @@ def _secret(create: bool = True) -> str | None:
             return None
         value = uuid.uuid4().hex + uuid.uuid4().hex
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(value, encoding="utf-8")
+        if path.exists():  # present but not a key: replace it, owner-only
+            try:
+                path.unlink()
+            except OSError:
+                return None
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            # Another process is creating it: use that key, not a second one.
+            for _ in range(5):
+                try:
+                    existing = path.read_text(encoding="utf-8").strip()
+                except Exception:
+                    existing = ""
+                if _SECRET_RE.fullmatch(existing):
+                    return existing
+                time.sleep(0.02)
+            return None
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(value)
         return value
     except Exception:
         return None
@@ -435,11 +487,11 @@ def build_payload(day: str, merged: dict[str, Any], *, secret: str,
 
 
 def _post(url: str, payload: dict[str, Any]) -> str:
-    """'sent', 'gone' (the server answered 410: stop and drop) or 'failed'."""
+    """'sent', 'gone' (the server answered 410), 'too_large' (not sent) or 'failed'."""
     try:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         if len(body) > MAX_BODY_BYTES:
-            return "gone"
+            return "too_large"
         req = Request(url, data=body, method="POST",
                       headers={"Content-Type": "application/json", "User-Agent": "piia-engram"})
         with urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
@@ -471,6 +523,17 @@ def _prune(files: dict[str, list[Path]], today: str) -> dict[str, list[Path]]:
     return files
 
 
+def _gone_quiet(state: dict[str, Any], today: str) -> bool:
+    """True while a 410 from the endpoint is less than thirty days old."""
+    gone = state.get("counts_endpoint_gone_at")
+    if not isinstance(gone, str) or not usage_ping._DATE_RE.fullmatch(gone):
+        return False
+    try:
+        return today < _day_offset(gone, GONE_QUIET_DAYS)
+    except Exception:
+        return False
+
+
 def drain(after: threading.Thread | None = None) -> int:
     """Send the oldest ended days that have counts (at most two). Returns the
     number of rows sent. Runs in the background thread; never raises."""
@@ -491,26 +554,42 @@ def drain(after: threading.Thread | None = None) -> int:
         if not state.get("first_seen"):
             state["first_seen"] = min([*files, today])
             _save_state(state)
-        if not url or state.get("last_sent") == today:
+        if not url or today in (state.get("last_sent"), state.get("last_attempt")):
+            return 0  # one try per UTC day, whatever its outcome
+        if _gone_quiet(state, today):
             return 0
         secret = _secret()
         if not secret:
             return 0
-        for day in [d for d in sorted(files) if d < today][:MAX_DAYS_PER_RUN]:
+        ended = [d for d in sorted(files) if d < today]
+        tried = False
+        for day in ended[:MAX_DAYS_PER_RUN]:
             merged = _merge(files[day])
             payload = build_payload(day, merged, secret=secret, state=state)
             if payload is None:
                 _delete(files[day])  # nothing sendable: do not keep it around
                 continue
             result = _post(url, payload)
+            if result == "too_large":
+                _delete(files[day])  # dropped unsent, no request was made
+                continue
+            tried = True
             if result == "failed":
                 break
+            if result == "gone":
+                # The endpoint was switched off: drop what was waiting and stay quiet.
+                for waiting in ended:
+                    _delete(files[waiting])
+                state["counts_endpoint_gone_at"] = today
+                break
             _delete(files[day])
-            if result == "sent":
-                sent += 1
-                state["last_version"] = payload["version"]
+            sent += 1
+            state["last_version"] = payload["version"]
+            state.pop("counts_endpoint_gone_at", None)
         if sent:
             state["last_sent"] = today
+        if tried:
+            state["last_attempt"] = today
             _save_state(state)
     except Exception:
         pass
@@ -542,9 +621,12 @@ def status() -> dict[str, Any]:
     on, layer = decision()
     files = _spool_files()
     today = _today()
+    state = _load_state()
     return {"will_send": on, "decided_by": layer, "endpoint": endpoint(),
-            "last_sent": str(_load_state().get("last_sent") or ""),
-            "pending_days": len([d for d in files if d < today])}
+            "last_sent": str(state.get("last_sent") or ""),
+            "pending_days": len([d for d in files if d < today]),
+            "endpoint_gone_since": (str(state.get("counts_endpoint_gone_at") or "")
+                                    if _gone_quiet(state, today) else "")}
 
 
 def preview() -> str:

@@ -129,8 +129,16 @@ def _load_settings() -> dict[str, Any]:
         return {}
 
 
-def set_enabled(enabled: bool) -> None:
+COUNTS_CONSENT = "stats/2"
+
+
+def set_enabled(enabled: bool, *, counts_consent: bool = False) -> None:
     """Persist ``engram telemetry on/off`` for the ping (user level, not per store).
+
+    ``counts_consent`` also records that this ``on`` covers the daily usage counts
+    (``usage_stats.py``). Earlier versions wrote ``enabled: true`` for an ``on``
+    that meant the ping and the local log only, so ``enabled`` alone never
+    overrides an earlier refusal of the statistics.
 
     Written atomically (temp file + replace); may raise OSError for the caller to report.
     """
@@ -138,8 +146,10 @@ def set_enabled(enabled: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     try:
-        tmp.write_text(json.dumps({"enabled": bool(enabled), "changed_at": _today()}) + "\n",
-                       encoding="utf-8")
+        settings: dict[str, Any] = {"enabled": bool(enabled), "changed_at": _today()}
+        if enabled and counts_consent:
+            settings["counts_consent"] = COUNTS_CONSENT
+        tmp.write_text(json.dumps(settings) + "\n", encoding="utf-8")
         replace_with_retry(tmp, path)
     except BaseException:
         try:

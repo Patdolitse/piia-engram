@@ -1202,12 +1202,20 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
               f"(decided by: {counts['decided_by']})")
         print(f"  Last sent: {counts['last_sent'] or '(never)'}")
         print(f"  Waiting days: {counts['pending_days']}")
+        if counts.get("endpoint_gone_since"):
+            print(f"  The endpoint answered that it is closed on {counts['endpoint_gone_since']}; "
+                  "nothing is sent for 30 days from then.")
         print(f"  Endpoint: {counts['endpoint'] or '(none)'}")
 
     def _save_ping_setting(enabled: bool) -> bool:
-        """Persist the daily ping on/off; report a failure without stopping the rest."""
+        """Persist the daily ping on/off; report a failure without stopping the rest.
+
+        ``on`` also records the consent to the daily usage counts; ``off`` removes
+        the counts that were waiting to be sent, at once."""
+        if not enabled:
+            _usage_stats.purge_spool()
         try:
-            _usage_ping.set_enabled(enabled)
+            _usage_ping.set_enabled(enabled, counts_consent=enabled)
             return True
         except OSError as exc:
             hint = "" if enabled else " Use ENGRAM_TELEMETRY=0 or DO_NOT_TRACK=1 instead."
