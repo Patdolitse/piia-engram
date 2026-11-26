@@ -166,7 +166,7 @@ def test_status_preview_repeat_the_disclosure(active_ping, capsys, sub):
     setup_wizard._run_telemetry_cli([sub])
     text = capsys.readouterr().out
     for phrase in ("No content, prompts or file paths", "IP addresses are not stored",
-                   "DO_NOT_TRACK=1", "PRIVACY.md", "Detailed statistics"):
+                   "DO_NOT_TRACK=1", "PRIVACY.md", "Daily usage counts"):
         assert phrase in text
 
 

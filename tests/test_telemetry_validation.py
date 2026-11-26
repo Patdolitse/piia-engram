@@ -370,3 +370,18 @@ def test_readiness_flags_migration_sequencing_overlap(tmp_path):
     seq = next(c for c in report["checks"] if c["name"] == "migration_sequencing")
     assert seq["ok"] is False
     assert any("re-adds P0" in p for p in seq["problems"])
+
+
+def test_optin_defaults_cover_the_daily_usage_counts():
+    stats_src = (TELEMETRY_SRC.parent / "usage_stats.py").read_text(encoding="utf-8")
+    telemetry_src = TELEMETRY_SRC.read_text(encoding="utf-8")
+    ok, problems = tv.validate_optin_defaults(telemetry_src, stats_src)
+    assert ok, problems
+    # A decision that skips the ping's opt-out layers is flagged.
+    skipped = stats_src.replace("    if not on:\n        return False, layer\n", "", 1)
+    assert skipped != stats_src
+    ok, problems = tv.validate_optin_defaults(telemetry_src, skipped)
+    assert ok is False and any("opt-out layers" in p for p in problems)
+    # So is a synchronous sender coming back into telemetry.py.
+    ok, problems = tv.validate_optin_defaults(telemetry_src + "\ndef _send_remote(p):\n    pass\n", stats_src)
+    assert ok is False and any("_send_remote" in p for p in problems)

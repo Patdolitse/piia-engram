@@ -804,7 +804,7 @@ def tele_cli(ping, monkeypatch, tmp_path):
 def test_telemetry_off_turns_the_ping_off(tele_cli, ping, capsys):
     tele_cli(["off"])
     assert ping.mod.decision() == (False, "settings")
-    assert "Daily usage ping disabled" in capsys.readouterr().out
+    assert "Daily usage ping and daily usage counts disabled" in capsys.readouterr().out
 
 
 def test_telemetry_on_turns_it_back_on(tele_cli, ping):
@@ -817,14 +817,14 @@ def test_telemetry_status_shows_the_ping(tele_cli, capsys):
     tele_cli(["status"])
     out = capsys.readouterr().out
     assert "Daily usage ping: ON (decided by: default)" in out
-    assert "Detailed statistics: OFF (opt-in" in out
+    assert "Local statistics log: OFF" in out
 
 
 def test_telemetry_preview_shows_the_ping_body(tele_cli, capsys):
     tele_cli(["preview"])
     out = capsys.readouterr().out
     assert '"schema": "ping/1"' in out
-    assert "Detailed statistics payload (opt-in" in out
+    assert "Daily usage counts payload" in out
 
 
 def test_telemetry_reset_id(tele_cli, ping, capsys):
@@ -850,7 +850,7 @@ def test_telemetry_remote_off_also_turns_the_ping_off(tele_cli, ping, capsys):
     tele_cli(["remote", "off"])
     assert ping.mod.decision() == (False, "settings")
     out = capsys.readouterr().out
-    assert "Daily usage ping disabled" in out
+    assert "Daily usage ping and daily usage counts disabled" in out
     assert "Remote sending disabled" in out
 
 

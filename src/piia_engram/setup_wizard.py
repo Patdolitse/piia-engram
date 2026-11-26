@@ -4077,8 +4077,9 @@ def auto_migrate() -> None:
                     "'engram doctor --fix' to update external client configs.\n"
                 )
 
-        # Telemetry: stays off by default — user opts in via `engram setup`
-        # or `engram telemetry on`. Local-first trust > data collection.
+        # Migration never changes a telemetry choice: the local log stays off
+        # until `engram telemetry on`, and earlier opt-outs keep the daily ping
+        # and the daily usage counts off.
 
     except Exception as exc:
         logger.warning("migration failed: %s", exc)

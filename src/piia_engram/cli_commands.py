@@ -1190,10 +1190,19 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
     import sys
 
     from piia_engram import usage_ping as _usage_ping
+    from piia_engram import usage_stats as _usage_stats
     from piia_engram.telemetry import (
         get_status, is_enabled, preview_payload, set_enabled,
         set_remote_enabled,
     )
+
+    def _print_counts_status() -> None:
+        counts = _usage_stats.status()
+        print(f"\n  Daily usage counts: {'ON' if counts['will_send'] else 'OFF'} "
+              f"(decided by: {counts['decided_by']})")
+        print(f"  Last sent: {counts['last_sent'] or '(never)'}")
+        print(f"  Waiting days: {counts['pending_days']}")
+        print(f"  Endpoint: {counts['endpoint'] or '(none)'}")
 
     def _save_ping_setting(enabled: bool) -> bool:
         """Persist the daily ping on/off; report a failure without stopping the rest."""
@@ -1216,26 +1225,23 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         print(f"  Install ID: {prefix + '…' if prefix else '(not created yet)'}")
         print(f"  Last sent: {ping['last_sent'] or '(never)'}")
         print(f"  Endpoint: {ping['endpoint']}")
+        _print_counts_status()
         status = get_status()
         state = "ON" if status["enabled"] else "OFF"
-        remote_state = "ON" if status.get("remote_enabled") else "OFF"
-        print(f"\n  Detailed statistics: {state} (opt-in / 需显式开启)")
-        print(f"  Remote sending: {remote_state}")
-        print(f"  Phase: {status['phase']}")
+        print(f"\n  Local statistics log: {state} (written on this machine only, never sent)")
         print(f"  Config: {status['config_path']}")
         print(f"  Log: {status['log_path']}")
         if status["enabled"]:
-            print(f"  Opted in: {status['opted_in_at']}")
-        if status.get("remote_enabled"):
-            print(f"  Remote opted in: {status.get('remote_opted_in_at', '(unknown)')}")
-            print(f"  Endpoint: {status.get('endpoint', '(unknown)')}")
+            print(f"  Turned on: {status['opted_in_at']}")
         print()
 
     elif sub == "preview":
         print(_usage_ping.NOTICE)
         print("\n  Daily usage ping payload (at most once per UTC day when enabled):\n")
         print(_usage_ping.preview())
-        print("\n  Detailed statistics payload (opt-in / 需显式开启):\n")
+        print("\n  Daily usage counts payload (one row per ended UTC day when enabled):\n")
+        print(_usage_stats.preview())
+        print("\n  Local statistics log line (only after `engram telemetry on`; never sent):\n")
         print(preview_payload())
         print()
 
@@ -1257,8 +1263,8 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         set_remote_enabled(False)
         print()
         if ping_saved:
-            print("  ✅ Daily usage ping disabled.")
-        print("  ✅ Detailed statistics disabled (local + remote).")
+            print("  ✅ Daily usage ping and daily usage counts disabled.")
+        print("  ✅ Local statistics log disabled.")
         print("  No data will be logged or sent.\n")
 
     elif sub in ("on", "enable"):
@@ -1266,33 +1272,28 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
         set_enabled(True)
         print()
         if ping_saved:
-            print("  ✅ Daily usage ping enabled.")
-        print("  ✅ Detailed local statistics enabled.")
-        print("  Run 'engram telemetry preview' to see what will be logged.")
-        print("  Run 'engram telemetry remote on' to also enable remote sending.\n")
+            print("  ✅ Daily usage ping and daily usage counts enabled.")
+        print("  ✅ Local statistics log enabled.")
+        print("  Run 'engram telemetry preview' to see what is sent and what is logged.\n")
 
     elif sub == "remote":
         remote_sub = sub_args[1] if len(sub_args) > 1 else "status"
         if remote_sub in ("on", "enable"):
-            if not is_enabled():
-                set_enabled(True)
-                print("\n  ✅ Local statistics also enabled (required for remote).")
+            ping_saved = _save_ping_setting(True)
             set_remote_enabled(True)
-            print("  ✅ Remote anonymous statistics enabled.")
-            print("  Data will be sent via HTTPS to Cloudflare Worker.\n")
+            print()
+            if ping_saved:
+                print("  ✅ Daily usage ping and daily usage counts enabled.")
+            print("  Run 'engram telemetry preview' to see what is sent.\n")
         elif remote_sub in ("off", "disable"):
             ping_saved = _save_ping_setting(False)
             set_remote_enabled(False)
             print()
             if ping_saved:
-                print("  ✅ Daily usage ping disabled.")
+                print("  ✅ Daily usage ping and daily usage counts disabled.")
             print("  ✅ Remote sending disabled. Local logging continues if enabled.\n")
         else:
-            status = get_status()
-            remote_state = "ON" if status.get("remote_enabled") else "OFF"
-            print(f"\n  Remote sending: {remote_state}")
-            if status.get("remote_enabled"):
-                print(f"  Endpoint: {status.get('endpoint', '(unknown)')}")
+            _print_counts_status()
             print()
 
     elif sub == "feedback":
@@ -1328,7 +1329,9 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             print("\n  Could not delete the install ID file.\n")
 
     elif sub == "--show-payload":
-        print("\n  Detailed statistics payload (opt-in / 需显式开启):\n")
+        print("\n  Daily usage counts payload (one row per ended UTC day when enabled):\n")
+        print(_usage_stats.preview())
+        print("\n  Local statistics log line (only after `engram telemetry on`; never sent):\n")
         print(preview_payload())
         print()
 
@@ -1338,11 +1341,11 @@ def _run_telemetry_cli(sub_args: list[str]) -> None:
             "  engram telemetry status         Show current status\n"
             "  engram telemetry reset-id       Create a new random install ID for the daily ping\n"
             "  engram telemetry funnel         Show the local first-value funnel\n"
-            "  engram telemetry preview        Preview the daily ping and detailed statistics payloads\n"
-            "  engram telemetry on             Enable the daily ping and detailed local statistics\n"
-            "  engram telemetry off            Disable the daily ping and all detailed statistics\n"
-            "  engram telemetry remote on      Enable remote sending (Phase 2)\n"
-            "  engram telemetry remote off     Disable remote sending and the daily ping\n"
+            "  engram telemetry preview        Preview the daily ping and the daily usage counts payloads\n"
+            "  engram telemetry on             Enable the daily ping, the daily usage counts and the local log\n"
+            "  engram telemetry off            Disable the daily ping, the daily usage counts and the local log\n"
+            "  engram telemetry remote on      Enable the daily ping and the daily usage counts\n"
+            "  engram telemetry remote off     Disable the daily ping and the daily usage counts\n"
             "  engram telemetry feedback on    Enable weekly feedback reports\n"
             "  engram telemetry feedback off   Disable weekly feedback reports\n"
         )
@@ -1414,9 +1417,8 @@ def _run_privacy_report() -> None:
         status = get_status()
         state = "ON" if status["enabled"] else "OFF"
         remote_state = "ON" if status.get("remote_enabled") else "OFF"
-        print(f"        Local: {state}")
-        print(f"        Remote: {remote_state}")
-        print(f"        Phase: {status['phase']}")
+        print(f"        Local log: {state}")
+        print(f"        Daily usage counts: {remote_state} (decided by: {status.get('remote_decided_by', 'unknown')})")
         print(f"        Config: {status['config_path']}")
         log_path = Path(status["log_path"])
         if log_path.is_file():
@@ -1425,11 +1427,12 @@ def _run_privacy_report() -> None:
             print(f"        Log: {log_path} ({log_size / 1024:.1f} KB, {log_lines} entries)")
         else:
             print("        Log: (no entries yet)")
-        print("        Collected: tool names + counts, knowledge totals, version, daily anonymous ID")
-        print("        NOT collected: text content, prompts, file paths, PII, IP")
+        print("        Sent once a day: tool names with count buckets, error categories, memory-size buckets,")
+        print("                         version, OS family, Python version, a daily rotating ID")
+        print("        NOT sent: text content, prompts, file paths, error text, the install ID; IP is not stored")
         if status.get("remote_enabled"):
             print(f"        Endpoint: {status.get('endpoint', '(unknown)')}")
-        print("        Optional: telemetry Phase 2 (remote to Cloudflare Worker, requires re-consent)")
+        print("        Turn off: engram telemetry off (or ENGRAM_TELEMETRY=0 / DO_NOT_TRACK=1)")
     except ImportError:
         print("        (telemetry module not available)")
     print()

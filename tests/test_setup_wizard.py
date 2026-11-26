@@ -2143,7 +2143,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Detailed statistics: OFF" in out
+        assert "Local statistics log: OFF" in out
 
     def test_on_then_status(self, tmp_path, monkeypatch, capsys):
         """engram telemetry on, then status should show ON."""
@@ -2155,7 +2155,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Detailed statistics: ON" in out
+        assert "Local statistics log: ON" in out
 
     def test_off_disables(self, tmp_path, monkeypatch, capsys):
         """engram telemetry off should disable."""
@@ -2168,7 +2168,7 @@ class TestTelemetryCLI:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Detailed statistics: OFF" in out
+        assert "Local statistics log: OFF" in out
 
     def test_preview_returns_json(self, tmp_path, monkeypatch, capsys):
         """engram telemetry preview should output valid JSON."""
@@ -3662,7 +3662,7 @@ class TestTelemetryCLIExtended:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Detailed statistics: ON" in out
+        assert "Local statistics log: ON" in out
 
     def test_disable_alias(self, tmp_path, monkeypatch, capsys):
         """'disable' should work same as 'off'."""
@@ -3675,7 +3675,7 @@ class TestTelemetryCLIExtended:
 
         _run_telemetry_cli(["status"])
         out = capsys.readouterr().out
-        assert "Detailed statistics: OFF" in out
+        assert "Local statistics log: OFF" in out
 
     def test_empty_args_defaults_to_status(self, tmp_path, monkeypatch, capsys):
         """No subcommand should default to status."""

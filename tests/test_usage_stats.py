@@ -626,3 +626,100 @@ def test_the_tool_path_has_no_synchronous_send():
     flush_body = source.split("def flush(", 1)[1].split("\ndef ", 1)[0]
     assert "urlopen" not in record_body and "_post" not in record_body
     assert "urlopen" not in flush_body and "_post" not in flush_body and "drain" not in flush_body
+
+
+# --- default endpoint, removed synchronous send, CLI ----------------------------------
+
+COUNTS_URL = "https://telemetry.piia-engram.com/v1/counts"
+
+
+def test_the_built_in_endpoint_is_the_counts_route_and_feedback_has_none(stats, monkeypatch):
+    from piia_engram import telemetry
+
+    monkeypatch.delenv("ENGRAM_TELEMETRY_URL")
+    assert telemetry._DEFAULT_ENDPOINT == COUNTS_URL == us.endpoint()
+    assert telemetry._DEFAULT_FEEDBACK_ENDPOINT == ""
+    assert us.status()["endpoint"] == COUNTS_URL  # shown, never contacted here
+    monkeypatch.setenv("ENGRAM_TELEMETRY_URL", stats.stub.url)
+    assert us.endpoint() == stats.stub.url
+
+
+def test_the_local_log_flush_no_longer_sends_anything(stats, monkeypatch, tmp_path):
+    from piia_engram import telemetry
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    calls = []
+    monkeypatch.setattr(telemetry, "urlopen", lambda *a, **k: calls.append(a) or 1 / 0)
+    telemetry.set_enabled(True)
+    telemetry.set_remote_enabled(True)
+    tracker = telemetry.ToolCallTracker()
+    tracker.record("add_lesson", success=True)
+    assert tracker.flush(force=True, engram_version="9.9.9") is not None  # the local log line
+    assert calls == [] and stats.stub.requests == []
+    assert not hasattr(telemetry, "_send_remote")
+    source = (SRC / "telemetry.py").read_text(encoding="utf-8")
+    flush_body = source.split("    def flush(", 1)[1].split("\n# ----", 1)[0]
+    assert "urlopen" not in flush_body and "send" not in flush_body.replace("_mark_payload_sent", "")
+
+
+def test_status_reports_the_counts_not_the_old_flag(stats, monkeypatch, tmp_path):
+    from piia_engram import telemetry
+
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    status = telemetry.get_status()
+    assert status["enabled"] is False and status["remote_enabled"] is True
+    assert status["endpoint"] == stats.stub.url
+    assert status["phase"] == "local log off; remote counts on"
+    monkeypatch.setenv("DO_NOT_TRACK", "1")
+    status = telemetry.get_status()
+    assert status["remote_enabled"] is False and status["endpoint"] == "(disabled)"
+    assert status["phase"] == "local log off; remote counts off"
+
+
+def _cli(args, capsys):
+    from piia_engram.cli_commands import _run_telemetry_cli
+
+    _run_telemetry_cli(args)
+    return capsys.readouterr().out
+
+
+def test_cli_status_shows_the_counts_with_the_reason(stats, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    _spool(stats)
+    out = _cli(["status"], capsys)
+    assert "Daily usage counts: ON (decided by: default)" in out
+    assert f"Endpoint: {stats.stub.url}" in out and "Waiting days: 1" in out
+    assert "opt-in" not in out and "需显式开启" not in out
+    monkeypatch.setenv("NO_TELEMETRY", "1")
+    out = _cli(["status"], capsys)
+    assert "Daily usage counts: OFF (decided by: NO_TELEMETRY)" in out
+    assert "Daily usage ping: OFF (decided by: NO_TELEMETRY)" in out
+
+
+def test_cli_preview_shows_the_real_row_and_sends_nothing(stats, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    _spool(stats, tools={"get_recall": [30, 0]})
+    out = _cli(["preview"], capsys)
+    assert '"schema": "stats/2"' in out and '"ok": "25_99"' in out
+    assert "opt-in" not in out and "需显式开启" not in out
+    assert stats.stub.requests == [] and not (stats.dir / "stats_secret").exists()
+
+
+def test_cli_off_and_on_switch_the_counts(stats, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ENGRAM_DIR", str(tmp_path / "store"))
+    assert us.decision()[0] is True
+    out = _cli(["off"], capsys)
+    assert us.decision() == (False, "settings") and "usage counts" in out
+    _cli(["on"], capsys)
+    assert us.decision() == (True, "default")
+    _cli(["remote", "off"], capsys)
+    assert us.decision()[0] is False
+    _cli(["remote", "on"], capsys)
+    assert us.decision() == (True, "default")
+
+
+def test_the_notice_names_the_counts_in_both_languages():
+    assert "usage counts" in up.NOTICE_EN and "使用计数" in up.NOTICE_ZH
+    for text in (up.NOTICE_EN, up.NOTICE_ZH):
+        assert "engram telemetry off" in text and "DO_NOT_TRACK=1" in text
+        assert "\n" not in text

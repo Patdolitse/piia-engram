@@ -1,10 +1,15 @@
-"""Engram anonymous usage statistics — Phase 1 & 2.
+"""Engram anonymous usage statistics — the optional local log and weekly feedback.
 
-Phase 1 (local-only): records aggregated daily counts to a local log file.
-Phase 2 (remote): sends the same payload to a Cloudflare Worker endpoint.
-Remote sending requires separate opt-in (re-consent).
+Local log (opt-in, `engram telemetry on`): records aggregated counts to a local
+log file. Nothing in this module sends that log anywhere.
 
-Data collected (when opted in):
+The daily usage counts that are sent by default live in ``usage_stats.py``
+(bucketed, closed-set rows; same off switches as the daily ping). This module
+only holds their endpoint constant and the stored on/off flags.
+
+Weekly feedback (separate opt-in, no built-in endpoint): see ``send_feedback``.
+
+Data written to the local log (when opted in):
 1. Tool call distribution (name + success/fail count) — no arguments or content
 2. Knowledge entry totals (lesson/decision counts) — no content
 3. Engram version
@@ -37,14 +42,11 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-# Phase 2 remote endpoint.
-# No personal/built-in default: the open-source core ships with NO hardcoded
-# telemetry destination. Operators who want remote telemetry must opt in by
-# setting ENGRAM_TELEMETRY_URL / ENGRAM_FEEDBACK_URL explicitly. When unset,
-# remote send is a no-op (local-only mode), regardless of opt-in flags.
-_DEFAULT_ENDPOINT = ""
+# Where the daily usage counts go (usage_stats.py); ENGRAM_TELEMETRY_URL replaces it.
+_DEFAULT_ENDPOINT = "https://telemetry.piia-engram.com/v1/counts"
+# Weekly feedback has no built-in destination: it is sent only after its own
+# opt-in and only when ENGRAM_FEEDBACK_URL is set.
 _DEFAULT_FEEDBACK_ENDPOINT = ""
-_REMOTE_TIMEOUT = 3  # seconds — fail fast, never block MCP tools
 _FEEDBACK_INTERVAL_DAYS = 7  # send feedback at most once per week
 
 _ERROR_CATEGORIES = frozenset({
@@ -161,10 +163,11 @@ def set_statistics_enabled(enabled: bool) -> None:
 
 
 def is_remote_enabled() -> bool:
-    """Check if remote usage statistics (Phase 2) are enabled.
+    """The stored explicit remote flag (``engram telemetry remote on``).
 
-    Requires BOTH local stats enabled AND explicit remote consent.
-    Respects ENGRAM_TELEMETRY_REMOTE env var override.
+    It no longer gates any send from this module. Whether the daily usage
+    counts go out is decided by ``usage_stats.decision()``, where an explicit
+    ``false`` here counts as a refusal.
     """
     if not is_enabled():
         return False
@@ -188,17 +191,24 @@ def set_remote_enabled(enabled: bool) -> None:
 
 
 def get_endpoint() -> str:
-    """Return the remote telemetry endpoint URL."""
+    """Where the daily usage counts are sent: ENGRAM_TELEMETRY_URL, else the default."""
     return os.environ.get("ENGRAM_TELEMETRY_URL", "").strip() or _DEFAULT_ENDPOINT
 
 
 def get_status() -> dict[str, Any]:
     """Return current telemetry status for display."""
     cfg = _load_config()
-    remote = is_remote_enabled()
+    local = is_enabled()
+    try:
+        from . import usage_stats
+
+        remote, decided_by = usage_stats.decision()
+    except Exception:
+        remote, decided_by = False, "unknown"
     return {
-        "enabled": is_enabled(),
+        "enabled": local,
         "remote_enabled": remote,
+        "remote_decided_by": decided_by,
         "config_path": str(_config_path()),
         "log_path": str(_log_path()),
         "local_uuid": cfg.get("local_uuid", "(not set)"),
@@ -206,7 +216,7 @@ def get_status() -> dict[str, Any]:
         "opted_out_at": cfg.get("opted_out_at", "(never)"),
         "remote_opted_in_at": cfg.get("remote_opted_in_at", "(never)"),
         "endpoint": get_endpoint() if remote else "(disabled)",
-        "phase": "2 (local + remote)" if remote else "1 (local log only)",
+        "phase": f"local log {'on' if local else 'off'}; remote counts {'on' if remote else 'off'}",
     }
 
 
@@ -946,41 +956,6 @@ def preview_payload(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Remote sender (fire-and-forget, never raises)
-# ---------------------------------------------------------------------------
-
-def _send_remote(payload: dict[str, Any]) -> bool:
-    """Send payload to remote endpoint. Returns True on success.
-
-    CRITICAL: This function NEVER raises. All errors are silently logged
-    at DEBUG level. A failed remote send must NEVER affect MCP tool behavior.
-    """
-    if not is_remote_enabled():
-        return False
-    try:
-        endpoint = get_endpoint()
-        if not endpoint:
-            # No endpoint configured (no built-in default; ENGRAM_TELEMETRY_URL
-            # unset). Local-only mode: nothing to send, never a network call.
-            return False
-        data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        req = Request(
-            endpoint,
-            data=data,
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": "engram-telemetry/1",
-            },
-            method="POST",
-        )
-        with urlopen(req, timeout=_REMOTE_TIMEOUT) as resp:
-            return 200 <= resp.status < 300
-    except (URLError, OSError, ValueError, Exception) as exc:
-        logger.debug("telemetry remote send failed (silent): %s", exc)
-        return False
-
-
-# ---------------------------------------------------------------------------
 # Tool call tracker (in-memory, flushed daily)
 # ---------------------------------------------------------------------------
 
@@ -1027,11 +1002,7 @@ class ToolCallTracker:
               engram_version: str = "",
               tools_tier: str = "",
               force: bool = False) -> Path | None:
-        """Flush current counts to local log and optionally send remotely.
-
-        Phase 1: always writes to local log.
-        Phase 2: if remote is enabled, also sends to Cloudflare Worker.
-        Remote failure is silently ignored — never affects MCP tools.
+        """Flush current counts to the local log. Makes no network call.
 
         Args:
             force: If True, skip the daily rate limit check. Used for
@@ -1056,7 +1027,6 @@ class ToolCallTracker:
         if payload is None:
             return None
 
-        # Phase 1: local log (always)
         result = log_payload(payload)
         try:
             _mark_payload_sent(
@@ -1065,12 +1035,6 @@ class ToolCallTracker:
             )
         except Exception:
             pass
-
-        # Phase 2: remote send (if opted in, never raises)
-        try:
-            _send_remote(payload)
-        except Exception:
-            pass  # defense in depth — _send_remote already catches everything
 
         self._last_flush_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._calls.clear()

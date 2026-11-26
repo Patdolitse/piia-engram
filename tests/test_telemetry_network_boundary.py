@@ -69,9 +69,9 @@ class TestNoNetworkInDefaultState:
         assert tracker.flush(force=True, engram_version="9.9.9") is None
         assert sealed_network == []
 
-    def test_send_remote_short_circuits_when_disabled(self, isolated, sealed_network):
-        # Even called directly with a payload, remote-off must not hit the network.
-        assert t._send_remote({"schema": 1, "daily_id": "abc"}) is False
+    def test_there_is_no_synchronous_remote_sender(self, isolated, sealed_network):
+        # The counts are sent by usage_stats in a background thread, never from here.
+        assert not hasattr(t, "_send_remote")
         assert sealed_network == []
 
     def test_feedback_send_blocked_when_disabled(self, isolated, sealed_network):

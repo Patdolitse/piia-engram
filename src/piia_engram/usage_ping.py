@@ -1,5 +1,7 @@
 """Daily anonymous usage ping -- on by default, one line of notice, easy to turn off.
 
+(The daily usage counts in ``usage_stats.py`` follow this module's decision.)
+
 At most once per UTC day per install it sends: a random install id (made on this
 machine, reset with ``engram telemetry reset-id``), the Engram version, the OS
 family, the Python major.minor, a bounded MCP client name and the date. Nothing
@@ -379,13 +381,15 @@ def maybe_send(client: Any = "cli") -> threading.Thread | None:
 PRIVACY_URL = "https://github.com/Patdolitse/piia-engram/blob/main/PRIVACY.md"
 NOTICE_EN = (
     "[engram] Engram sends one anonymous usage ping a day by default (random install ID, version, OS, "
-    "Python version, AI client name, date). No content, prompts or file paths; IP addresses are not stored. "
+    "Python version, AI client name, date) and anonymous usage counts once a day (which tools were used, "
+    "in count buckets). No content, prompts or file paths; IP addresses are not stored. "
     "Preview: engram telemetry preview. Off: engram telemetry off or DO_NOT_TRACK=1. "
     f"Privacy: {PRIVACY_URL}"
 )
 NOTICE_ZH = (
     "[engram] Engram 默认每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、"
-    "AI 客户端名称、日期）。不发送内容、提示词或文件路径；不保存 IP 地址。"
+    "AI 客户端名称、日期），并每天发送一次匿名使用计数（用了哪些工具，次数分桶）。"
+    "不发送内容、提示词或文件路径；不保存 IP 地址。"
     "查看：engram telemetry preview。关闭：engram telemetry off 或 DO_NOT_TRACK=1。"
     f"隐私：{PRIVACY_URL}"
 )

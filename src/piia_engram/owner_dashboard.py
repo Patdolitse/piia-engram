@@ -315,8 +315,9 @@ def render_dashboard_text(dashboard: dict[str, Any]) -> str:
         f"  {t('健康', 'healthy')}: {ig.get('healthy')}  {t('问题数', 'problems')}: {ig.get('problems')}",
         t("导出就绪 / Export readiness:", "Export readiness:"),
         f"  {t('可导出(全局)', 'exportable (global)')}: {ex.get('exportable_global', 0)} / {ex.get('total', 0)}",
-        t("遥测 / Telemetry (默认关闭，需手动开启):", "Telemetry (off by default, opt-in):"),
-        f"  enabled={tm.get('enabled')} remote={tm.get('remote_enabled')} phase={tm.get('phase')}",
+        t("使用统计 / Usage statistics (本地日志需手动开启；每日计数默认发送):",
+          "Usage statistics (local log is opt-in; daily counts are sent by default):"),
+        f"  local_log={tm.get('enabled')} daily_counts={tm.get('remote_enabled')} phase={tm.get('phase')}",
         t("vNext 本地信号 / vNext Local Signals:", "vNext Local Signals:"),
         f"  {', '.join(vn.get('names', []))} — "
         f"{t('默认关闭 / 仅本地 / 未写入远程 D1', 'default OFF / local only / not in remote D1')}",

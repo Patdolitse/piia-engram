@@ -11,7 +11,6 @@ import pytest
 from piia_engram.telemetry import (
     ToolCallTracker,
     _daily_id,
-    _send_remote,
     _validate_payload,
     build_payload,
     get_endpoint,
@@ -367,13 +366,17 @@ class TestRemoteConfig:
         monkeypatch.setenv("ENGRAM_TELEMETRY_REMOTE", "1")
         assert is_remote_enabled() is True
 
-    def test_get_status_shows_remote(self, isolated_engram_dir):
+    def test_get_status_reports_the_daily_counts_not_the_stored_flag(self, isolated_engram_dir):
+        """The stored flag is kept, but status follows usage_stats.decision()
+        (off under pytest, like the daily ping)."""
         set_enabled(True)
         set_remote_enabled(True)
+        assert is_remote_enabled() is True
         status = get_status()
-        assert status["remote_enabled"] is True
-        assert "remote" in status["phase"].lower()
-        assert status["endpoint"] != "(disabled)"
+        assert status["remote_enabled"] is False
+        assert status["remote_decided_by"]  # the layer that said no (tests, here)
+        assert status["phase"] == "local log on; remote counts off"
+        assert status["endpoint"] == "(disabled)"
 
     def test_get_status_disabled_remote(self):
         status = get_status()
@@ -384,94 +387,58 @@ class TestRemoteConfig:
         monkeypatch.setenv("ENGRAM_TELEMETRY_URL", "https://custom.example.com/events")
         assert get_endpoint() == "https://custom.example.com/events"
 
-    def test_default_endpoint_is_empty(self, monkeypatch):
-        """The open-source core ships with NO built-in telemetry endpoint.
-
-        Without an explicit ENGRAM_TELEMETRY_URL, get_endpoint() returns "" so
-        remote send is a no-op (local-only). No personal handle / default
-        destination is baked into the package.
-        """
+    def test_default_endpoint_is_the_counts_route(self, monkeypatch):
+        """The daily usage counts have a built-in destination (usage_stats.py
+        sends there); ENGRAM_TELEMETRY_URL replaces it."""
         monkeypatch.delenv("ENGRAM_TELEMETRY_URL", raising=False)
-        assert get_endpoint() == ""
+        assert get_endpoint() == "https://telemetry.piia-engram.com/v1/counts"
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Remote sender
+# The local log flush makes no network call
 # ---------------------------------------------------------------------------
 
-class TestRemoteSender:
-    def test_send_remote_disabled_returns_false(self):
-        """When remote is off, _send_remote should return False immediately."""
-        result = _send_remote({"schema": 1, "daily_id": "test"})
-        assert result is False
+def _no_network(monkeypatch):
+    calls = []
 
-    def test_send_remote_default_off_never_opens_network(self, monkeypatch):
-        """Default-off telemetry must return before constructing any request."""
-        called = {"urlopen": 0}
+    def boom(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("the local log flush must not open the network")
 
-        def boom(*args, **kwargs):
-            called["urlopen"] += 1
-            raise AssertionError("urlopen must not be called when remote is off")
+    monkeypatch.setattr("piia_engram.telemetry.urlopen", boom)
+    return calls
 
-        monkeypatch.setattr("piia_engram.telemetry.urlopen", boom)
 
-        result = _send_remote({"schema": 1, "daily_id": "test"})
+class TestFlushIsLocalOnly:
+    def test_there_is_no_synchronous_remote_sender(self):
+        import piia_engram.telemetry as telemetry
 
-        assert result is False
-        assert called["urlopen"] == 0
+        assert not hasattr(telemetry, "_send_remote")
 
     def test_flush_default_off_never_opens_network_or_writes(self, monkeypatch, isolated_engram_dir):
-        """With telemetry disabled, flush exits before local log and remote send."""
-        monkeypatch.setattr(
-            "piia_engram.telemetry.urlopen",
-            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network")),
-        )
+        """With the local log off, flush exits before writing anything."""
+        calls = _no_network(monkeypatch)
         tracker = ToolCallTracker()
         tracker.record("get_user_context", success=True)
 
         result = tracker.flush(engram_version="3.49.0", force=True)
 
-        assert result is None
+        assert result is None and calls == []
         assert not (isolated_engram_dir / "telemetry.log").exists()
 
-    def test_send_remote_never_raises_on_network_error(self, isolated_engram_dir):
-        """Even with invalid endpoint, _send_remote must never raise."""
+    def test_flush_with_every_flag_on_writes_the_log_and_sends_nothing(
+        self, monkeypatch, isolated_engram_dir
+    ):
+        calls = _no_network(monkeypatch)
         set_enabled(True)
         set_remote_enabled(True)
-        # Point to a guaranteed-unreachable endpoint
-        os.environ["ENGRAM_TELEMETRY_URL"] = "https://127.0.0.1:1/invalid"
-        try:
-            result = _send_remote({"schema": 1, "daily_id": "test"})
-            # Must not raise — returns False on failure
-            assert result is False
-        finally:
-            os.environ.pop("ENGRAM_TELEMETRY_URL", None)
-
-    def test_send_remote_never_raises_on_bad_url(self, isolated_engram_dir):
-        """Even with completely invalid URL, must not raise."""
-        set_enabled(True)
-        set_remote_enabled(True)
-        os.environ["ENGRAM_TELEMETRY_URL"] = "not-a-url"
-        try:
-            result = _send_remote({"schema": 1, "daily_id": "test"})
-            assert result is False
-        finally:
-            os.environ.pop("ENGRAM_TELEMETRY_URL", None)
-
-    def test_flush_with_remote_never_raises(self, isolated_engram_dir):
-        """ToolCallTracker.flush must complete even if remote sending fails."""
-        set_enabled(True)
-        set_remote_enabled(True)
-        os.environ["ENGRAM_TELEMETRY_URL"] = "https://127.0.0.1:1/invalid"
-        try:
-            tracker = ToolCallTracker()
-            tracker.record("test_tool", success=True)
-            # flush should succeed (local log written) despite remote failure
-            result = tracker.flush(engram_version="test")
-            assert result is not None
-            assert result.exists()
-        finally:
-            os.environ.pop("ENGRAM_TELEMETRY_URL", None)
+        monkeypatch.setenv("ENGRAM_TELEMETRY_REMOTE", "1")
+        monkeypatch.setenv("ENGRAM_TELEMETRY_URL", "http://127.0.0.1:1/invalid")
+        tracker = ToolCallTracker()
+        tracker.record("test_tool", success=True)
+        result = tracker.flush(engram_version="test")
+        assert result is not None and result.exists()
+        assert calls == []
 
 
 # ---------------------------------------------------------------------------

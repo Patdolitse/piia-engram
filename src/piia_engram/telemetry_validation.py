@@ -336,14 +336,35 @@ def render_validation_text(report: dict[str, Any]) -> str:
 # action — it only reads files and the declared contract.
 
 
-def validate_optin_defaults(telemetry_src: str) -> tuple[bool, list[str]]:
-    """Confirm the client keeps telemetry opt-*out* by default and gates remote
-    + feedback sends behind their own consent. Static source scan — never runs
-    the module. Returns ``(ok, problems)``."""
+def validate_optin_defaults(
+    telemetry_src: str, usage_stats_src: str | None = None
+) -> tuple[bool, list[str]]:
+    """Confirm the client's defaults. Static source scan — never runs the module.
+
+    * the local log and the weekly feedback stay off until asked for;
+    * ``telemetry.py`` has no synchronous sender for the daily usage counts;
+    * the daily usage counts (on by default, ``usage_stats.py``) are decided
+      only after every layer that turns the daily ping off.
+
+    Returns ``(ok, problems)``. ``usage_stats_src`` None skips the last check.
+    """
     problems: list[str] = []
     src = telemetry_src or ""
     if not src:
         return False, ["missing telemetry.py source"]
+    if "def _send_remote" in src:
+        problems.append("telemetry.py still has a synchronous remote sender (_send_remote)")
+    if usage_stats_src is not None:
+        decision_body = ""
+        if "def decision(" in usage_stats_src:
+            decision_body = usage_stats_src.split("def decision(", 1)[1].split("\ndef ", 1)[0]
+        if not re.search(
+            r"on, layer = usage_ping\.decision\(\)\s*\n\s*if not on:\s*\n\s*return False, layer",
+            decision_body,
+        ):
+            problems.append(
+                "usage counts decision does not honor the daily ping's opt-out layers first"
+            )
     # Local stats default OFF: is_enabled falls back to the stored flag defaulting
     # to False.
     if 'get("enabled", False)' not in src:
@@ -510,8 +531,11 @@ def validate_remote_readiness(
     # 7. Opt-in / opt-out defaults unchanged.
     src_path = Path(package_src) if package_src else _default_package_src(wdir)
     telemetry_src = src_path.read_text(encoding="utf-8") if src_path.is_file() else ""
-    optin_ok, optin_problems = validate_optin_defaults(telemetry_src)
-    add("optin_defaults", optin_problems, "telemetry opt-out by default; remote/feedback gated")
+    stats_path = src_path.with_name("usage_stats.py")
+    stats_src = stats_path.read_text(encoding="utf-8") if stats_path.is_file() else ""
+    optin_ok, optin_problems = validate_optin_defaults(telemetry_src, stats_src)
+    add("optin_defaults", optin_problems,
+        "local log and feedback off by default; usage counts follow the ping's opt-outs")
 
     # 8. No content fields anywhere (reuse the contract's content findings).
     content_problems = [p for p in contract.get("problems", []) if "content-bearing" in p]
