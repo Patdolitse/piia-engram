@@ -530,3 +530,37 @@ class TestServerMain:
         monkeypatch.setenv(autodrain.ENV_SWITCH, "0")
         started, _ = run_main()
         assert started == []
+
+
+class TestProtectedQueueWithoutItsKey:
+    """A process that cannot open a protected queue leaves it to one that can."""
+
+    @pytest.fixture
+    def protected(self, tmp_path, monkeypatch):
+        from piia_engram.hooks import _spool_protection
+
+        monkeypatch.setattr(_spool_protection, "CRYPTO_BUDGET_SECONDS", 30)
+        root = tmp_path / "protected"
+        root.mkdir()
+        (root / ".corpus_salt").write_bytes(b"0123456789abcdef")
+        monkeypatch.setenv("ENGRAM_SECRET", "synthetic-queue-key")
+        monkeypatch.setenv("ENGRAM_DIR", str(root))
+        assert spool.enqueue("cursor_writeback", "cursor", {"summary": SUMMARY}, root=root,
+                             deadline=time.monotonic() + 35)
+        return root
+
+    def test_a_missing_secret_is_reported_as_unavailable_here(self, protected, monkeypatch):
+        monkeypatch.delenv("ENGRAM_SECRET")
+
+        report = spool.drain(protected)
+
+        assert report["processed"] == 0 and report["failed"] == 1
+        assert report["protection_unavailable"] is True
+        assert _pending(protected) == 1  # untouched, for a process that has the key
+        assert autodrain.next_wait(report, 600.0) is None
+
+    def test_with_the_secret_the_same_queue_is_processed(self, protected):
+        # Negative control.
+        report = spool.drain(protected)
+        assert report["processed"] == 1 and not report.get("protection_unavailable")
+        assert _pending(protected) == 0

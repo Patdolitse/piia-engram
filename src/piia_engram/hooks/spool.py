@@ -34,6 +34,11 @@ RESULT_CODES = frozenset({"processed", "duplicate", "invalid-event", "invalid-pr
 KINDS = {"claude_stop": "claude_code", "claude_compact": "claude_code",
          "cursor_save": "cursor", "cursor_writeback": "cursor"}
 _DRAINING = ContextVar("hook_spool_draining", default=False)
+#: Failures that mean the key material is not available to this process
+#: (not that one event is damaged): an automatic drainer stops trying.
+_KEY_UNAVAILABLE_CODES = frozenset({"crypto-secret-missing", "crypto-salt-missing",
+                                    "crypto-salt-invalid", "crypto-unavailable",
+                                    "protection-unavailable"})
 
 
 def store_root(root: Path | None = None) -> Path:
@@ -480,7 +485,8 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None,
                         except Exception:
                             pass
                         log_failure("hook_spool", exc.code, root=root)
-                        if exc.code == "protection-unavailable":
+                        if exc.code in _KEY_UNAVAILABLE_CODES:
+                            # This process cannot open the protected queue at all.
                             report["protection_unavailable"] = True
                         if exc.code == "protection-unavailable" and _shared_storage_failure(exc):
                             break
