@@ -1,7 +1,8 @@
 # Telemetry Worker Configuration
 
-This directory contains the Cloudflare Worker dashboard used for optional,
-anonymous telemetry reporting.
+This directory contains the Cloudflare Worker that receives the anonymous daily
+usage ping, the anonymous daily usage counts and the opt-in feedback reports,
+and serves the dashboard.
 
 `wrangler.toml` is intentionally public and uses placeholder infrastructure
 identifiers. Do not commit real Cloudflare account, zone, D1 database, KV

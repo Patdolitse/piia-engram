@@ -45,12 +45,14 @@ up first and the action is recorded (metadata-only) in the ledger.
 ## 4. No silent cloud / network path for identity or knowledge
 
 Identity, lessons, decisions, playbooks, and contexts are stored as local files
-under the root. There is no implicit upload of this data. Optional telemetry is a
+under the root. There is no implicit upload of this data. Telemetry is a
 separate, schema-validated, content-free contract (see
 `docs/telemetry-privacy.md` and the telemetry-contract runbooks); it carries no
-knowledge bodies. The daily anonymous usage ping (on by default; off with
-`DO_NOT_TRACK=1` or `engram telemetry off`) carries no identity or knowledge
-data either.
+knowledge bodies. The daily anonymous usage ping and the daily anonymous usage
+counts (both on by default; both off with `DO_NOT_TRACK=1` or
+`engram telemetry off`) carry no identity or knowledge data: the counts are
+tool names with count buckets, and `engram telemetry preview` prints the exact
+payloads.
 
 ## 5. Reproduce the audit
 

@@ -139,7 +139,7 @@ These are current repository facts from `docs/public-facts.json`. Public registr
 | PBKDF2 iterations | **600,000** (OWASP 2023+ floor; legacy 100k still decrypts) |
 | Encryption | Optional field-level AES-256-GCM for supported profile fields; local files are plaintext JSON/Markdown by default |
 | Cold-start time | < 100 ms typical (local JSON, no network) |
-| Network calls by default | One anonymous usage ping a day (`engram telemetry off` or `DO_NOT_TRACK=1` turns it off); the `engram` command also checks PyPI for a newer version at most once a day in interactive terminals, and `engram doctor` checks on each run (`ENGRAM_NO_UPDATE_CHECK=1` turns it off); identity and knowledge tools make none, except the optional `read_web_content`; remote telemetry and feedback require separate explicit opt-in and send counts only (see [privacy details](PRIVACY.md)) |
+| Network calls by default | One anonymous usage ping a day and anonymous usage counts once a day (`engram telemetry off` or `DO_NOT_TRACK=1` turns both off); the `engram` command and the MCP server also check PyPI for a newer version at most once a day (the command only in interactive terminals, the server in the background), and `engram doctor` checks on each run (`ENGRAM_NO_UPDATE_CHECK=1` turns it off); identity and knowledge tools make none, except the optional `read_web_content`; weekly feedback reports remain opt-in (see [privacy details](PRIVACY.md)) |
 
 ---
 
@@ -251,7 +251,7 @@ The setup wizard will:
 3. Detect your AI tools, list the exact config files it will touch, and write the MCP connection after a one-keystroke confirm (backed up first; decline leaves them untouched)
 4. Walk you through seed knowledge (role, tech stack, language)
 5. Offer to import rules and memories from your other AI tools — `CLAUDE.md`, `.cursorrules`, memory files (default no; lists them first, then the review queue, approve with `engram review`)
-6. Show a short daily usage ping notice; neither setup mode asks about telemetry or changes your choices
+6. Show a short notice about the daily usage ping and usage counts; neither setup mode asks about telemetry or changes your choices
 7. **Preview your AI identity card** — immediate proof of value
 
 After setup writes the MCP connection (you confirm at the prompt first), restart your AI tool. Many clients can call `get_user_context` at startup; when a host does not do that proactively, an explicit `search_knowledge` or `get_resume_brief` call is still the expected L2 path.
@@ -868,7 +868,7 @@ Run `engram doctor --fix` in a terminal, then restart your AI tool. This command
 That happens when the Python path contains a space, the drive has no 8.3 short names, and no `claude` command is on PATH to tell Engram which Claude Code you run (the desktop app and the VS Code extension bring their own). Any one of these fixes it: install Git for Windows; or, if your Claude Code is 2.1.139 or newer (see its About page), run `engram doctor --fix --hook-args` (or `engram setup --hook-args`), which writes the hooks as `command` + `args` so no shell is involved; or install Python in a path without a space and run `engram doctor --fix`. `--hook-args` refuses when a `claude` on PATH reports an older version, and does nothing on other platforms.
 
 **Does piia-engram send data to the cloud?**
-Your memories never leave your machine. Engram sends one anonymous usage ping a day by default (random install ID, version, OS, Python version, AI client name, date). No content, prompts or file paths are sent; IP addresses are not stored. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1` (it is off in CI and in containers); `engram telemetry preview` shows the exact payload. Setup shows an informational notice without asking about telemetry. Detailed statistics stay off unless explicitly enabled with `engram telemetry on`; remote sending (`engram telemetry remote on`) and weekly feedback (`engram telemetry feedback on`) require separate opt-ins. Setup preserves existing choices. See **[PRIVACY.md](PRIVACY.md)**.
+Your memories never leave your machine. Engram sends one anonymous usage ping a day by default (random install ID, version, OS, Python version, AI client name, date). It also sends anonymous usage counts once a day by default: which tools were used and roughly how often (count buckets, not exact numbers), error categories and rough memory-size buckets, under an ID that changes every day and without the install ID. No content, prompts, file paths or error text are sent; IP addresses are not stored. Turn both off with `engram telemetry off`, `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1` (they are off in CI and in containers, and earlier opt-outs stay in effect); `engram telemetry status` shows what is on and why, and `engram telemetry preview` shows the exact payloads. Setup shows an informational notice without asking about telemetry and preserves existing choices. Weekly feedback reports remain opt-in (`engram telemetry feedback on`). When a newer release exists, the resume brief adds a one-line upgrade reminder; `ENGRAM_NO_UPDATE_CHECK=1` turns the check and the reminder off. See **[PRIVACY.md](PRIVACY.md)**.
 
 **How many MCP tools does piia-engram provide?**
 Two tiers, designed so most users only see 19 tools:
@@ -981,7 +981,7 @@ piia-engram retention plan   # Read-only: memory counts per pool and what the ne
 piia-engram export-agents-md # Export verified, non-sensitive knowledge as an AGENTS.md/CLAUDE.md block
 piia-engram stats            # Show project growth metrics (GitHub + PyPI)
 piia-engram stats --log      # Append stats snapshot to local log
-engram telemetry        # Manage the daily usage ping and opt-in detailed statistics
+engram telemetry        # Manage the daily usage ping, the daily usage counts and the local log
 engram privacy          # Show what data piia-engram stores and where
 ```
 

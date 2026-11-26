@@ -47,33 +47,23 @@ def _rx(pattern: str) -> re.Pattern[str]:
 
 REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
     RequiredClaim("README.md", "usage_ping_disclosed", _rx(r"one anonymous usage ping a day")),
-    RequiredClaim(
-        "README.md",
-        "remote_optin",
-        _rx(r"remote telemetry and feedback require separate explicit opt-in"),
-    ),
+    RequiredClaim("README.md", "usage_counts_disclosed", _rx(r"anonymous usage counts once a day")),
+    RequiredClaim("README.md", "feedback_optin", _rx(r"weekly feedback reports remain opt-in")),
     RequiredClaim(
         "README.md",
         "plaintext_default",
         _rx(r"(plain JSON|local JSON files you own|All data lives in `~/.engram/`)"),
     ),
     RequiredClaim("README.zh-CN.md", "usage_ping_disclosed", re.compile(r"每天发送一次匿名使用信号", re.DOTALL)),
-    RequiredClaim(
-        "README.zh-CN.md",
-        "remote_optin",
-        re.compile(r"远程 telemetry 和每周反馈报告必须单独显式开启", re.DOTALL),
-    ),
+    RequiredClaim("README.zh-CN.md", "usage_counts_disclosed", re.compile(r"每天发送一次匿名使用计数", re.DOTALL)),
+    RequiredClaim("README.zh-CN.md", "feedback_optin", re.compile(r"每周反馈报告仍需显式开启", re.DOTALL)),
     RequiredClaim(
         "README.zh-CN.md",
         "plaintext_default",
         re.compile(r"(明文 JSON|本地 JSON|本地明文)", re.DOTALL),
     ),
     RequiredClaim("SECURITY.md", "usage_ping_disclosed", _rx(r"one anonymous usage ping a day")),
-    RequiredClaim(
-        "SECURITY.md",
-        "remote_optin",
-        _rx(r"Remote telemetry[^\n]{0,160}separate opt-in"),
-    ),
+    RequiredClaim("SECURITY.md", "usage_counts_disclosed", _rx(r"anonymous usage counts once a day")),
     RequiredClaim(
         "SECURITY.md",
         "never_collected",
@@ -94,22 +84,16 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "plaintext_default",
         _rx(r"stored as plain JSON files|All files are plain JSON"),
     ),
-    RequiredClaim(
-        "PRIVACY.md",
-        "remote_optin",
-        _rx(r"Remote telemetry and weekly feedback reports are separate opt-ins"),
-    ),
+    RequiredClaim("PRIVACY.md", "usage_counts_disclosed", _rx(r"anonymous usage counts once a day")),
+    RequiredClaim("PRIVACY.md", "feedback_optin", _rx(r"Weekly feedback reports are opt-in")),
     RequiredClaim(
         "PRIVACY.md",
         "plaintext_without_secret",
         _rx(r"Without `?ENGRAM_SECRET`?[^\n]{0,120}plaintext"),
     ),
     RequiredClaim("docs/telemetry-privacy.md", "usage_ping_disclosed", _rx(r"one anonymous usage ping a day")),
-    RequiredClaim(
-        "docs/telemetry-privacy.md",
-        "remote_optin",
-        _rx(r"Remote sending is a separate opt-in"),
-    ),
+    RequiredClaim("docs/telemetry-privacy.md", "usage_counts_disclosed", _rx(r"anonymous usage counts once a day")),
+    RequiredClaim("docs/telemetry-privacy.md", "feedback_optin", _rx(r"Weekly feedback reports remain opt-in")),
     RequiredClaim(
         "docs/telemetry-privacy.md",
         "no_content",
@@ -121,11 +105,7 @@ REQUIRED_CLAIMS: tuple[RequiredClaim, ...] = (
         "plaintext_default",
         _rx(r"plain JSON or Markdown unless[^\n]{0,160}optional field-level encryption"),
     ),
-    RequiredClaim(
-        "docs/trust.md",
-        "remote_optin",
-        _rx(r"remote telemetry and weekly feedback reports require separate explicit opt-in"),
-    ),
+    RequiredClaim("docs/trust.md", "usage_counts_disclosed", _rx(r"anonymous usage counts once a day")),
     # Audit log is a LOCAL file that is ON BY DEFAULT (opt out with
     # ENGRAM_AUDIT=0). This is unrelated to network telemetry. These claims
     # lock the default-on behaviour so docs can't silently drift back to the
@@ -172,8 +152,8 @@ FORBIDDEN_CLAIMS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("absolute_no_network", _rx(r"\bEngram\s+(?:makes|performs|uses|does)\s+no\s+network\s+requests\b")),
     ("absolute_no_network", _rx(r"\bno\s+network\s+requests\s+are\s+made\b")),
     # The daily usage ping is on by default (2026-10); old wording must not survive.
-    # Only sentence-initial, unqualified phrasings ("Telemetry is off ...") are
-    # stale; qualified ones ("Detailed telemetry is off by default") stay true.
+    # Sentence-initial, unqualified phrasings ("Telemetry is off ...") are stale;
+    # qualified ones about the funnel or the local log stay true.
     ("stale_telemetry_off_default", re.compile(r"(?:^|(?<=[.;:!?|—-]))\s*\**telemetry\**\s+is\s+\**(?:off|opt-in)\b", re.I | re.M)),
     ("stale_usage_stats_off_default", re.compile(r"(?:^|(?<=[.;:!?|—-]))\s*\**usage statistics\**\s+are\s+\**off\b", re.I | re.M)),
     ("stale_zero_network_row", _rx(r"Network calls by default\s*\|\s*\**0\**\s")),
@@ -181,7 +161,13 @@ FORBIDDEN_CLAIMS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("zh_stale_telemetry_off", re.compile(r"(?:遥测|telemetry)\s*\**默认关闭")),
     ("stale_no_stable_id", _rx(r"No stable cross-day user ID")),
     ("zh_stale_zero_network", re.compile(r"默认零网络|默认 0 次网络请求|身份与知识工具默认 \*\*0\*\*")),
-    ("remote_enabled_default", _rx(r"\bremote telemetry\b[^\n.]{0,120}\benabled by default\b")),
+    # The daily usage counts are on by default; wording from the time they were an
+    # opt-in (and the old "cannot be linked" promise for their daily ID) must not survive.
+    ("stale_detailed_stats_off", _rx(r"\bdetailed (?:usage )?(?:statistics|telemetry)\b[^\n.]{0,40}\b(?:off|opt-in)\b")),
+    ("stale_remote_optin", _rx(r"\bremote (?:telemetry|sending)\b[^\n.]{0,120}\bopt-ins?\b")),
+    ("zh_stale_detailed_stats_off", re.compile(r"详细(?:使用)?统计默认关闭")),
+    ("zh_stale_remote_optin", re.compile(r"远程 ?(?:telemetry|发送)[^\n。]{0,60}(?:单独|分别|显式)")),
+    ("stale_unlinkable_daily_id", _rx(r"\bcannot be linked across days\b")),
     ("feedback_enabled_default", _rx(r"\bfeedback\b[^\n.]{0,120}\benabled by default\b")),
     ("encrypted_by_default", _rx(r"\bencrypted by default\b")),
     ("whole_store_encrypted", _rx(r"\b(?:all data|everything|whole store|the whole store)\b[^\n.]{0,120}\bencrypted\b")),

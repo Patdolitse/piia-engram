@@ -16,8 +16,9 @@ ecosystem entry point, not a finished product surface.
 
 - It does not bundle credentials, write to your config without consent, or send
   your memories to a cloud. Engram is local-first; it sends one anonymous usage
-  ping a day (turn it off with `engram telemetry off` or `DO_NOT_TRACK=1`), and
-  detailed telemetry is opt-in only.
+  ping a day and anonymous usage counts once a day (tool names with count
+  buckets, never content; turn both off with `engram telemetry off` or
+  `DO_NOT_TRACK=1`).
 - It does not claim capabilities Engram does not have today.
 
 ## Prerequisites

@@ -6,6 +6,22 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/)。版本号遵循[语义化版本](https://semver.org/)。
 
+## [Unreleased]
+
+### 新增
+
+- PyPI 上有新版本时，续接简报末尾会多一行升级提醒，只使用 AI 客户端的用户也能看到。简报和会话开始 hook 只读取已保存的结果；MCP server 在后台刷新这个结果，每天最多一次，且不在启动时进行。这会新增一种默认网络调用（只请求公开的包版本信息，不携带任何关于你的数据）。`ENGRAM_NO_UPDATE_CHECK=1` 可关闭检查和提醒；CI、容器和测试环境中不检查。
+
+### 变更
+
+- **行为变化：** 匿名使用计数现在默认每天发送一次。此前只有在显式开启并配置端点后才发送。每行说明用了哪些工具、大致次数（分桶，不是精确数字）、错误类别和记忆规模分桶，使用每天更换的 ID，不带每日信号的安装 ID；不包含内容、提示词、文件路径或错误正文。已有的退出选择继续有效。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0`、`DO_NOT_TRACK=1` 或 `NO_TELEMETRY=1`；CI、容器和测试环境中自动不发。`engram telemetry status` 显示当前状态和原因，`engram telemetry preview` 显示实际发送的内容。每周反馈报告仍需显式开启。详见[使用信号与遥测](docs/telemetry-privacy.md)。
+
+- 计数不再在工具调用过程中发送：先保存在用户配置目录，再由后台线程发出。`ENGRAM_TELEMETRY_URL` 现在收到的是新的分桶数据，而不是原先的载荷。
+
+- `engram telemetry on` 和 `engram telemetry remote on` 会同时开启每日信号和每日使用计数；`engram telemetry on` 还会开启本地统计日志，该日志从不发送。
+
+- 使用信号的保留期由 400 天改为 395 天。
+
 ## [4.29.0] - 2026-11-26
 
 ### 新增

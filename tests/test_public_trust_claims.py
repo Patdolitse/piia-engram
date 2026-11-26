@@ -44,20 +44,20 @@ _DEFAULT_FEEDBACK_ENDPOINT = "https://telemetry.example.test/v1/feedback"
         root,
         "README.md",
         "Engram sends one anonymous usage ping a day (off with DO_NOT_TRACK=1); identity and knowledge tools make no network calls; "
-        "remote telemetry and feedback require separate explicit opt-in. "
+        "it also sends anonymous usage counts once a day; weekly feedback reports remain opt-in. "
         "All data lives in local plain JSON files by default. "
         "Local access audit log on by default at ~/.engram/audit.log; opt out with ENGRAM_AUDIT=0.\n",
     )
     _write(
         root,
         "README.zh-CN.md",
-        "Engram 每天发送一次匿名使用信号（DO_NOT_TRACK=1 可关闭）；远程 telemetry 和每周反馈报告必须单独显式开启。"
+        "Engram 每天发送一次匿名使用信号（DO_NOT_TRACK=1 可关闭）；默认每天发送一次匿名使用计数；每周反馈报告仍需显式开启。"
         "默认以本地明文 JSON 文件存储。本地访问审计默认开启。\n",
     )
     _write(
         root,
         "SECURITY.md",
-        "Engram sends one anonymous usage ping a day. Remote telemetry is a separate opt-in. "
+        "Engram sends one anonymous usage ping a day. It sends anonymous usage counts once a day. "
         "https://telemetry.example.test/v1/events "
         "https://telemetry.example.test/v1/feedback "
         "Never collected: identity content, prompts, file paths. "
@@ -70,21 +70,21 @@ _DEFAULT_FEEDBACK_ENDPOINT = "https://telemetry.example.test/v1/feedback"
         root,
         "PRIVACY.md",
         "Your identity, preferences, lessons, and decisions are stored as plain JSON files. "
-        "Engram sends one anonymous usage ping a day. Remote telemetry and weekly feedback reports are separate opt-ins. "
+        "Engram sends one anonymous usage ping a day. It sends anonymous usage counts once a day. Weekly feedback reports are opt-in. "
         "Without ENGRAM_SECRET, piia-engram works normally with plaintext. "
         "Local audit logging is on by default; opt out with ENGRAM_AUDIT=0.\n",
     )
     _write(
         root,
         "docs/telemetry-privacy.md",
-        "Engram sends one anonymous usage ping a day with a random install ID. Remote sending is a separate opt-in. "
+        "Engram sends one anonymous usage ping a day with a random install ID. It sends anonymous usage counts once a day. Weekly feedback reports remain opt-in. "
         "No lesson / decision / playbook content is collected.\n",
     )
     _write(
         root,
         "docs/trust.md",
         "The files are plain JSON or Markdown unless you explicitly enable optional field-level encryption. "
-        "Remote telemetry and weekly feedback reports require separate explicit opt-in. "
+        "Engram sends anonymous usage counts once a day. "
         "Local audit logging is on by default; opt out with ENGRAM_AUDIT=0.\n",
     )
 
@@ -118,7 +118,7 @@ def test_negated_default_and_encryption_clarifications_do_not_false_positive(gua
         tmp_path,
         "README.md",
         "Engram sends one anonymous usage ping a day (off with DO_NOT_TRACK=1); identity and knowledge tools make no network calls; "
-        "remote telemetry and feedback require separate explicit opt-in. "
+        "it also sends anonymous usage counts once a day; weekly feedback reports remain opt-in. "
         "All data lives in local plain JSON files by default. "
         "Remote telemetry is never enabled by default. "
         "Not all data is encrypted at rest; only supported fields are encrypted when configured. "
@@ -150,7 +150,7 @@ def test_endpoint_drift_fails_against_telemetry_source(guard, tmp_path: Path):
     _write(
         tmp_path,
         "SECURITY.md",
-        "Engram sends one anonymous usage ping a day. Remote telemetry is a separate opt-in. "
+        "Engram sends one anonymous usage ping a day. It sends anonymous usage counts once a day. "
         "https://example.invalid/v1/events "
         "https://telemetry.example.test/v1/feedback "
         "Never collected: identity content, prompts, file paths. "
@@ -185,8 +185,8 @@ _DEFAULT_FEEDBACK_ENDPOINT = ""
     _write(
         tmp_path,
         "SECURITY.md",
-        "Engram sends one anonymous usage ping a day. Remote telemetry is a separate opt-in "
-        "configured via ENGRAM_TELEMETRY_URL; the core ships with no built-in endpoint. "
+        "Engram sends one anonymous usage ping a day. It sends anonymous usage counts once a day "
+        "to the endpoint set via ENGRAM_TELEMETRY_URL; this build has no built-in endpoint. "
         "Never collected: identity content, prompts, file paths. "
         "Optional web reads only fetch URLs you explicitly provide. "
         "Optional field-level encryption requires piia-engram[secure] and ENGRAM_SECRET. "
@@ -204,7 +204,7 @@ def test_stale_off_by_default_wording_fails(guard, tmp_path: Path):
     _write_minimal_trust_surface(tmp_path)
     _write(tmp_path, "PRIVACY.md",
            "stored as plain JSON files. Engram sends one anonymous usage ping a day. "
-           "Telemetry is off by default. Remote telemetry and weekly feedback reports are separate opt-ins. "
+           "Telemetry is off by default. It sends anonymous usage counts once a day. Weekly feedback reports are opt-in. "
            "Without ENGRAM_SECRET, piia-engram works normally with plaintext. "
            "Local audit logging is on by default.\n")
     result = guard.scan(tmp_path)
@@ -214,11 +214,11 @@ def test_stale_off_by_default_wording_fails(guard, tmp_path: Path):
 @pytest.mark.parametrize(
     "text",
     [
-        "Detailed telemetry is off by default.",
-        "Remote telemetry is off by default and a separate opt-in.",
         "Funnel telemetry is off by default.",
-        "Detailed usage statistics stay off unless you turn them on.",
         "The first-value funnel is also off by default.",
+        "The local statistics log stays off unless you turn it on.",
+        "Weekly feedback reports remain opt-in.",
+        "It stays off if you ever turned the statistics or their remote sending off.",
     ],
 )
 def test_qualified_current_wording_passes_on_forbidden_only_surface(guard, tmp_path: Path, text: str):
@@ -242,6 +242,14 @@ def test_qualified_current_wording_passes_on_forbidden_only_surface(guard, tmp_p
         "Nothing leaves the machine.",
         "遥测**默认关闭**",
         "telemetry **默认关闭**",
+        "Detailed telemetry is off by default.",
+        "Detailed usage statistics stay off unless you turn them on.",
+        "Remote telemetry is off by default and a separate opt-in.",
+        "Remote sending is a separate opt-in.",
+        "remote telemetry and weekly feedback reports require separate explicit opt-in",
+        "详细统计默认关闭，需显式运行 engram telemetry on。",
+        "远程发送（engram telemetry remote on）与每周反馈分别开启。",
+        "The daily ID rotates and cannot be linked across days.",
     ],
 )
 def test_stale_wording_fails_on_forbidden_only_surface(guard, tmp_path: Path, text: str):
@@ -264,3 +272,34 @@ def test_missing_forbidden_only_surface_is_skipped(guard, tmp_path: Path):
 
     assert result["ok"] is True, result["problems"]
     assert "docs/comparison.md" not in result["scanned"]
+
+
+@pytest.mark.parametrize("rel,claim,gone", [
+    ("README.md", "usage_counts_disclosed", "it also sends anonymous usage counts once a day; "),
+    ("README.md", "feedback_optin", "weekly feedback reports remain opt-in. "),
+    ("README.zh-CN.md", "usage_counts_disclosed", "默认每天发送一次匿名使用计数；"),
+    ("SECURITY.md", "usage_counts_disclosed", "It sends anonymous usage counts once a day. "),
+    ("PRIVACY.md", "usage_counts_disclosed", "It sends anonymous usage counts once a day. "),
+    ("PRIVACY.md", "feedback_optin", "Weekly feedback reports are opt-in. "),
+    ("docs/telemetry-privacy.md", "usage_counts_disclosed", "It sends anonymous usage counts once a day. "),
+    ("docs/trust.md", "usage_counts_disclosed", "Engram sends anonymous usage counts once a day. "),
+])
+def test_missing_usage_counts_disclosure_fails(guard, tmp_path: Path, rel: str, claim: str, gone: str):
+    _write_minimal_trust_surface(tmp_path)
+    assert guard.scan(tmp_path)["ok"] is True  # control: the full surface passes
+    path = tmp_path / rel
+    text = path.read_text(encoding="utf-8")
+    assert gone in text
+    path.write_text(text.replace(gone, ""), encoding="utf-8")
+    result = guard.scan(tmp_path)
+    assert any(p["kind"] == "missing_required_claim" and p["file"] == rel and p["claim"] == claim
+               for p in result["problems"]), result["problems"]
+
+
+def test_the_counts_endpoint_must_be_named_in_security_md(guard, tmp_path: Path):
+    _write_minimal_trust_surface(tmp_path)
+    _write(tmp_path, "src/piia_engram/telemetry.py",
+           '_DEFAULT_ENDPOINT = "https://telemetry.example.test/v1/counts"\n'
+           '_DEFAULT_FEEDBACK_ENDPOINT = ""\n')
+    result = guard.scan(tmp_path)
+    assert any(p["kind"] == "endpoint_drift" and p["endpoint"] == "telemetry" for p in result["problems"])

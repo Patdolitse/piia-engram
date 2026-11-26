@@ -376,11 +376,13 @@ playbooks, project snapshots, recent contexts, and daily logs.
 - Engram sends one anonymous usage ping a day (random install ID, version, OS,
   Python version, AI client name, date). Turn it off with `engram telemetry off`,
   `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers.
-- Detailed usage statistics stay off unless you turn them on and write a local
-  log first; remote sending (`engram telemetry remote on`) and weekly feedback
-  reports (`engram telemetry feedback on`) are **separate explicit opt-ins**.
-  Knowledge content, prompts, AI responses, file paths, emails, and IP addresses
-  are never collected.
+- Engram also sends anonymous usage counts once a day: which tools were used and
+  roughly how often (count buckets), error categories and memory-size buckets,
+  under an ID that changes every day. The same switches turn it off, and earlier
+  opt-outs stay in effect. Weekly feedback reports
+  (`engram telemetry feedback on`) remain opt-in.
+  Knowledge content, prompts, AI responses, file paths, emails, and error text
+  are never sent; IP addresses are not stored.
 - Audit logging is **on by default**; it records read/write operations to a
   local `~/.engram/audit.log` (plain JSON-lines, never sent anywhere). Opt out
   with `ENGRAM_AUDIT=0`.
@@ -460,8 +462,8 @@ Full data-flow detail is in [Trust model](trust.md) and
 No. Your memories stay in `~/.engram/`. Engram sends one anonymous usage ping a
 day (random install ID, version, OS, Python version, AI client name, date); turn
 it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`.
-Detailed usage statistics stay off unless you turn them on and, even then, only
-ever send anonymous counts after a separate opt-in — never your content.
+It also sends anonymous usage counts once a day (which tools were used, in count
+buckets); the same switches turn that off. Neither ever contains your content.
 
 **I switched AI tools — is my memory still there?**
 Yes. All tools connected to the Engram MCP read the same local store.

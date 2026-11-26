@@ -137,7 +137,7 @@ Agent 指引见 [llms.txt](llms.txt)，详情见 [CLI 与 JSON 契约](docs/spec
 | PBKDF2 轮数 | **600,000**（符合 OWASP 2023+ 推荐；100k 旧密文仍可解密）|
 | 加密 | 支持字段级 AES-256-GCM（可选）；本地文件默认是明文 JSON / Markdown |
 | 冷启动延迟 | < 100 ms（本地 JSON，无网络）|
-| 默认网络调用 | 每天一次匿名使用信号（`engram telemetry off` 或 `DO_NOT_TRACK=1` 可关闭）；`engram` 命令在交互式终端中每天最多向 PyPI 查询一次新版本，`engram doctor` 每次运行都会查询（`ENGRAM_NO_UPDATE_CHECK=1` 可关闭）；身份与知识工具不联网，可选的 `read_web_content` 除外；远程 telemetry 和每周反馈报告必须单独显式开启，且只发送计数（详见 [隐私说明](PRIVACY.md)）|
+| 默认网络调用 | 每天一次匿名使用信号和每天一次匿名使用计数（`engram telemetry off` 或 `DO_NOT_TRACK=1` 可同时关闭）；`engram` 命令和 MCP server 每天最多向 PyPI 查询一次新版本（命令仅在交互式终端中查询，server 在后台查询），`engram doctor` 每次运行都会查询（`ENGRAM_NO_UPDATE_CHECK=1` 可关闭）；身份与知识工具不联网，可选的 `read_web_content` 除外；每周反馈报告仍需显式开启（详见 [隐私说明](PRIVACY.md)）|
 
 客户端专项 setup 卡： [Claude Code](docs/integrations/claude-code.md)、[Codex](docs/integrations/codex.md)、[Cursor](docs/integrations/cursor.md)。证据等级采用 [客户端验证 runbook](docs/runbooks/agent-client-validation.md)：L0 表示发现入口，L1 表示协议可达，L2 表示观察到读/搜索行为，L3 增加 A/B 行为收益，L4 增加跨客户端连续性，L5 表示可公开引用的可复现证据。
 
@@ -235,7 +235,7 @@ engram setup
 3. **注入 AI 指令**到每个工具的原生配置（`CLAUDE.md`、`.cursorrules`、`AGENTS.md`），确保 AI 主动调用 Engram
 4. 引导你录入种子知识（角色、技术栈、语言）
 5. 询问是否导入其它 AI 工具已有的规则和记忆——`CLAUDE.md`、`.cursorrules`、记忆文件（默认否；先列清单，确认后进入待审区，用 `engram review` 批准）
-6. 显示一行每日匿名使用信号说明；普通与高级 setup 都不询问遥测，也不改变已有选择
+6. 显示一行每日匿名使用信号与使用计数的说明；普通与高级 setup 都不询问遥测，也不改变已有选择
 7. **预览你的 AI 身份卡**——安装即见效
 
 如果 MCP 客户端已经配置好，setup 完成后重启 AI 工具即可。若还没有配置，请手动添加 MCP 条目，或运行下面显式授权的自动写入命令。第一次成功连接后的对话会自动调用 `get_user_context`——AI 已经认识你了。
@@ -802,7 +802,7 @@ engram setup
 这出现在 Python 路径带空格、所在磁盘没有 8.3 短文件名、并且 PATH 上没有 `claude` 命令可供 Engram 判断 Claude Code 版本的时候（桌面版和 VS Code 扩展自带 Claude Code，不会把它放到 PATH 上）。以下任意一种做法都能解决：安装 Git for Windows；或者，如果你的 Claude Code 是 2.1.139 或更新版本（在它的“关于”页面查看），运行 `engram doctor --fix --hook-args`（或 `engram setup --hook-args`），把 hook 写成 `command` + `args`，不经过任何 shell；或者把 Python 装到不带空格的路径后运行 `engram doctor --fix`。PATH 上的 `claude` 报告的版本更旧时，`--hook-args` 会拒绝执行；在其它平台上它不起作用。
 
 **piia-engram 会把数据发到云端吗？**
-你的记忆不会离开你的电脑。Engram 默认每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期）。不发送内容、提示词或文件路径；不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`（CI 和容器环境中自动不发）；`engram telemetry preview` 可查看实际发送内容。Setup 只显示说明，不询问遥测。详细统计默认关闭，需显式运行 `engram telemetry on` 开启本地统计；远程发送（`engram telemetry remote on`）和每周反馈（`engram telemetry feedback on`）需分别开启。Setup 保留已有选择。详见 **[PRIVACY.md](PRIVACY.md)**。
+你的记忆不会离开你的电脑。Engram 默认每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期）。此外默认每天发送一次匿名使用计数：用了哪些工具、大致次数（分桶，不是精确数字）、错误类别和记忆规模分桶；使用每天更换的 ID，不带安装 ID。不发送内容、提示词、文件路径或错误正文；不保存 IP 地址。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0`、`DO_NOT_TRACK=1` 或 `NO_TELEMETRY=1`（CI 和容器环境中自动不发，此前的退出选择继续有效）；`engram telemetry status` 显示当前状态和原因，`engram telemetry preview` 可查看实际发送内容。Setup 只显示说明，不询问遥测，并保留已有选择。每周反馈报告仍需显式开启（`engram telemetry feedback on`）。有新版本时，续接简报会多一行升级提醒；`ENGRAM_NO_UPDATE_CHECK=1` 可关闭检查和提醒。详见 **[PRIVACY.md](PRIVACY.md)**。
 
 **piia-engram 有多少个 MCP 工具？**
 两层设计，大多数用户只会看到 19 个工具：
@@ -912,7 +912,7 @@ piia-engram retention plan   # 只读：各类记忆的数量，以及下一次�
 piia-engram export-agents-md # 把已验证、非敏感的知识导出为 AGENTS.md/CLAUDE.md 片段
 piia-engram stats            # 查看项目增长数据（GitHub + PyPI）
 piia-engram stats --log      # 追加统计快照到本地日志
-engram telemetry        # 管理每日使用信号和可选详细统计
+engram telemetry        # 管理每日使用信号、每日使用计数和本地日志
 engram privacy          # 查看 piia-engram 存了什么数据、存在哪里
 ```
 

@@ -22,7 +22,8 @@ By default, Engram stores its core data under `~/.engram/`:
 | Playbooks | `~/.engram/playbooks/` | Reusable multi-step workflows |
 | Project snapshots | `~/.engram/projects/` | Project-specific context |
 | Recent contexts and daily logs | `~/.engram/contexts/`, `~/.engram/daily/` | Cross-session continuity |
-| Optional telemetry log | `~/.engram/telemetry.log` | Local opt-in usage counts; remote sending is a separate opt-in |
+| Optional telemetry log | `~/.engram/telemetry.log` | Local usage counts, written only after `engram telemetry on`; never sent |
+| Usage counts waiting to be sent | `stats-spool/` in the `piia-engram` folder under your user config directory | At most a week of per-day tool counts for the daily usage counts; removed after sending or when telemetry is turned off |
 | Usage ping install ID | `piia-engram` folder under your user config directory | Random ID for the daily usage ping; `engram telemetry reset-id` makes a new one |
 
 The files are plain JSON or Markdown unless you explicitly enable optional field-level encryption for supported sensitive fields.
@@ -35,8 +36,10 @@ By default:
 
 - No hosted account is required.
 - Engram sends one anonymous usage ping a day (random install ID, version, OS, Python version, AI client name, date). Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0` or `DO_NOT_TRACK=1`; it is off in CI and in containers.
-- Detailed usage statistics are off unless you turn them on and write a local log first; remote telemetry and weekly feedback reports require separate explicit opt-in.
-- Knowledge content, prompts, AI responses, file paths, email addresses, and IP addresses are not collected by telemetry.
+- Engram sends anonymous usage counts once a day (which tools were used, in count buckets; error categories; memory-size buckets; version, OS, Python version; an ID that changes every day and not the install ID). The same switches turn it off, and earlier opt-outs stay in effect.
+- The local statistics log is off unless you turn it on, and it is never sent. Weekly feedback reports remain opt-in.
+- The `engram` command and the MCP server ask PyPI for the latest version at most once a day; `ENGRAM_NO_UPDATE_CHECK=1` turns it off.
+- Knowledge content, prompts, AI responses, file paths, email addresses, and error text are not sent by the ping or the counts; IP addresses are not stored.
 - High-risk AI-suggested knowledge (credentials, executable commands, permission or MCP-config changes) is staged for your review before becoming verified, and unsupervised background writeback is always staged. Low/medium-risk items are auto-verified unless you set `ENGRAM_APPROVAL=strict`, which stages every write. See the risk-gated workflow below.
 - `engram setup` lists the external MCP client config files it would touch and asks for a one-keystroke confirm before writing; declining leaves every external config untouched. `engram setup --apply-external-config` skips the prompt for non-interactive/CI runs.
 
@@ -44,8 +47,7 @@ Optional features can have different behavior:
 
 - `read_web_content` fetches a URL you explicitly provide through the configured reader path.
 - Self-hosted HTTP transport is available for advanced deployments.
-- `engram telemetry remote on` can send anonymous count-only telemetry to the configured endpoint after explicit consent.
-- `engram telemetry feedback on` can send weekly anonymous feedback reports after explicit consent.
+- `engram telemetry feedback on` can send weekly anonymous feedback reports, which include the labels of your most used knowledge domains, to a configured endpoint after explicit consent.
 
 See [PRIVACY.md](../PRIVACY.md) for the full data-flow description.
 
@@ -132,7 +134,7 @@ Public or shareable outputs should contain:
 - Counts of lessons, decisions, playbooks, and pending review items.
 - Health status from `engram doctor`.
 - Redacted storage labels such as `<engram-root>`.
-- Whether telemetry is off or enabled.
+- Whether the usage ping, the usage counts and the local log are on.
 - Metadata-only config integrity counts and short hashes, when useful.
 
 Private diagnostic outputs may contain:

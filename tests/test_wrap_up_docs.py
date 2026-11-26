@@ -129,10 +129,12 @@ def test_mcp_tool_descriptions_do_not_claim_automatic_import() -> None:
     assert "engram import-memories" in by_name["get_user_context"]
 
 
-def test_cross_tool_guide_documents_telemetry_as_separate_opt_in_boundary() -> None:
+def test_cross_tool_guide_documents_telemetry_as_separate_metadata_paths() -> None:
     text = (ROOT / "docs" / "cross-tool-guide.md").read_text(encoding="utf-8")
 
-    assert "Telemetry and feedback are separate opt-in metadata paths" in text
+    assert ("The daily usage ping, the daily usage counts and the opt-in feedback report "
+            "are separate metadata paths") in text
+    assert "closeout itself never sends the usage counts" in text
     assert "They are not reconciliation" in text
     assert "Default non-opt-in closeout sends no remote feedback" in text
 

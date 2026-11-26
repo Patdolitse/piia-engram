@@ -23,7 +23,7 @@ piia-engram is a **local-first** tool. Your identity, preferences, lessons, and 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Default implementation: your data stays in local files. Engram sends one anonymous usage ping a day by default (see [Daily usage ping](#daily-usage-ping-on-by-default)); turn it off with `engram telemetry off` or `DO_NOT_TRACK=1`. Both interactive setup paths show the same notice without asking about telemetry or changing existing choices. Detailed statistics stay off unless explicitly enabled with `engram telemetry on`. Remote telemetry and weekly feedback reports are separate opt-ins (`engram telemetry remote on`, `engram telemetry feedback on`); they send count-only payloads only when an endpoint is configured.
+Default implementation: your data stays in local files. Engram sends one anonymous usage ping a day by default (see [Daily usage ping](#daily-usage-ping-on-by-default)) and anonymous usage counts once a day by default (see [Daily usage counts](#daily-usage-counts-on-by-default)); turn both off with `engram telemetry off` or `DO_NOT_TRACK=1`. Both interactive setup paths show the same notice without asking about telemetry or changing existing choices. The local statistics log stays off unless you turn it on with `engram telemetry on`, and it is never sent. Weekly feedback reports are opt-in (`engram telemetry feedback on`) and are sent only when an endpoint is configured.
 
 ## What piia-engram stores locally
 
@@ -81,82 +81,94 @@ with `engram review` and delete anything unwanted.
 
 ### Default identity and knowledge tools: zero network requests
 
-With default settings, identity, knowledge, search, review, and governance tools operate on local files. They make **no network requests** of their own — no API calls, no analytics. Separately, Engram sends the daily usage ping described below.
+With default settings, identity, knowledge, search, review, and governance tools operate on local files. They make **no network requests** of their own — no API calls, no analytics. Separately, Engram sends the daily usage ping and the daily usage counts described below, and checks for a newer release as described under [Update check](#update-check).
 
-Apart from that ping, the only exception is the optional `read_web_content` tool, which fetches a URL you explicitly provide — either through a local sidecar (if you run one) or the self-contained built-in reader. Both paths fetch only the URL you pass in; no other data leaves your machine.
+Apart from those, the only exception is the optional `read_web_content` tool, which fetches a URL you explicitly provide — either through a local sidecar (if you run one) or the self-contained built-in reader. Both paths fetch only the URL you pass in; no other data leaves your machine.
 
 ### Daily usage ping (on by default)
 
-Engram sends one anonymous usage ping a day by default so the project knows how many installs are active. It contains a random install ID (created on your machine, stored in a `piia-engram` folder under your user config directory; `engram telemetry reset-id` makes a new one), the Engram version, OS family, Python major.minor version, the AI client name and the date. No content, prompts or file paths are sent. It never contains account details, command arguments or error text; IP addresses are not stored (the server sees the source IP in transit); pings are kept for 400 days.
+Engram sends one anonymous usage ping a day by default so the project knows how many installs are active. It contains a random install ID (created on your machine, stored in a `piia-engram` folder under your user config directory; `engram telemetry reset-id` makes a new one), the Engram version, OS family, Python major.minor version, the AI client name and the date. No content, prompts or file paths are sent. It never contains account details, command arguments or error text; IP addresses are not stored (the server sees the source IP in transit); pings are kept for 395 days.
 
-- **Off when:** `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests; or if you explicitly turned the detailed statistics or their remote sending off before 4.23.0 (including a "no" in an earlier `engram setup`). From 4.23.0, setup does not ask about telemetry or change either preference, including earlier opt-outs. `engram telemetry on` turns it back on (and also turns local statistics back on).
+- **Off when:** `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests; or if you explicitly turned the statistics or their remote sending off before 4.23.0 (including a "no" in an earlier `engram setup`). From 4.23.0, setup does not ask about telemetry or change either preference, including earlier opt-outs. `engram telemetry on` turns it back on (together with the daily usage counts and the local statistics log).
 - **Transparent:** `engram telemetry status` shows whether it is on and why; `engram telemetry preview` prints the exact payload.
 - **Endpoint:** `https://telemetry.piia-engram.com/v1/ping`, at most once per UTC day, in the background; a failed send is skipped silently.
 
 ### 每日匿名使用信号（中文）
 
-Engram 默认每天发送一次匿名使用信号：随机安装 ID、版本、系统、Python 主次版本、AI 客户端名称、日期。不发送内容、提示词或文件路径；不保存 IP 地址（请求传输时服务器会看到来源 IP）。信号最多每个 UTC 日一次，保留 400 天。
+Engram 默认每天发送一次匿名使用信号：随机安装 ID、版本、系统、Python 主次版本、AI 客户端名称、日期。不发送内容、提示词或文件路径；不保存 IP 地址（请求传输时服务器会看到来源 IP）。信号最多每个 UTC 日一次，保留 395 天。
 
 查看：`engram telemetry preview`；关闭：`engram telemetry off` 或 `DO_NOT_TRACK=1`，也支持 `ENGRAM_TELEMETRY=0`、`NO_TELEMETRY=1`。CI、容器和测试环境自动不发，此前明确退出的选择继续生效。
 
-普通与高级 setup 只显示同一行说明，不询问遥测，也不改变已有选择。详细统计默认关闭，需显式运行 `engram telemetry on` 开启本地统计；远程发送（`engram telemetry remote on`）与每周反馈（`engram telemetry feedback on`）分别开启，并且必须配置端点。非交互 setup 保持不变。更多信息见[遥测说明](docs/telemetry-privacy.md)。
+普通与高级 setup 只显示同一行说明，不询问遥测，也不改变已有选择；非交互 setup 保持不变。每日使用计数见下文。更多信息见[遥测说明](docs/telemetry-privacy.md)。
 
 ### Update check
 
-The `engram` command checks PyPI for a newer version at most once a day, only in interactive terminals and never in CI; `engram doctor` also checks on each run. The request carries no data about you. Turn it off with `ENGRAM_NO_UPDATE_CHECK=1`.
+The `engram` command checks PyPI for a newer version at most once a day, only in interactive terminals and never in CI; `engram doctor` also checks on each run. The MCP server makes the same check in the background, at most once a day and never while it starts, so that people who only use an AI client hear about new releases too: when a newer release exists, the resume brief ends with one fixed line naming the new and the installed version and the upgrade command. The brief itself and the session-start hooks only read the stored answer and make no request. The request is a plain download of the public package information and carries no data about you. `ENGRAM_NO_UPDATE_CHECK=1` turns the check and the reminder off; neither runs in CI, containers or tests.
 
-### Optional detailed usage statistics
+更新检查（中文）：`engram` 命令与 MCP server 每天最多向 PyPI 查询一次新版本（server 在后台查询，不在启动时）。有新版本时，续接简报末尾会多一行固定格式的升级提醒。请求不携带任何关于你的数据。`ENGRAM_NO_UPDATE_CHECK=1` 可关闭检查和提醒；CI、容器和测试环境中不检查。
 
-piia-engram offers **opt-in** anonymous usage statistics to help the project understand how tools are used. This is:
+### Daily usage counts (on by default)
 
-- **Off by default until explicit opt-in** — setup and advanced setup never ask about telemetry or enable detailed statistics. `engram telemetry on` enables local statistics and the daily ping. Non-interactive setup and existing explicit choices remain unchanged.
-- **Transparent** — preview the exact payload with `engram telemetry preview`
-- **Reversible** — disable anytime with `engram telemetry off`
+Engram sends anonymous usage counts once a day by default so the project can see which tools are used and where errors happen. Once a UTC day has ended, the next session sends one row for that day. A day without use sends nothing.
 
-Local telemetry, remote sending and weekly feedback can also be controlled separately through the CLI:
+> **Behavior change:** before this release these counts were sent only after an explicit opt-in. They are now on by default. Everyone who opted out before stays opted out.
 
-- `engram telemetry on` enables local count logging.
-- `engram telemetry remote on` enables remote sending of the same count-only telemetry.
-- `engram telemetry feedback on` enables weekly anonymous feedback reports.
-
-#### What is collected (when opted in)
-
-| Field | Example | Contains content? |
-|-------|---------|-------------------|
-| Tool call counts | `{"add_lesson": {"success": 5, "error": 1}}` | No — tool names + counts only |
-| Knowledge totals | `{"lessons": 47, "decisions": 12}` | No — counts only |
-| Engram version | `"3.42.0"` | No |
-| Previous reported version | `"3.41.0"` or `null` | No — version string only |
-| Session type | `"first_run"` / `"regular"` | No — first telemetry payload vs later payloads |
-| Install-age bucket | `"first_day"`, `"2_7_days"`, `"8_30_days"`, `"31_plus_days"` | No — coarse bucket only, not the exact install time |
-| Error category counts | `{"timeout": 1, "validation": 2}` | No — closed categories only, never error text or stack traces |
-| Daily anonymous ID | `"a3f8b2c1e9d04f67"` | HMAC-derived, rotates daily, cannot be linked across days |
-| OS platform | `"win32"` | No detailed version |
+| Field | Example | What it is |
+|-------|---------|------------|
+| Tools used | `{"add_lesson": {"ok": "5_9", "err": "1_4"}}` | Names of Engram's own tools, each with a count bucket (`0`, `1_4`, `5_9`, `10_24`, `25_99`, `100_plus`) — never an exact number, never arguments |
+| Error categories | `{"timeout": "1_4"}` | Six fixed categories with a count bucket — never error text or stack traces |
+| Memory size | `{"lessons": "10_49", "decisions": "1_9", "domains": "1_9"}` | Size buckets (`0`, `1_9`, `10_49`, `50_199`, `200_999`, `1000_plus`) — never exact totals, never names |
+| Engram version | `"4.30.0"` | Version number |
+| Version change | `"first"`, `"same"`, `"upgrade"`, `"downgrade"`, `"changed"` | Compared with the last day sent |
+| Install-age bucket | `"first_day"`, `"2_7_days"`, `"8_30_days"`, `"31_plus_days"` | Coarse bucket, not the install time |
+| OS family | `"windows"`, `"macos"`, `"linux"`, `"other"` | No version |
 | Python version | `"3.12"` | Major.minor only |
+| Tool tier | `"core"`, `"all"`, `"other"` | Which tool set is loaded |
+| Daily ID | `"a3f8b2c1e9d04f67"` | Changes every day; derived from a random key that stays on your machine |
+| Date | `"2026-11-25"` | The UTC day the row is about |
 
-#### What is NEVER collected
+The row does not carry the install ID of the daily ping. With few users, a row could still be matched to a ping from the same day by version, OS and Python version, so do not read the daily ID as a guarantee of unlinkability.
+
+#### What is never sent
 
 - Lesson, decision, or playbook **content** (text, summaries, reasoning)
 - User prompts or AI responses
 - File paths (may reveal username or project names)
 - Error messages, exception text, or stack traces
-- IP addresses, email, or device fingerprints
+- Email, account details, command arguments, or device fingerprints
 - Domain names or project names
+- IP addresses are not stored (the server sees the source IP in transit)
 
 #### Safety mechanisms
 
-- Payload validator rejects any string > 200 characters
-- Natural language patterns are detected and rejected
-- Local telemetry payloads are human-readable in `~/.engram/telemetry.log`
-- `engram telemetry preview` shows the exact next payload before logging or remote sending
+- Every value is either a fixed label, a bucket, or a number in a fixed format; a row with anything else is not sent, and the server rejects it too
+- A tool name that is not one of Engram's registered tools is counted as `other`
+- `engram telemetry status` shows whether the counts are on and which setting decided it; `engram telemetry preview` shows the exact next row
+- Counts wait in a `piia-engram` folder under your user config directory (`stats-spool/`), never in your memory store, and are deleted after sending, after seven days, or when you turn telemetry off
+- The send runs in the background; a failed send is skipped silently and never affects a tool
+
+- **Off when:** exactly when the daily ping is off — `engram telemetry off` (or `engram telemetry remote off`), `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; in CI, containers and tests — and also with `ENGRAM_TELEMETRY_REMOTE=0`, or if you ever turned the statistics or their remote sending off, whether through a command or a "no" in an earlier `engram setup`.
+- **Endpoint:** `https://telemetry.piia-engram.com/v1/counts` (`ENGRAM_TELEMETRY_URL` replaces it). Rows are kept for 395 days.
+
+#### 每日匿名使用计数（中文）
+
+Engram 默认每天发送一次匿名使用计数：用了哪些工具、大致次数（分桶，不是精确数字）、错误类别（分桶）、记忆规模分桶、版本、系统、Python 主次版本、工具层级、安装时长分桶和日期。使用每天更换的 ID，不带每日信号的安装 ID。不发送内容、提示词、文件路径或错误正文；不保存 IP 地址。数据保留 395 天。
+
+**行为变化：** 此前这些计数只在显式开启后发送，现在默认发送。以前退出过的选择继续有效。
+
+查看：`engram telemetry status`（显示状态与原因）、`engram telemetry preview`（显示实际载荷）；关闭：`engram telemetry off`、`ENGRAM_TELEMETRY=0`、`DO_NOT_TRACK=1` 或 `NO_TELEMETRY=1`。CI、容器和测试环境自动不发。
+
+### Optional local statistics log
+
+`engram telemetry on` also turns on a local log of usage counts in `~/.engram/telemetry.log`. It is human-readable, stays on your machine and is never sent. `engram telemetry off` turns it off.
 
 ### Current status
 
-The daily usage ping is on by default (turn it off as described above). Detailed usage statistics stay off until explicitly enabled through the CLI. If only local telemetry is enabled, data is written to `~/.engram/telemetry.log` and does not leave your machine. Setup does not change these settings. Remote sends require a configured endpoint. Remote telemetry and feedback reports can be disabled with `engram telemetry remote off` and `engram telemetry feedback off`.
+The daily usage ping and the daily usage counts are on by default (turn them off as described above). The local statistics log stays off until you turn it on. Setup does not change these settings. Weekly feedback reports are opt-in and are sent only when an endpoint is configured; turn them off with `engram telemetry feedback off`.
 
 ### Optional feedback reports
 
-A separate opt-in (`engram telemetry feedback on`, or a manual `engram feedback` after previewing with `engram feedback --dry-run`) sends a weekly aggregated report to help the project understand usage patterns. This uses the same anonymous ID and contains only counts — never content. Rate-limited to once per 7 days.
+A separate opt-in (`engram telemetry feedback on`, or a manual `engram feedback` after previewing with `engram feedback --dry-run`) sends a weekly aggregated report to help the project understand usage patterns. It is off unless you turn it on, has no built-in destination, and contains counts — never the content of a memory. Unlike the daily usage counts, it includes the labels of your most used knowledge domains with their counts, so preview it with `engram feedback --dry-run` before turning it on. Rate-limited to once per 7 days.
 
 ## Encryption
 

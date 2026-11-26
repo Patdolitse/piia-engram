@@ -285,7 +285,7 @@ staged 条目始终在你掌控之中：
 
 - 没有托管账号、不强制订阅、默认不做云同步。
 - Engram 每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期）。关闭方式：`engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1`；CI 和容器环境中自动不发。
-- 详细使用统计默认关闭，开启后先写本地日志；远程发送（`engram telemetry remote on`）和每周反馈报告（`engram telemetry feedback on`）都是**单独的显式 opt-in**。知识内容、提示词、AI 回复、文件路径、邮箱、IP 地址从不被采集。
+- Engram 还会每天发送一次匿名使用计数：用了哪些工具、大致次数（分桶）、错误类别和记忆规模分桶，使用每天更换的 ID。关闭方式相同，此前的退出选择继续有效。每周反馈报告（`engram telemetry feedback on`）仍需显式开启。知识内容、提示词、AI 回复、文件路径、邮箱、错误正文从不发送；不保存 IP 地址。
 - 审计日志**默认开启**；它把读写操作记录到本地 `~/.engram/audit.log`（纯 JSON-lines，绝不外传）。可用 `ENGRAM_AUDIT=0` 关闭。
 - 按调用方治理层**默认关闭**；用 `ENGRAM_GOVERNANCE=1` 开启。当同一份记忆同时接给多个 AI 工具、自动化流程或远程桥接时建议开启；`engram status` 和 `engram doctor` 会显示它当前是否启用。
 - `engram setup` 不会在未经你确认（或显式 `--apply-external-config` 标志）的
@@ -344,8 +344,8 @@ API key、OAuth token、私钥、客户 PII 或受监管数据。如果某条经
 
 **Engram 会上传我的数据吗？**
 不会。你的记忆都在 `~/.engram/`。Engram 每天发送一次匿名使用信号（随机安装 ID、版本、系统、Python 版本、AI 客户端名称、日期），
-可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭。详细使用统计默认关闭，即便开启也只在单独 opt-in 后发送
-匿名计数——绝不发你的内容。
+可用 `engram telemetry off`、`ENGRAM_TELEMETRY=0` 或 `DO_NOT_TRACK=1` 关闭。此外每天发送一次匿名使用计数（用了哪些工具，次数分桶），
+关闭方式相同。两者都绝不包含你的内容。
 
 **我换了 AI 工具，记忆还在吗？**
 在。所有连到 Engram MCP 的工具读的是同一份本地库。

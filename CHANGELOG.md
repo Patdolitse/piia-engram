@@ -6,6 +6,22 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- When a newer release is on PyPI, the resume brief ends with a one-line upgrade reminder, so people who only use an AI client see it too. The brief and the session-start hooks only read a stored answer; the MCP server refreshes that answer in the background, at most once a day and not while it starts. This is one more network call by default (a plain request for the public package version, no data about you). `ENGRAM_NO_UPDATE_CHECK=1` turns the check and the reminder off; neither runs in CI, containers or tests.
+
+### Changed
+
+- **Behavior change:** anonymous usage counts are now sent once a day by default. Before, they were sent only after an explicit opt-in and a configured endpoint. A row says which tools were used and roughly how often (count buckets, not exact numbers), error categories and rough memory-size buckets, under an ID that changes every day and without the install ID of the daily ping; it never contains content, prompts, file paths or error text. Existing opt-outs stay in effect. Turn it off with `engram telemetry off`, `ENGRAM_TELEMETRY=0`, `DO_NOT_TRACK=1` or `NO_TELEMETRY=1`; it is off in CI, containers and tests. `engram telemetry status` shows what is on and why, and `engram telemetry preview` shows the exact row. Weekly feedback reports remain opt-in. See [Usage ping and telemetry](docs/telemetry-privacy.md).
+
+- The counts are no longer sent from inside a tool call: they wait in the user config directory and go out from a background thread. `ENGRAM_TELEMETRY_URL` now receives the new bucketed row instead of the earlier payload.
+
+- `engram telemetry on` and `engram telemetry remote on` turn on the daily ping and the daily usage counts together; `engram telemetry on` also turns on the local statistics log, which is never sent.
+
+- Usage pings are now kept for 395 days instead of 400.
+
 ## [4.29.0] - 2026-11-26
 
 ### Added

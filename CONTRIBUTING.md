@@ -21,7 +21,8 @@ src/piia_engram/
     setup_wizard.py    # Interactive setup CLI + doctor diagnostics + instruction injection
     hooks/             # Claude Code lifecycle hooks (Stop/PreCompact/PostCompact/SessionStart)
     crypto.py          # AES-256-GCM encryption for sensitive profile fields
-    telemetry.py       # Opt-in anonymous usage statistics (local log first; remote/feedback are separate opt-ins)
+    telemetry.py       # Opt-in local statistics log and opt-in weekly feedback
+    usage_stats.py     # Daily anonymous usage counts (on by default; follows the ping's off switches)
     usage_ping.py      # Daily anonymous usage ping (on by default; DO_NOT_TRACK=1 or engram telemetry off turns it off)
 tests/                 # 3,000+ tests across all modules
 experiments/
@@ -29,7 +30,7 @@ experiments/
 ```
 
 Key design principles:
-- **Local by default** — identity and knowledge tools are local; one anonymous usage ping a day is on by default (off with `DO_NOT_TRACK=1`); detailed telemetry/feedback remain separate explicit opt-ins
+- **Local by default** — identity and knowledge tools are local; one anonymous usage ping a day and anonymous usage counts once a day are on by default (off with `DO_NOT_TRACK=1`); the local statistics log and weekly feedback remain opt-in
 - **User-owned data** — all knowledge stored as human-readable JSON files
 - **MCP-native** — every capability exposed as an MCP tool or resource
 - **Privacy by default** — trust boundaries, encryption at rest, safe profile filtering
@@ -79,7 +80,7 @@ python experiments/benchmarks/run_benchmarks.py
 - **Keep changes focused** — one concern per PR
 - **Readable over clever** — three similar lines beat a premature abstraction
 - **Test behavioral changes** — add or update tests when logic changes
-- **No external calls in core operations** — piia-engram must never make network requests in core identity, knowledge, search, review, or governance operations. Local telemetry logging makes no network requests; the daily usage ping lives only in `usage_ping.py`, runs in the background and must never carry memory content; remote telemetry and feedback reports require separate explicit opt-ins and send metadata-only counts. `read_web_content` is optional and makes outbound HTTP only when explicitly invoked for a URL
+- **No external calls in core operations** — piia-engram must never make network requests in core identity, knowledge, search, review, or governance operations. Local telemetry logging makes no network requests; the daily usage ping lives only in `usage_ping.py` and the daily usage counts only in `usage_stats.py`; both run in the background, never inside a tool call, and must never carry memory content — every value in a counts row is a fixed label or a bucket. Feedback reports require their own explicit opt-in. The update check (`update_check.py`) may only fetch the public package version, and the resume brief may only read its cached result. `read_web_content` is optional and makes outbound HTTP only when explicitly invoked for a URL
 - **Bilingual content** — user-facing strings should support both Chinese and English
 
 ## Security Guidelines

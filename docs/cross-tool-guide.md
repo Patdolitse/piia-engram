@@ -376,7 +376,7 @@ Imported items wait in the review queue. A closeout called with
 `run_reconcile=True` reports both reconcile stages as skipped
 (`explicit_import_only`) and points to the command.
 
-Telemetry and feedback are separate opt-in metadata paths. They are not reconciliation, do not contain knowledge bodies, and are controlled by the telemetry/feedback opt-in settings rather than `run_reconcile`. Default non-opt-in closeout sends no remote feedback.
+The daily usage ping, the daily usage counts and the opt-in feedback report are separate metadata paths. They are not reconciliation, do not contain knowledge bodies, and are controlled by the telemetry settings rather than `run_reconcile`. Default non-opt-in closeout sends no remote feedback, and closeout itself never sends the usage counts (they go out from a background thread).
 
 The returned `timing` block is metadata-only. It reports stage durations in
 milliseconds and must not be treated as user approval, release evidence, or a
