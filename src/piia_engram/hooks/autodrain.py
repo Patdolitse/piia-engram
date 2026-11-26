@@ -9,6 +9,10 @@ session records, digests and review-queue proposals. It never runs as an AI
 client's write (``spool.drain`` leaves the MCP origin) and nothing it writes
 is approved knowledge. ``ENGRAM_SPOOL_AUTODRAIN=0`` turns it off.
 
+An event that fails stays in the queue. This process remembers it and steps
+over it for a while, so events that keep failing cannot keep the ones behind
+them from being processed.
+
 Never imported by hook producers.
 """
 
@@ -41,11 +45,37 @@ MAX_BACKOFF_SECONDS = 7200.0
 PASS_MAX_EVENTS = 50
 PASS_DEADLINE_SECONDS = 20.0
 WATCHER_MIN_GAP_SECONDS = 60.0
+#: An event that failed in this process is not tried again for this long.
+RETRY_FAILED_AFTER_SECONDS = 1800.0
+_MAX_REMEMBERED_FAILURES = 4096
 
 _OFF = {"0", "false", "off", "no"}
-_STATUS_KEYS = ("processed", "duplicates", "failed", "quarantined", "pending", "busy", "limited")
+_STATUS_KEYS = ("processed", "duplicates", "failed", "quarantined", "pending", "skipped",
+                "busy", "limited")
+_FLAGS = ("busy", "limited")
+#: Why the last pass could not work at all ("" when it could).
+_STOP_REASONS = ("key-unavailable",)
 _last_watcher_pass: float | None = None
-_watcher_key_unavailable = False
+_watcher_retry_after: float | None = None
+#: Queue file name -> monotonic time of its last failure in this process.
+_failed_at: dict[str, float] = {}
+
+
+def _recently_failed(name: str) -> bool:
+    moment = _failed_at.get(name)
+    if moment is None:
+        return False
+    if time.monotonic() - moment >= RETRY_FAILED_AFTER_SECONDS:
+        _failed_at.pop(name, None)
+        return False
+    return True
+
+
+def _remember_failure(name: str) -> None:
+    if len(_failed_at) >= _MAX_REMEMBERED_FAILURES:
+        for old in sorted(_failed_at, key=_failed_at.get)[: _MAX_REMEMBERED_FAILURES // 4]:
+            _failed_at.pop(old, None)
+    _failed_at[name] = time.monotonic()
 
 
 def enabled() -> bool:
@@ -83,8 +113,10 @@ def read_status(root: Path | None = None) -> dict | None:
     status = {"schema": 1, "source": str(data.get("source") or "")[:32], "ran_at": data["ran_at"][:40]}
     for key in _STATUS_KEYS:
         value = data.get(key)
-        status[key] = bool(value) if key in ("busy", "limited") else (
+        status[key] = bool(value) if key in _FLAGS else (
             value if type(value) is int and value >= 0 else 0)
+    stopped = data.get("stopped")
+    status["stopped"] = stopped if stopped in _STOP_REASONS else ""
     return status
 
 
@@ -93,7 +125,8 @@ def _write_status(root: Path, source: str, report: dict) -> None:
                               "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     for key in _STATUS_KEYS:
         value = report.get(key, 0)
-        status[key] = bool(value) if key in ("busy", "limited") else int(value or 0)
+        status[key] = bool(value) if key in _FLAGS else int(value or 0)
+    status["stopped"] = "key-unavailable" if report.get("key_unavailable") else ""
     path = status_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     spool._publish(path, spool._json_bytes(status))
@@ -119,7 +152,8 @@ def run_pass(root: Path | None = None, *, source: str, engram=None,
             engram = Engram(root=root)
         report = spool.drain(root, engram=engram, max_events=PASS_MAX_EVENTS,
                              deadline_seconds=PASS_DEADLINE_SECONDS,
-                             event_guard=event_guard, should_stop=should_stop)
+                             event_guard=event_guard, should_stop=should_stop,
+                             skip_event=_recently_failed, on_event_failed=_remember_failure)
         if report.get("busy"):
             return report  # another process is at it; its pass is the one to record
         try:
@@ -144,17 +178,17 @@ def run_pass(root: Path | None = None, *, source: str, engram=None,
         return None
 
 
-def next_wait(report: dict | None, previous: float) -> float | None:
-    """Seconds until the next pass, or None to stop for this process.
+def next_wait(report: dict | None, previous: float) -> float:
+    """Seconds until the next pass.
 
     Leftover events come soon; a pass in which nothing got through backs off
     (doubling, at most two hours); a queue whose key is not available here is
-    left to a process that has it.
+    looked at again after two hours, in case the key has been supplied.
     """
     if not report:
         return INTERVAL_SECONDS
-    if report.get("protection_unavailable"):
-        return None
+    if report.get("key_unavailable"):
+        return MAX_BACKOFF_SECONDS
     progressed = (report.get("processed") or report.get("duplicates") or report.get("quarantined"))
     if report.get("failed") and not progressed:
         return min(max(previous, INTERVAL_SECONDS) * 2, MAX_BACKOFF_SECONDS)
@@ -224,15 +258,19 @@ class AutoDrainer:
 
 def watcher_pass(now: Callable[[], float] = time.monotonic) -> dict | None:
     """The watcher's pass after a scan: at most one a minute in this process."""
-    global _last_watcher_pass, _watcher_key_unavailable
-    if not enabled() or _watcher_key_unavailable:
+    global _last_watcher_pass, _watcher_retry_after
+    if not enabled():
         return None
     moment = now()
+    if _watcher_retry_after is not None:
+        if moment < _watcher_retry_after:
+            return None
+        _watcher_retry_after = None
     if _last_watcher_pass is not None and moment - _last_watcher_pass < WATCHER_MIN_GAP_SECONDS:
         return None
     _last_watcher_pass = moment
     report = run_pass(None, source="watcher")
-    if report and report.get("protection_unavailable"):
-        # This process cannot open the protected queue; leave it to one that can.
-        _watcher_key_unavailable = True
+    if report and report.get("key_unavailable"):
+        # This process cannot open the protected queue now: look again much later.
+        _watcher_retry_after = moment + MAX_BACKOFF_SECONDS
     return report

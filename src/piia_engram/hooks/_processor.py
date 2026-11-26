@@ -326,7 +326,9 @@ def _snapshot(engram, cwd: str) -> None:
     manifest = root / "pyproject.toml"
     if not cwd or not manifest.is_file():
         return
-    text = manifest.read_text(encoding="utf-8")
+    # Counting is best effort: a file that is not UTF-8 or cannot be read must
+    # not fail the event (it would fail again on every retry).
+    text = manifest.read_text(encoding="utf-8", errors="replace")
     match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
     snapshot = {"last_auto_snapshot": datetime.now().isoformat()}
     if match:
@@ -335,8 +337,14 @@ def _snapshot(engram, cwd: str) -> None:
     if source.is_dir():
         snapshot["module_count"] = sum(1 for p in source.rglob("*.py") if "__pycache__" not in str(p))
     if tests.is_dir():
+        def lines(path: Path) -> list[str]:
+            try:
+                return path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                return []
+
         snapshot["test_count"] = sum(1 for p in tests.rglob("*.py") if "__pycache__" not in str(p)
-                                     for line in p.read_text(encoding="utf-8").splitlines()
+                                     for line in lines(p)
                                      if line.lstrip().startswith(("def test_", "async def test_")))
     engram.save_project_snapshot(cwd, snapshot)
 

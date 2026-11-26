@@ -1032,18 +1032,31 @@ def _print_connection_report(root, days: int | None = None) -> None:
                   f"({cleanup['quarantine']['bytes']} bytes), partial {cleanup['partial']['count']} "
                   f"({cleanup['partial']['bytes']} bytes); receipts kept for dedup; no automatic deletion")
     auto = queue.get("auto_drain") or {"enabled": False, "last": None}
+    # Doctor sees its own environment, not the server's or the watcher's: say
+    # what is known here, and let the last recorded pass speak for them.
     W._safe_print("    Automatic processing: " + (
-        "on (the MCP server and the watcher process the queue; ENGRAM_SPOOL_AUTODRAIN=0 turns it off)"
+        "not switched off in this terminal (the MCP server and the watcher each read "
+        "ENGRAM_SPOOL_AUTODRAIN from their own environment)"
         if auto["enabled"] else
-        "off in this environment (ENGRAM_SPOOL_AUTODRAIN); run 'engram hooks drain' yourself"))
+        "switched off in this terminal (ENGRAM_SPOOL_AUTODRAIN); the MCP server and the "
+        "watcher each read it from their own environment"))
     last = auto["last"]
-    if last:
+    if last and last.get("stopped") == "key-unavailable":
+        W._safe_print(
+            f"    Last automatic pass: {last['ran_at']} by {last['source'] or 'unknown'}: stopped, "
+            f"the queue key is not available to that process; {last['pending']} left")
+        W._safe_print(
+            "      It looks again in about two hours. Give that process ENGRAM_SECRET, or run "
+            "'engram hooks drain' where it is set.")
+    elif last:
         W._safe_print(
             f"    Last automatic pass: {last['ran_at']} by {last['source'] or 'unknown'}: "
-            f"{last['processed']} processed, {last['failed']} failed, {last['pending']} left"
+            f"{last['processed']} processed, {last['failed']} failed, "
+            f"{last.get('skipped', 0)} set aside after failing, {last['pending']} left"
             + (" (more to do)" if last["limited"] else ""))
     else:
-        W._safe_print("    Last automatic pass: none recorded")
+        W._safe_print("    Last automatic pass: none recorded (no MCP server or watcher has processed "
+                      "this queue yet)")
     if queue['drain_hint']:
         W._safe_print("    " + queue['drain_hint'])
 
@@ -2014,6 +2027,9 @@ def _print_decision_consistency(finding: dict) -> None:
             f"         \"{pair['predecessor_title']}\" [{pair['predecessor']}] is hidden from recall:")
         W._safe_print(
             f"         \"{pair['successor_title']}\" [{pair['successor']}] is recorded as replacing it.")
+        if pair.get("direct_successor") and pair["direct_successor"] != pair["successor"]:
+            W._safe_print(
+                f"         (through \"{pair['direct_successor_title']}\" [{pair['direct_successor']}])")
         W._safe_print("         If the two are unrelated, do not apply the replacement.")
         for command in pair["preview_commands"]:
             W._safe_print("         Preview (writes nothing): " + command)
@@ -2071,10 +2087,14 @@ def decision_consistency_check(eng) -> dict:
     pairs = []
     for old in predecessors:
         new = current_successor(old)
+        # The relation that hides ``old`` runs from its direct successor, which
+        # in a longer chain is not the current head: unlink names that one.
+        direct = str(index.successor(old))
         pairs.append({
             "predecessor": old, "predecessor_title": _decision_title(by_id.get(old)),
             "successor": new, "successor_title": _decision_title(by_id.get(new)),
-            "preview_commands": _decision_pair_previews(new, old),
+            "direct_successor": direct, "direct_successor_title": _decision_title(by_id.get(direct)),
+            "preview_commands": _decision_pair_previews(new, old, direct),
         })
     hints = [
         f"\"{pair['predecessor_title']}\" [{pair['predecessor']}] is hidden from recall because "
@@ -2089,11 +2109,15 @@ def decision_consistency_check(eng) -> dict:
             "hint": "; ".join(hints)}
 
 
-def _decision_pair_previews(successor: str, predecessor: str) -> list[str]:
-    """Commands for one pair. Without ``--commit --yes`` each only previews."""
+def _decision_pair_previews(successor: str, predecessor: str, direct: str = "") -> list[str]:
+    """Commands for one pair. Without ``--commit --yes`` each only previews.
+
+    Replacing keeps the current head of the chain; unlinking names the direct
+    successor, the source of the relation that hides the predecessor.
+    """
     return [
         f"engram conflicts resolve {successor} {predecessor} --action supersede --keep {successor}",
-        f"engram lineage unlink {successor} {predecessor}",
+        f"engram lineage unlink {direct or successor} {predecessor}",
     ]
 
 

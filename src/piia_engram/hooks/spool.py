@@ -34,11 +34,12 @@ RESULT_CODES = frozenset({"processed", "duplicate", "invalid-event", "invalid-pr
 KINDS = {"claude_stop": "claude_code", "claude_compact": "claude_code",
          "cursor_save": "cursor", "cursor_writeback": "cursor"}
 _DRAINING = ContextVar("hook_spool_draining", default=False)
-#: Failures that mean the key material is not available to this process
-#: (not that one event is damaged): an automatic drainer stops trying.
+#: Failures that mean the key material is not available to this process (not
+#: that one event is damaged): an automatic drainer waits a long time before
+#: it tries again. ``protection-unavailable`` is not one of them: it also
+#: covers a busy policy lock or a passing file error.
 _KEY_UNAVAILABLE_CODES = frozenset({"crypto-secret-missing", "crypto-salt-missing",
-                                    "crypto-salt-invalid", "crypto-unavailable",
-                                    "protection-unavailable"})
+                                    "crypto-salt-invalid", "crypto-unavailable"})
 
 
 def store_root(root: Path | None = None) -> Path:
@@ -401,13 +402,20 @@ def _validate_receipt(receipt: Path, event_id: str) -> None:
 
 def drain(root: Path | None = None, *, dry_run: bool = False, engram=None,
           max_events: int | None = None, deadline_seconds: float | None = None,
-          event_guard=None, should_stop=None) -> dict:
+          event_guard=None, should_stop=None, skip_event=None, on_event_failed=None) -> dict:
     """Process queued hook events, oldest first.
 
     ``max_events`` / ``deadline_seconds`` / ``should_stop`` end a pass between
     two events (``limited`` in the report); the command line passes none of
-    them. ``event_guard`` is a context manager factory entered around each
-    event, for a caller that shares a store handle with other writers.
+    them. Only events that leave the queue count toward ``max_events``: an
+    event that fails stays where it is, so counting it would let failing
+    events at the head keep every pass from reaching the ones behind them.
+    ``skip_event(file name)`` leaves an event for a later pass without trying
+    it (``skipped`` in the report) and ``on_event_failed(file name)`` is told
+    about an event that failed for a reason of its own; with the two a caller
+    can step over events that keep failing. ``event_guard`` is a context
+    manager factory entered around each event, for a caller that shares a
+    store handle with other writers.
 
     A drain is the Owner's local queue being processed, never an AI client's
     write: called inside an MCP call it leaves that origin first, so its rows
@@ -420,27 +428,40 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None,
             with origin_scope(ORIGIN_LOCAL):
                 return drain(root, engram=engram, max_events=max_events,
                              deadline_seconds=deadline_seconds, event_guard=event_guard,
-                             should_stop=should_stop)
+                             should_stop=should_stop, skip_event=skip_event,
+                             on_event_failed=on_event_failed)
     root = store_root(root)
     report = dict(backlog(root), processed=0, duplicates=0, failed=0, quarantined_now=0,
-                  dry_run=dry_run, busy=False, limited=False)
+                  dry_run=dry_run, busy=False, limited=False, skipped=0)
     if dry_run or not report["pending"] or _DRAINING.get():
         return report
     directory = spool_dir(root)
     token = _DRAINING.set(True)
     codec = QueueCodec(root)
     deadline = None if deadline_seconds is None else time.monotonic() + deadline_seconds
-    handled = 0
+
+    def left_the_queue() -> int:
+        return report["processed"] + report["duplicates"] + report["quarantined_now"]
+
+    def failed_on_its_own(name: str) -> None:
+        if on_event_failed is not None:
+            try:
+                on_event_failed(name)
+            except Exception:
+                pass
     try:
         with _lock(directory):
             report["quarantined_now"] += _trim(directory)
+            trimmed = report["quarantined_now"]
             for path in _files(directory):
-                if ((max_events is not None and handled >= max_events)
+                if skip_event is not None and skip_event(path.name):
+                    report["skipped"] += 1
+                    continue
+                if ((max_events is not None and left_the_queue() - trimmed >= max_events)
                         or (deadline is not None and time.monotonic() >= deadline)
                         or (should_stop is not None and should_stop())):
                     report["limited"] = True
                     break
-                handled += 1
                 with (event_guard() if event_guard is not None else nullcontext()):
                     event = None
                     phase = "read"
@@ -487,7 +508,9 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None,
                         log_failure("hook_spool", exc.code, root=root)
                         if exc.code in _KEY_UNAVAILABLE_CODES:
                             # This process cannot open the protected queue at all.
-                            report["protection_unavailable"] = True
+                            report["key_unavailable"] = True
+                        elif exc.code != "protection-unavailable":
+                            failed_on_its_own(path.name)
                         if exc.code == "protection-unavailable" and _shared_storage_failure(exc):
                             break
                     except PoisonEvent:
@@ -499,6 +522,8 @@ def drain(root: Path | None = None, *, dry_run: bool = False, engram=None,
                         failure = transport_failure(exc)
                         if failure:
                             report.update(failure)
+                        elif not _shared_storage_failure(exc):
+                            failed_on_its_own(path.name)
                         code = ("transport-unavailable" if failure else
                                 "storage-unavailable" if _shared_storage_failure(exc) else
                                 "transcript-missing" if phase == "prepare" and isinstance(exc, FileNotFoundError) else

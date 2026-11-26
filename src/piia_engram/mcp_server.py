@@ -21,6 +21,7 @@ import re
 import secrets
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -75,13 +76,59 @@ def _locked_engram_call(fn, *args, **kwargs):
     and the client's self-reported clientInfo (see ``write_provenance``).
     """
     client_name, client_version = _current_client_info()
-    with _write_operation_lock, _write_provenance.origin_scope(
+    with _tool_write_lock(), _write_provenance.origin_scope(
         _write_provenance.ORIGIN_MCP, client_name=client_name, client_version=client_version,
     ):
         if _shutting_down:
             from piia_engram.transport_errors import TransportUnavailable
             raise TransportUnavailable("server is shutting down")
         return fn(*args, **kwargs)
+
+
+#: Tool calls waiting for (or about to take) the write lock. The queue thread
+#: reads it between two events and steps back while it is not zero.
+_tool_waiters = 0
+_tool_waiters_guard = threading.Lock()
+_QUEUE_YIELD_SECONDS = 60.0
+
+
+class _tool_write_lock:
+    """The write lock as a tool call takes it: announced, so the queue thread yields.
+
+    ``threading.RLock`` is not fair. Without the announcement the queue thread
+    could take the lock again for its next event while a tool call waits, and
+    the call would wait for a whole pass instead of one event.
+    """
+
+    def __enter__(self):
+        global _tool_waiters
+        with _tool_waiters_guard:
+            _tool_waiters += 1
+        try:
+            _write_operation_lock.acquire()
+        finally:
+            with _tool_waiters_guard:
+                _tool_waiters -= 1
+        return self
+
+    def __exit__(self, *exc):
+        _write_operation_lock.release()
+        return False
+
+
+class _queue_event_lock:
+    """The write lock as the queue thread takes it for one event: tool calls go first."""
+
+    def __enter__(self):
+        give_up = time.monotonic() + _QUEUE_YIELD_SECONDS
+        while _tool_waiters and time.monotonic() < give_up:
+            time.sleep(0.005)
+        _write_operation_lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        _write_operation_lock.release()
+        return False
 
 
 def _run_startup_auto_migrate() -> None:
@@ -149,7 +196,9 @@ def _start_spool_autodrain():
     queue a few events at a time: session records, digests and review-queue
     proposals, the same as that command. It is not an AI client's write and it
     approves nothing. Each event takes the server's write lock, so it never
-    interleaves with a tool call on the shared store handle.
+    interleaves with a tool call on the shared store handle; between two
+    events the thread lets a waiting tool call go first, so a call waits for
+    the event being processed and no longer.
 
     Not started for a read-only or missing store handle, or when
     ``ENGRAM_SPOOL_AUTODRAIN=0``. Never raises.
@@ -161,7 +210,7 @@ def _start_spool_autodrain():
             return None
         return autodrain.AutoDrainer(
             _engram.root, engram=_engram, source="mcp-server",
-            event_guard=lambda: _write_operation_lock,
+            event_guard=_queue_event_lock,
             should_stop=lambda: _shutting_down,
         ).start()
     except Exception:
