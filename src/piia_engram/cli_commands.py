@@ -5203,7 +5203,12 @@ def _run_conflicts_resolve(eng, args: list[str]) -> tuple[int, dict]:
         # Retire before the relation: it is written only once the other
         # decision is out of use, so a refused update leaves no hidden active
         # decision (and the pin it had is put back).
-        archive = eng.update_decision(other, {"status": "outdated"})
+        try:
+            archive = eng.update_decision(other, {"status": "outdated"})
+        except BaseException:
+            if unpinned:
+                _pinning.pin(eng, other)
+            raise
         if archive.get("error"):
             if unpinned:
                 _pinning.pin(eng, other)
@@ -5269,6 +5274,13 @@ def _render_lineage_text(payload: dict) -> str:
         lines.append(("  Restored" if applied else "  Would restore") + f" [{old}] as an active decision.")
     else:
         lines.append(f"  [{old}] keeps its status ({payload.get('reason') or 'already active'}).")
+    if payload.get("from_archive") and (payload.get("restored") or not applied):
+        lines.append(f"  [{old}] is in the archive; it returns to the active decisions.")
+    others = payload.get("other_successors") or []
+    if others:
+        lines.append(f"  [{old}] is also recorded as replaced by: {', '.join(others)}. It stays hidden from")
+        lines.append("  recall until those relations are removed too; if they are wrong as well, run")
+        lines.extend(f"    engram lineage unlink {other} {old}" for other in others)
     if payload.get("was_pinned"):
         lines.append(f"  [{old}] was pinned before it was replaced; pin it again with 'engram pin {old}' if wanted.")
     if payload.get("status") == "preview":

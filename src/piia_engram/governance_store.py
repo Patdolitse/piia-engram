@@ -130,6 +130,27 @@ class RelationStore:
         _update_json(self.path, _mut, default=[])
         return outcome["removed"]
 
+    def remove_matching(self, src: str, rel: str, dst: str) -> int:
+        """Remove every stored edge that reads as ``src rel dst``; returns how many.
+
+        ``all_edges`` shows edges after validation, so an edge stored with an
+        extra field or a non-string id is visible there while ``remove_relation``
+        (exact match) would leave it. This removes what ``all_edges`` shows.
+        """
+        want = (str(src), str(rel), str(dst))
+        outcome = {"removed": 0}
+
+        def _mut(cur):
+            data = cur if isinstance(cur, list) else []
+            kept = [e for e in data if not (
+                isinstance(e, dict)
+                and (str(e.get("src")), str(e.get("rel")), str(e.get("dst"))) == want)]
+            outcome["removed"] = len(data) - len(kept)
+            return kept
+
+        _update_json(self.path, _mut, default=[])
+        return outcome["removed"]
+
     def all_edges(self) -> list[dict]:
         return validate_edges(self._load())
 

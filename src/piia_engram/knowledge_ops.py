@@ -206,22 +206,33 @@ class KnowledgeOpsMixin:
             "schema": 1, "action": "lineage_unlink",
             "successor": successor_id, "predecessor": predecessor_id, "changed": False,
         }
+        edges = RelationStore(self.root).all_edges()
         edge = {"src": successor_id, "rel": "supersedes", "dst": predecessor_id}
-        if not successor_id or not predecessor_id or edge not in RelationStore(self.root).all_edges():
+        if not successor_id or not predecessor_id or edge not in edges:
             return {**plan, "error": "edge_not_found",
                     "message": "No 'supersedes' relation runs from the first id to the second."}
         raw = _read_json(self._knowledge_dir / "decisions.json")
         rows = {str(row.get("id")): row for row in (raw if isinstance(raw, list) else [])
                 if isinstance(row, dict) and row.get("id")}
         old, new = rows.get(predecessor_id), rows.get(successor_id)
-        archived = None if old is not None else self._archive_current_rows("decision").get(predecessor_id)
+        archived = None if old is not None else self._archived_only_rows("decision").get(predecessor_id)
         if any((row or {}).get("snapshot_of") for row in (old, new, archived)):
             return {**plan, "error": "version_snapshot",
                     "message": "This relation is the revision history of one decision and stays."}
+        from_archive = False
         if old is None:
-            return {**plan, "error": "predecessor_archived",
-                    "message": "The replaced decision is no longer in the active file; nothing was changed."}
-        status = str((old or {}).get("status") or ("active" if old else ""))
+            # Retention moved the replaced decision out of the active file. When
+            # this relation is what retired it, it comes back from the archive.
+            if (archived is not None and archived.get("status") == "superseded"
+                    and str(archived.get("superseded_by") or "") == successor_id):
+                old, from_archive = archived, True
+            else:
+                return {**plan, "error": "predecessor_archived",
+                        "message": ("The replaced decision is in the archive, not in the active file; "
+                                    "nothing was changed. Bring it back first with "
+                                    f"'engram retention restore {predecessor_id}', then run "
+                                    f"'engram lineage unlink {successor_id} {predecessor_id}' again.")}
+        status = str(old.get("status") or "active")
         record = ResolutionStore(self.root).all_records().get(
             conflict_pair_key(successor_id, predecessor_id)) or {}
         restore, reason = False, ""
@@ -233,8 +244,14 @@ class KnowledgeOpsMixin:
             reason = "" if restore else "outdated_by_owner"
         elif status not in {"active", "current"}:
             reason = "status_kept"
+        # Other decisions recorded as replacing the same one: it stays hidden
+        # from recall until those relations are dealt with too.
+        others = sorted({str(e["src"]) for e in edges
+                         if e["rel"] == "supersedes" and e["dst"] == predecessor_id
+                         and e["src"] != successor_id})
         plan.update(
             edge=True, predecessor_status=status, restore=restore, reason=reason,
+            from_archive=from_archive, other_successors=others,
             predecessor_title=title(old), predecessor_choice=choice(old),
             successor_title=title(new), successor_choice=choice(new),
             was_pinned=self._was_unpinned_by(predecessor_id, successor_id),
@@ -281,11 +298,18 @@ class KnowledgeOpsMixin:
         """Owner repair: remove a wrong ``successor supersedes predecessor`` edge.
 
         The predecessor comes back as an active decision when this relation is
-        what retired it: its status is ``superseded`` by this successor, or it
-        is ``outdated`` and ``engram conflicts resolve --action supersede``
-        recorded this pair. Any other status stays as it is and only the edge
-        goes. A pin the predecessor lost is not put back. The pair is recorded
-        as ``unlinked`` so an import does not bring the edge back.
+        what retired it: its status is ``superseded`` by this successor (also
+        when retention has moved it to the archive), or it is ``outdated`` and
+        ``engram conflicts resolve --action supersede`` recorded this pair. Any
+        other status stays as it is and only the edge goes. A pin the
+        predecessor lost is not put back. ``other_successors`` names further
+        decisions recorded as replacing the same one; it stays hidden from
+        recall until those relations are removed too. The pair is recorded as
+        ``unlinked`` so an import does not bring the edge back.
+
+        The edge goes first and the removal is checked: when it cannot be
+        removed nothing else changes, and when the predecessor cannot be
+        restored the edge is put back.
 
         Local owner command only: refused for an AI client (MCP origin).
         ``dry_run`` (the default) reads and reports; nothing is written.
@@ -303,35 +327,60 @@ class KnowledgeOpsMixin:
             if plan.get("error"):
                 return plan
             before_status = plan["predecessor_status"]
+            relations = RelationStore(self.root)
+            if not relations.remove_matching(successor_id, "supersedes", predecessor_id):
+                return {**plan, "error": "edge_not_removed",
+                        "message": "The relation could not be removed; nothing was changed."}
+            archived = (self._archived_only_rows("decision").get(predecessor_id)
+                        if plan["from_archive"] else None)
             box = {"restored": False, "old": None, "new": None}
 
+            def revive(row: dict) -> dict:
+                row = dict(row)
+                row["status"] = "active"
+                for name in ("superseded_by", "superseded_at", "retired_at"):
+                    row.pop(name, None)
+                row["last_updated"] = _now_iso()
+                return self._ensure_fields(row, "decision")
+
             def restore(rows: list[dict]) -> list[dict]:
+                found = False
                 for row in rows:
                     if row.get("id") == successor_id:
                         box["new"] = dict(row)
                     if row.get("id") != predecessor_id:
                         continue
+                    found = True
                     box["old"] = dict(row)
                     if not plan["restore"] or row.get("snapshot_of"):
                         continue
-                    row["status"] = "active"
-                    for name in ("superseded_by", "superseded_at", "retired_at"):
-                        row.pop(name, None)
-                    row["last_updated"] = _now_iso()
-                    fixed = self._ensure_fields(dict(row), "decision")
+                    fixed = revive(row)
                     row.clear()
                     row.update(fixed)
                     box["restored"] = True
                     box["old"] = dict(row)
+                if not found and archived is not None and plan["restore"]:
+                    entry = {k: v for k, v in archived.items() if k not in self._OVERFLOW_FIELDS}
+                    if entry.get("tier") == "archived":
+                        prior = entry.pop("archived_from_tier", None)
+                        entry["tier"] = prior if prior in {"staging", "verified"} else "verified"
+                        entry.pop("archived_at", None)
+                    entry = revive(entry)
+                    rows.append(entry)
+                    box["restored"] = True
+                    box["old"] = dict(entry)
                 return rows
 
-            # The Owner is correcting a mistake: the verified cap does not stand in the way.
-            self._update_entries(
-                self._knowledge_dir / "decisions.json", "decision", restore,
-                capacity_ctx=_capacity.CapacityContext(
-                    owner_override=True, keep_ids=frozenset({predecessor_id, successor_id})),
-            )
-            RelationStore(self.root).remove_relation(successor_id, "supersedes", predecessor_id)
+            try:
+                # The Owner is correcting a mistake: the verified cap does not stand in the way.
+                self._update_entries(
+                    self._knowledge_dir / "decisions.json", "decision", restore,
+                    capacity_ctx=_capacity.CapacityContext(
+                        owner_override=True, keep_ids=frozenset({predecessor_id, successor_id})),
+                )
+            except BaseException:
+                relations.add_relation(successor_id, "supersedes", predecessor_id)
+                raise
             ResolutionStore(self.root).record(
                 box["new"] or {"id": successor_id}, box["old"] or {"id": predecessor_id},
                 action="unlinked", note=str(note or ""))

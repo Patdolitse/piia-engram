@@ -377,3 +377,202 @@ class TestLineageCli:
         assert rc == (0 if not args else 2)
         assert "engram lineage unlink" in out
         assert _files(eng.root) == before
+
+
+# -- review follow-ups ---------------------------------------------------------
+
+
+def _move_to_archive(eng, item_id):
+    """What retention does to a retired row: out of the active file, into the archive."""
+    path = eng._knowledge_dir / "decisions.json"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    row = next(r for r in rows if r["id"] == item_id)
+    eng._archive_overflow_rows("decision", [row], reason="capacity_overflow")
+    path.write_text(json.dumps([r for r in rows if r["id"] != item_id]), encoding="utf-8")
+    assert item_id in eng._archived_only_rows("decision")
+
+
+class TestUnlinkOrderAndChecks:
+    def test_an_edge_stored_with_an_extra_field_is_removed(self, superseded):
+        eng, old, new, original = superseded
+        path = eng._knowledge_dir / "relations.json"
+        path.write_text(json.dumps([{"src": new["id"], "rel": "supersedes", "dst": old["id"],
+                                     "note": "from an older export"}]), encoding="utf-8")
+
+        result = eng.unlink_decision_lineage(new["id"], old["id"], dry_run=False)
+
+        assert result["status"] == "applied" and result["restored"] is True
+        assert json.loads(path.read_text(encoding="utf-8")) == []
+        assert old["id"] in _visible(eng)
+
+    def test_when_the_edge_cannot_be_removed_nothing_changes(self, superseded, monkeypatch):
+        eng, old, new, _ = superseded
+        monkeypatch.setattr(RelationStore, "remove_matching", lambda self, src, rel, dst: 0)
+        before_row = _raw(eng, old["id"])
+
+        result = eng.unlink_decision_lineage(new["id"], old["id"], dry_run=False)
+
+        assert result["error"] == "edge_not_removed" and result["changed"] is False
+        assert _raw(eng, old["id"]) == before_row  # still superseded, not half restored
+        assert _edges(eng) == [(new["id"], old["id"])]
+        assert not (eng._knowledge_dir / "conflict_resolutions.json").exists()
+
+    def test_when_the_decision_cannot_be_restored_the_edge_is_put_back(self, superseded, monkeypatch):
+        eng, old, new, _ = superseded
+        before_row = _raw(eng, old["id"])
+
+        def fail(*args, **kwargs):
+            raise OSError("disk went away")
+
+        monkeypatch.setattr(eng, "_update_entries", fail)
+
+        with pytest.raises(OSError):
+            eng.unlink_decision_lineage(new["id"], old["id"], dry_run=False)
+
+        assert _edges(eng) == [(new["id"], old["id"])]
+        assert _raw(eng, old["id"]) == before_row
+
+    def test_other_relations_onto_the_same_decision_are_named(self, superseded, capsys):
+        from piia_engram.cli_commands import _render_lineage_text
+
+        eng, old, new, _ = superseded
+        third = eng.add_decision({"question": "Choose the log format", "choice": "JSON", "tier": "verified"})
+        RelationStore(eng.root).add_relation(third["id"], "supersedes", old["id"])
+
+        preview = eng.unlink_decision_lineage(new["id"], old["id"])
+        result = eng.unlink_decision_lineage(new["id"], old["id"], dry_run=False)
+
+        assert preview["other_successors"] == [third["id"]] == result["other_successors"]
+        text = _render_lineage_text(result)
+        assert f"engram lineage unlink {third['id']} {old['id']}" in text
+        assert "stays hidden" in text
+        assert old["id"] not in _visible(eng)  # as the result says
+
+        eng.unlink_decision_lineage(third["id"], old["id"], dry_run=False)
+        assert old["id"] in _visible(eng)
+
+    def test_without_other_relations_the_list_is_empty(self, superseded):
+        # Negative control.
+        eng, old, new, _ = superseded
+        assert eng.unlink_decision_lineage(new["id"], old["id"])["other_successors"] == []
+
+
+class TestArchivedPredecessor:
+    def test_a_superseded_decision_in_the_archive_comes_back(self, superseded):
+        eng, old, new, original = superseded
+        _move_to_archive(eng, old["id"])
+
+        preview = eng.unlink_decision_lineage(new["id"], old["id"])
+        result = eng.unlink_decision_lineage(new["id"], old["id"], dry_run=False)
+
+        assert preview["from_archive"] is True and preview["restore"] is True
+        assert result["status"] == "applied" and result["restored"] is True
+        row = _raw(eng, old["id"])
+        assert row["status"] == "active" and "superseded_by" not in row
+        assert not any(key.startswith("overflow_") for key in row)
+        assert _visible(eng) == {old["id"], new["id"]}
+        assert decision_consistency_check(eng)["status"] == "PASS"
+
+    def test_an_outdated_decision_in_the_archive_names_the_way_back(self, resolved):
+        eng, old, new, original = resolved
+        _move_to_archive(eng, old["id"])
+        before = _files(eng.root)
+
+        result = eng.unlink_decision_lineage(new["id"], old["id"], dry_run=False)
+
+        assert result["error"] == "predecessor_archived" and result["changed"] is False
+        assert f"engram retention restore {old['id']}" in result["message"]
+        assert f"engram lineage unlink {new['id']} {old['id']}" in result["message"]
+        assert _files(eng.root) == before
+
+    def test_that_way_back_works(self, resolved):
+        eng, old, new, original = resolved
+        _move_to_archive(eng, old["id"])
+
+        restored = eng.restore_lifecycle_archive(old["id"])
+        assert not restored.get("error"), restored
+        result = eng.unlink_decision_lineage(new["id"], old["id"], dry_run=False)
+
+        assert result["status"] == "applied" and result["restored"] is True
+        assert _raw(eng, old["id"])["status"] == "active"
+        assert _visible(eng) == {old["id"], new["id"]}
+
+
+class TestDoctorOnALongerChain:
+    @pytest.fixture
+    def chain(self, tmp_path):
+        """A (active again) <- B (retired) <- C (current): the edge onto A runs from B."""
+        eng = Engram(root=tmp_path / "store")
+        a = eng.add_decision({"question": "Choose cache policy", "choice": "ttl", "tier": "verified"})
+        b = eng.add_decision({"question": "Choose queue policy", "choice": "bounded", "tier": "verified"})
+        RelationStore(eng.root).add_relation(b["id"], "supersedes", a["id"])
+        c = eng.add_decision({"question": "Choose retry policy", "choice": "backoff", "tier": "verified",
+                              "supersedes": b["id"]})
+        return eng, a, b, c
+
+    def test_the_unlink_preview_names_the_direct_successor(self, chain):
+        eng, a, b, c = chain
+
+        (pair,) = decision_consistency_check(eng)["pairs"]
+
+        assert pair["successor"] == c["id"] and pair["direct_successor"] == b["id"]
+        assert f"engram lineage unlink {b['id']} {a['id']}" in pair["preview_commands"]
+        assert f"engram lineage unlink {c['id']} {a['id']}" not in pair["preview_commands"]
+
+    def test_that_preview_command_runs(self, chain):
+        eng, a, b, c = chain
+        (pair,) = decision_consistency_check(eng)["pairs"]
+        command = next(cmd for cmd in pair["preview_commands"] if "lineage unlink" in cmd)
+        _, _, _, successor, predecessor = command.split()
+
+        preview = eng.unlink_decision_lineage(successor, predecessor)
+        # Negative control: the chain head is not the source of that relation.
+        wrong = eng.unlink_decision_lineage(c["id"], a["id"])
+
+        assert preview["status"] == "preview" and not preview.get("error")
+        assert wrong["error"] == "edge_not_found"
+
+    def test_doctor_prints_the_decision_in_between(self, chain, capsys):
+        from piia_engram import doctor
+
+        eng, a, b, c = chain
+        doctor._print_decision_consistency(decision_consistency_check(eng))
+        out = capsys.readouterr().out
+        assert f"[{b['id']}]" in out and "Choose queue policy" in out
+
+
+class TestConflictsResolveKeepsThePin:
+    def test_a_raised_error_puts_the_pin_back(self, unrelated, monkeypatch):
+        from piia_engram import pinning
+        from piia_engram.cli_commands import _run_conflicts_resolve
+
+        eng, old, new = unrelated
+        RelationStore(eng.root).remove_relation(new["id"], "supersedes", old["id"])
+        assert pinning.pin(eng, old["id"]).get("error") is None
+
+        def boom(item_id, updates, **kwargs):
+            raise OSError("disk went away")
+
+        monkeypatch.setattr(eng, "update_decision", boom)
+
+        with pytest.raises(OSError):
+            _run_conflicts_resolve(eng, [new["id"], old["id"], "--action", "supersede",
+                                         "--keep", new["id"], "--commit", "--yes"])
+
+        assert pinning.has_pin(_raw(eng, old["id"]))
+        assert _edges(eng) == []
+
+    def test_a_returned_error_puts_the_pin_back(self, unrelated, monkeypatch):
+        from piia_engram import pinning
+        from piia_engram.cli_commands import _run_conflicts_resolve
+
+        eng, old, new = unrelated
+        RelationStore(eng.root).remove_relation(new["id"], "supersedes", old["id"])
+        assert pinning.pin(eng, old["id"]).get("error") is None
+        monkeypatch.setattr(eng, "update_decision",
+                            lambda item_id, updates, **kw: {"error": "version_conflict"})
+
+        rc, _ = _run_conflicts_resolve(eng, [new["id"], old["id"], "--action", "supersede",
+                                             "--keep", new["id"], "--commit", "--yes"])
+
+        assert rc == 1 and pinning.has_pin(_raw(eng, old["id"]))
