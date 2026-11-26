@@ -92,8 +92,29 @@ def test_retention_stays_under_thirteen_months_for_every_table():
 
 def test_the_off_switch_answers_before_the_body_is_read():
     body = _read("src/counts.js").split("export async function handleCounts", 1)[1]
-    assert body.index("COUNTS_MODE") < body.index("request.headers") < body.index("request.text()")
+    assert body.index("COUNTS_MODE") < body.index("request.headers") < body.index("readCapped(request")
     assert "reply(410" in body
+
+
+def test_the_size_is_checked_before_and_while_the_body_is_read():
+    src = _read("src/counts.js")
+    body = src.split("export async function handleCounts", 1)[1]
+    # Content-Length is required and checked first; the body is never read whole.
+    assert body.index("content-length") < body.index("reply(413") < body.index("readCapped(request")
+    assert "request.text()" not in src and "request.json()" not in src
+    reader = src.split("async function readCapped", 1)[1].split("\n}\n", 1)[0]
+    assert "getReader()" in reader and "cancel(" in reader and "MAX_COUNTS_BYTES" in src
+
+
+def test_the_counts_table_has_no_separate_rowid():
+    for rel in (MIGRATION, "schema.sql"):
+        sql = _read(rel).replace("\r\n", "\n")
+        table = sql.split("CREATE TABLE IF NOT EXISTS counts", 1)[1].split(";", 1)[0]
+        assert table.rstrip().endswith("WITHOUT ROWID"), rel
+    # The existing pings table is left as deployed: no rebuild of a live table.
+    pings = _read("schema.sql").split("CREATE TABLE IF NOT EXISTS pings", 1)[1].split(";", 1)[0]
+    assert "WITHOUT ROWID" not in pings
+    assert "pings" not in _read(MIGRATION)
 
 
 def test_ci_runs_the_counts_harness():

@@ -3,6 +3,8 @@
  * One row per daily rotating ID and UTC day. Every value is a closed-set label or
  * a count bucket; the row carries no install ID. Reads only the request body and
  * its length; never reads or stores IP addresses or other request headers.
+ * The announced length is required and checked first, and the body is read in
+ * pieces that stop at the size limit.
  */
 
 import { dayOffset } from './usage.js';
@@ -80,13 +82,40 @@ function reply(status, body) {
   return new Response(body === null ? null : JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
+/** The body as text, or null once it grows past `limit` bytes (reading stops there). */
+async function readCapped(request, limit) {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 export async function handleCounts(request, env) {
   // Operator switch: answer 410 without reading the body; clients then drop what they held.
   if (String(env.COUNTS_MODE || '').toLowerCase() === 'off') return reply(410, { error: 'gone' });
-  const length = parseInt(request.headers.get('content-length') || '0', 10);
-  if (length > MAX_COUNTS_BYTES) return reply(413, { error: 'too large' });
-  const text = await request.text();
-  if (new TextEncoder().encode(text).length > MAX_COUNTS_BYTES) return reply(413, { error: 'too large' });
+  const announced = request.headers.get('content-length');
+  if (announced === null || !/^\d+$/.test(announced) || Number(announced) > MAX_COUNTS_BYTES) {
+    return reply(413, { error: 'too large' });
+  }
+  const text = await readCapped(request, MAX_COUNTS_BYTES);
+  if (text === null) return reply(413, { error: 'too large' });
   let data;
   try {
     data = JSON.parse(text);

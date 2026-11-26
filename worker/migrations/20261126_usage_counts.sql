@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS counts (
   errors      TEXT NOT NULL,
   knowledge   TEXT NOT NULL,
   PRIMARY KEY (daily_id, day)
-);
+) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_counts_day ON counts(day);

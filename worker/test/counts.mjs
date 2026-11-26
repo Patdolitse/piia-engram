@@ -158,5 +158,50 @@ for (const [field, value] of BAD) {
     && sched.calls.some((c) => /DELETE FROM pings/.test(c.sql)));
 }
 
+{
+  // No Content-Length: refused before the body is touched.
+  let touched = false;
+  const noLength = { headers: { get() { return null; } },
+    get body() { touched = true; return null; }, async text() { touched = true; return '{}'; } };
+  const res = await handleCounts(noLength, { DB: mockDB() });
+  check('no content-length → 413 without reading the body', res.status === 413 && touched === false,
+    `status=${res.status} touched=${touched}`);
+  for (const value of ['abc', '-1', '1e3', '', ' 12']) {
+    const odd = { headers: { get() { return value; } }, get body() { touched = true; return null; },
+      async text() { touched = true; return '{}'; } };
+    const r = await handleCounts(odd, { DB: mockDB() });
+    check(`content-length ${JSON.stringify(value)} → 413`, r.status === 413 && touched === false);
+  }
+  const tooBig = { headers: { get() { return String(MAX_COUNTS_BYTES + 1); } },
+    get body() { touched = true; return null; }, async text() { touched = true; return '{}'; } };
+  check('content-length over the limit → 413 without reading the body',
+    (await handleCounts(tooBig, { DB: mockDB() })).status === 413 && touched === false);
+}
+{
+  // A small Content-Length in front of an endless body: reading stops at the limit.
+  let pulls = 0;
+  let cancelled = false;
+  const chunk = new TextEncoder().encode('x'.repeat(1024));
+  const body = new ReadableStream({
+    pull(controller) { pulls++; if (pulls > 500) controller.close(); else controller.enqueue(chunk); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  const db = mockDB();
+  const res = await handleCounts({ headers: { get() { return '10'; } }, body }, { DB: db });
+  check('a body longer than announced stops being read at the limit', res.status === 413
+    && pulls <= 12 && cancelled && db.calls.length === 0, `status=${res.status} pulls=${pulls} cancelled=${cancelled}`);
+}
+{
+  // A body delivered in several chunks is put together again.
+  const text = JSON.stringify(good());
+  const bytes = new TextEncoder().encode(text);
+  const parts = [bytes.slice(0, 7), bytes.slice(7, 60), bytes.slice(60)];
+  const body = new ReadableStream({ pull(c) { const p = parts.shift(); if (p) c.enqueue(p); else c.close(); } });
+  const db = mockDB();
+  const res = await handleCounts({ headers: { get() { return String(bytes.length); } }, body }, { DB: db });
+  check('a chunked body within the limit is accepted', res.status === 204 && db.calls.length === 1,
+    `status=${res.status}`);
+}
+
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nall counts checks passed');
