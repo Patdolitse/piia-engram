@@ -123,6 +123,40 @@ def _spool(stats, day=YESTERDAY, tools=None, **extra):
     return path
 
 
+def _not_bucketed(body):
+    """Every value in a row that is not a fixed label or a bucket token.
+
+    The daily ID, the date, the version and the Python version are random or
+    numeric by nature, so they are checked by format and never searched as text:
+    a random ID may contain any digits.
+    """
+    problems = []
+    for key in ("schema", "os", "tier", "install_age", "adoption"):
+        allowed = {"schema": {us.SCHEMA}, "os": up._OS_VALUES, "tier": us.TIERS,
+                   "install_age": us.INSTALL_AGES, "adoption": us.ADOPTIONS}[key]
+        if body.get(key) not in allowed:
+            problems.append((key, body.get(key)))
+    for key, pattern in (("daily_id", us._DAILY_ID_RE), ("date", up._DATE_RE),
+                         ("version", up._VERSION_RE), ("python", up._PYTHON_RE)):
+        value = body.get(key)
+        if not isinstance(value, str) or not pattern.fullmatch(value):
+            problems.append((key, value))
+    tools = body.get("tools")
+    for name, pair in (tools.items() if isinstance(tools, dict) else [("tools", tools)]):
+        if not isinstance(pair, dict) or set(pair) != {"ok", "err"}:
+            problems.append((name, pair))
+            continue
+        problems += [(f"{name}.{k}", v) for k, v in pair.items() if v not in us.COUNT_BUCKETS]
+    for field, buckets in (("errors", us.COUNT_BUCKETS), ("knowledge", us.SIZE_BUCKETS)):
+        mapping = body.get(field)
+        if not isinstance(mapping, dict):
+            problems.append((field, mapping))
+            continue
+        problems += [(f"{field}.{k}", v) for k, v in mapping.items() if v not in buckets]
+    problems += [(key, body[key]) for key in body if key not in us.FIELDS]
+    return problems
+
+
 def _bodies(stats):
     return [json.loads(body) for _path, body, _headers in stats.stub.requests]
 
@@ -290,10 +324,32 @@ def test_the_row_has_exactly_the_documented_fields_and_only_buckets(stats):
     assert body["errors"] == {"timeout": "5_9"}
     assert body["knowledge"] == {"decisions": "1_9", "lessons": "10_49"}
     assert body["tier"] == "core" and body["os"] in up._OS_VALUES
-    # No exact number anywhere in the body, and no install ID.
-    assert "120" not in raw and '":7' not in raw and "install_id" not in raw
+    # No exact number anywhere in the row (checked value by value: the random
+    # daily ID may contain any digits), and no install ID field.
+    assert _not_bucketed(body) == []
+    assert "install_id" not in body
     assert headers.get("User-Agent") == "piia-engram"
     assert us.valid_payload(body)
+
+
+def test_the_exact_number_check_ignores_the_random_id_but_not_a_real_count(stats, monkeypatch):
+    # A daily ID that happens to contain the digits of a count used in this row.
+    monkeypatch.setattr(us, "daily_id", lambda secret, day: "b912097d33539f01")
+    _spool(stats, tools={"search_knowledge": [120, 7]}, errors={"timeout": 7})
+    assert us.drain() == 1
+    [(_, raw, _headers)] = stats.stub.requests
+    body = json.loads(raw)
+    assert body["daily_id"] == "b912097d33539f01" and "120" in raw  # a text search would trip here
+    assert _not_bucketed(body) == []
+    # A row that really carried an exact count is still caught, wherever it sits.
+    assert _not_bucketed({**body, "tools": {"search_knowledge": {"ok": 120, "err": "5_9"}}}) == [
+        ("search_knowledge.ok", 120)]
+    assert _not_bucketed({**body, "tools": {"search_knowledge": {"ok": "120", "err": "5_9"}}}) == [
+        ("search_knowledge.ok", "120")]
+    assert _not_bucketed({**body, "errors": {"timeout": 7}}) == [("errors.timeout", 7)]
+    assert _not_bucketed({**body, "knowledge": {"lessons": 47}}) == [("knowledge.lessons", 47)]
+    assert _not_bucketed({**body, "total_calls": 120}) == [("total_calls", 120)]
+    assert _not_bucketed({**body, "tier": "120"}) == [("tier", "120")]
 
 
 def test_content_and_paths_cannot_get_into_the_row(stats, monkeypatch):
