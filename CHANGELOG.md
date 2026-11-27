@@ -6,7 +6,7 @@ All notable changes to Engram are documented in this file. For detailed release 
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.30.0] - 2026-11-27
 
 ### Added
 
@@ -25,6 +25,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - The update check is now also skipped in containers and on every CI system the daily ping recognizes.
 
 - Usage pings are now kept for 395 days instead of 400.
+
+### Release Evidence
+
+See the [release evidence declarations](release-evidence/README.md) for the checks required before publication.
 
 ## [4.29.0] - 2026-11-26
 
